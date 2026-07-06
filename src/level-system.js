@@ -1,7 +1,8 @@
+import { createNebula as createOptimizedNebula } from "./nebula-renderer.js";
+
 const B = window.BABYLON;
 
 registerBrownDwarfShader();
-registerNebulaShader();
 
 export function buildLevel(scene, level) {
   const starlight = new B.HemisphericLight("starlight", B.Vector3.Up(), scene);
@@ -15,12 +16,20 @@ export function buildLevel(scene, level) {
   });
   glow.intensity = 0.95;
 
+  const objectDefinitions = expandObjects(level);
+  const objects = objectDefinitions.map((object) =>
+    createObject(scene, object, glow),
+  );
+  const occluder = objectDefinitions.find(
+    (object) => object.shape === "brownDwarf",
+  );
+
   return {
     starfield: createStarfield(scene, level.sky),
-    nebula: level.nebula ? createNebula(scene, level.nebula) : null,
-    objects: expandObjects(level).map((object) =>
-      createObject(scene, object, glow),
-    ),
+    nebula: level.nebula
+      ? createOptimizedNebula(scene, level.nebula, occluder)
+      : null,
+    objects,
   };
 }
 

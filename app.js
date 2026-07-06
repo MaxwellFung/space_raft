@@ -4,11 +4,19 @@ import { buildLevel } from "./src/level-system.js";
 const B = window.BABYLON;
 const canvas = document.querySelector("#sandbox");
 const metrics = document.querySelector(".metrics");
+
+addEventListener("error", (event) => showRuntimeError(event.error ?? event.message));
+addEventListener("unhandledrejection", (event) =>
+  showRuntimeError(event.reason),
+);
+
 const engine = new B.Engine(canvas, true, {
   antialias: true,
-  adaptToDeviceRatio: true,
+  adaptToDeviceRatio: false,
   powerPreference: "high-performance",
 });
+engine.setHardwareScalingLevel(1 / Math.min(devicePixelRatio, 1.5));
+engine.metadata = { performance: {} };
 const scene = new B.Scene(engine);
 const performanceMonitor = createPerformanceMonitor(engine, metrics);
 
@@ -82,6 +90,12 @@ engine.runRenderLoop(() => {
 });
 addEventListener("resize", () => engine.resize());
 
+function showRuntimeError(error) {
+  const message = error?.stack ?? error?.message ?? String(error);
+  metrics.textContent = `Render error: ${message}`;
+  console.error(error);
+}
+
 function createPerformanceMonitor(engine, container) {
   const frameBudget = 1000 / 60;
   const fpsElement = container.querySelector("#metric-fps");
@@ -114,6 +128,7 @@ function createPerformanceMonitor(engine, container) {
         const gpuMs = gl.getQueryParameter(query, gl.QUERY_RESULT) / 1_000_000;
         smoothedGpuMs =
           smoothedGpuMs === null ? gpuMs : smoothedGpuMs * 0.86 + gpuMs * 0.14;
+        engine.metadata.performance.gpuMs = smoothedGpuMs;
       }
       gl.deleteQuery(query);
     }
@@ -152,6 +167,7 @@ function createPerformanceMonitor(engine, container) {
       const cpuMs = performance.now() - frame.cpuStart;
       smoothedCpuMs =
         smoothedCpuMs === 0 ? cpuMs : smoothedCpuMs * 0.86 + cpuMs * 0.14;
+      engine.metadata.performance.cpuMs = smoothedCpuMs;
       frameNumber += 1;
 
       const now = performance.now();
