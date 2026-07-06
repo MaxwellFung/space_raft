@@ -1,6 +1,7 @@
 const B = window.BABYLON;
 
 registerBrownDwarfShader();
+registerNebulaShader();
 
 export function buildLevel(scene, level) {
   const starlight = new B.HemisphericLight("starlight", B.Vector3.Up(), scene);
@@ -16,7 +17,10 @@ export function buildLevel(scene, level) {
 
   return {
     starfield: createStarfield(scene, level.sky),
-    objects: expandObjects(level).map((object) => createObject(scene, object, glow)),
+    nebula: level.nebula ? createNebula(scene, level.nebula) : null,
+    objects: expandObjects(level).map((object) =>
+      createObject(scene, object, glow),
+    ),
   };
 }
 
@@ -32,9 +36,8 @@ function expandObjects(level) {
 }
 
 function createObject(scene, object, glow) {
-  if (object.shape === "brownDwarf") return createBrownDwarf(scene, object, glow);
-  if (object.shape === "habitablePlanet") return createHabitablePlanet(scene, object);
-  if (object.shape === "debrisSwarms") return createDebrisSwarms(scene, object);
+  if (object.shape === "brownDwarf")
+    return createBrownDwarf(scene, object, glow);
   return null;
 }
 
@@ -85,6 +88,284 @@ function createStarfield(scene, sky) {
   return root;
 }
 
+function createNebula(scene, nebula) {
+  const camera = scene.activeCamera;
+  const engine = scene.getEngine();
+  const root = new B.TransformNode(nebula.id, scene);
+  root.position = B.Vector3.FromArray(nebula.position);
+  root.rotation = B.Vector3.FromArray(nebula.rotation ?? [0, 0, 0]);
+  root.scaling.setAll(nebula.radius);
+
+  const volumeTexture = createNebulaVolumeTexture(scene, nebula);
+  const depthRenderer = scene.enableDepthRenderer(
+    camera,
+    true,
+    false,
+    B.Texture.NEAREST_SAMPLINGMODE,
+  );
+  const inverseWorld = B.Matrix.Identity();
+  const cameraForward = B.Vector3.Zero();
+  const cameraRight = B.Vector3.Zero();
+  const cameraUp = B.Vector3.Zero();
+  const coolColor = B.Color3.FromArray(
+    nebula.coolColor ?? [0.14, 0.22, 0.82],
+  );
+  const warmColor = B.Color3.FromArray(
+    nebula.warmColor ?? [1.15, 0.16, 0.035],
+  );
+  const violetColor = B.Color3.FromArray(
+    nebula.violetColor ?? [0.42, 0.12, 0.72],
+  );
+  const hotColor = B.Color3.FromArray(
+    nebula.hotColor ?? [1.95, 0.58, 0.1],
+  );
+  const coreColor = B.Color3.FromArray(
+    nebula.coreColor ?? [2.2, 1.65, 1.15],
+  );
+  const dustColor = B.Color3.FromArray(
+    nebula.dustColor ?? [0.02, 0.006, 0.012],
+  );
+
+  const postProcess = new B.PostProcess(
+    `${nebula.id}-post-process`,
+    "nebula",
+    [
+      "invWorld",
+      "cameraPosition",
+      "cameraForward",
+      "cameraRight",
+      "cameraUp",
+      "tanHalfFov",
+      "aspect",
+      "nearZ",
+      "farZ",
+      "time",
+      "density",
+      "absorption",
+      "innerVoid",
+      "emissionStrength",
+      "anisotropy",
+      "atlasColumns",
+      "atlasRows",
+      "volumeResolution",
+      "coolColor",
+      "warmColor",
+      "violetColor",
+      "hotColor",
+      "coreColor",
+      "dustColor",
+    ],
+    ["depthSampler", "volumeSampler"],
+    nebula.renderScale ?? 0.5,
+    camera,
+    B.Texture.BILINEAR_SAMPLINGMODE,
+    engine,
+    false,
+  );
+
+  postProcess.onApply = (effect) => {
+    root.computeWorldMatrix(true);
+    inverseWorld.copyFrom(root.getWorldMatrix());
+    inverseWorld.invert();
+    camera.getDirectionToRef(B.Axis.Z, cameraForward);
+    camera.getDirectionToRef(B.Axis.X, cameraRight);
+    camera.getDirectionToRef(B.Axis.Y, cameraUp);
+
+    effect.setMatrix("invWorld", inverseWorld);
+    effect.setVector3("cameraPosition", camera.position);
+    effect.setVector3("cameraForward", cameraForward);
+    effect.setVector3("cameraRight", cameraRight);
+    effect.setVector3("cameraUp", cameraUp);
+    effect.setFloat("tanHalfFov", Math.tan(camera.fov * 0.5));
+    effect.setFloat("aspect", engine.getAspectRatio(camera));
+    effect.setFloat("nearZ", camera.minZ);
+    effect.setFloat("farZ", camera.maxZ);
+    effect.setFloat("time", performance.now() * 0.001);
+    effect.setFloat("density", nebula.density ?? 0.82);
+    effect.setFloat("absorption", nebula.absorption ?? 1.45);
+    effect.setFloat("innerVoid", nebula.innerVoid ?? 0.34);
+    effect.setFloat("emissionStrength", nebula.emissionStrength ?? 0.62);
+    effect.setFloat("anisotropy", nebula.anisotropy ?? 0.34);
+    effect.setFloat("atlasColumns", volumeTexture.metadata.columns);
+    effect.setFloat("atlasRows", volumeTexture.metadata.rows);
+    effect.setFloat("volumeResolution", volumeTexture.metadata.resolution);
+    effect.setColor3("coolColor", coolColor);
+    effect.setColor3("warmColor", warmColor);
+    effect.setColor3("violetColor", violetColor);
+    effect.setColor3("hotColor", hotColor);
+    effect.setColor3("coreColor", coreColor);
+    effect.setColor3("dustColor", dustColor);
+    effect.setTexture("depthSampler", depthRenderer.getDepthMap());
+    effect.setTexture("volumeSampler", volumeTexture);
+  };
+
+  scene.onBeforeRenderObservable.add(() => {
+    root.rotation.y += scene.getEngine().getDeltaTime() * 0.0000016;
+  });
+
+  return { root, postProcess, volumeTexture };
+}
+
+function createNebulaVolumeTexture(scene, nebula) {
+  const resolution = nebula.volumeResolution ?? 40;
+  const columns = Math.ceil(Math.sqrt(resolution));
+  const rows = Math.ceil(resolution / columns);
+  const width = columns * resolution;
+  const height = rows * resolution;
+  const data = new Uint8Array(width * height * 4);
+  const seed = nebula.seed ?? 1;
+  const innerVoid = nebula.innerVoid ?? 0.34;
+  const outerSoftness = nebula.outerSoftness ?? 0.24;
+
+  for (let z = 0; z < resolution; z += 1) {
+    const pz = (z / (resolution - 1)) * 2 - 1;
+    const tileX = z % columns;
+    const tileY = Math.floor(z / columns);
+
+    for (let y = 0; y < resolution; y += 1) {
+      const py = (y / (resolution - 1)) * 2 - 1;
+
+      for (let x = 0; x < resolution; x += 1) {
+        const px = (x / (resolution - 1)) * 2 - 1;
+        const radius = Math.hypot(px, py, pz);
+        const outer = 1 - smoothStep(1 - outerSoftness, 1, radius);
+        const inner = smoothStep(innerVoid, innerVoid + 0.18, radius);
+        const envelope = outer * inner;
+
+        const macro = valueFbm(px * 1.15, py * 1.15, pz * 1.15, seed, 3);
+        const detail = valueFbm(
+          px * 3.1 + 7.2,
+          py * 3.1 - 3.4,
+          pz * 3.1 + 1.8,
+          seed + 31,
+          2,
+        );
+        const ridgeNoise = valueFbm(
+          px * 5.4 - 2.1,
+          py * 5.4 + 6.7,
+          pz * 5.4 - 4.3,
+          seed + 79,
+          2,
+        );
+        const ridge = 1 - Math.abs(ridgeNoise * 2 - 1);
+        const directionLength = Math.max(radius, 0.0001);
+        const directionalLobes = Math.max(
+          0,
+          px / directionLength * 0.72 + py / directionLength * 0.22,
+          -px / directionLength * 0.58 + pz / directionLength * 0.52,
+          py / directionLength * 0.46 - pz / directionLength * 0.7,
+        );
+        const coarse = clamp01(
+          (macro * 0.62 +
+            detail * 0.28 +
+            ridge * 0.22 +
+            directionalLobes * 0.18 -
+            0.67) *
+            4.5 *
+            envelope,
+        );
+        const erosion = clamp01(detail * 0.82 + ridge * 0.18);
+        const emission = clamp01(
+          coarse * smoothStep(0.42, 0.92, ridge * 0.82 + macro * 0.18),
+        );
+        const dust = clamp01(
+          coarse * smoothStep(0.36, 0.88, 1 - detail * 0.72 + ridge * 0.18),
+        );
+
+        const atlasX = tileX * resolution + x;
+        const atlasY = tileY * resolution + y;
+        const index = (atlasY * width + atlasX) * 4;
+
+        data[index] = Math.round(coarse * 255);
+        data[index + 1] = Math.round(erosion * 255);
+        data[index + 2] = Math.round(emission * 255);
+        data[index + 3] = Math.round(dust * 255);
+      }
+    }
+  }
+
+  const texture = new B.RawTexture(
+    data,
+    width,
+    height,
+    B.Engine.TEXTUREFORMAT_RGBA,
+    scene,
+    false,
+    false,
+    B.Texture.BILINEAR_SAMPLINGMODE,
+  );
+
+  texture.name = `${nebula.id}-volume-atlas`;
+  texture.wrapU = B.Texture.CLAMP_ADDRESSMODE;
+  texture.wrapV = B.Texture.CLAMP_ADDRESSMODE;
+  texture.gammaSpace = false;
+  texture.metadata = { columns, rows, resolution };
+  return texture;
+}
+
+function valueFbm(x, y, z, seed, octaves) {
+  let value = 0;
+  let amplitude = 0.5;
+  let totalAmplitude = 0;
+
+  for (let octave = 0; octave < octaves; octave += 1) {
+    value += valueNoise3(x, y, z, seed + octave * 1013) * amplitude;
+    totalAmplitude += amplitude;
+    x = x * 2.03 + 17.2;
+    y = y * 2.03 + 9.1;
+    z = z * 2.03 + 13.7;
+    amplitude *= 0.52;
+  }
+
+  return value / totalAmplitude;
+}
+
+function valueNoise3(x, y, z, seed) {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const iz = Math.floor(z);
+  const fx = smoothCurve(x - ix);
+  const fy = smoothCurve(y - iy);
+  const fz = smoothCurve(z - iz);
+  const x00 = lerp(hashGrid(ix, iy, iz, seed), hashGrid(ix + 1, iy, iz, seed), fx);
+  const x10 = lerp(hashGrid(ix, iy + 1, iz, seed), hashGrid(ix + 1, iy + 1, iz, seed), fx);
+  const x01 = lerp(hashGrid(ix, iy, iz + 1, seed), hashGrid(ix + 1, iy, iz + 1, seed), fx);
+  const x11 = lerp(
+    hashGrid(ix, iy + 1, iz + 1, seed),
+    hashGrid(ix + 1, iy + 1, iz + 1, seed),
+    fx,
+  );
+
+  return lerp(lerp(x00, x10, fy), lerp(x01, x11, fy), fz);
+}
+
+function hashGrid(x, y, z, seed) {
+  let value =
+    Math.imul(x, 73856093) ^
+    Math.imul(y, 19349663) ^
+    Math.imul(z, 83492791) ^
+    seed;
+  value = Math.imul(value ^ (value >>> 13), 1274126177);
+  return ((value ^ (value >>> 16)) >>> 0) / 4294967295;
+}
+
+function smoothCurve(value) {
+  return value * value * (3 - 2 * value);
+}
+
+function smoothStep(edge0, edge1, value) {
+  const t = clamp01((value - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
+}
+
+function lerp(a, b, amount) {
+  return a + (b - a) * amount;
+}
+
+function clamp01(value) {
+  return Math.min(Math.max(value, 0), 1);
+}
+
 function createBrownDwarf(scene, object, glow) {
   const diameter = object.radius * object.scale * 2;
   const body = B.MeshBuilder.CreateSphere(
@@ -109,12 +390,6 @@ function createBrownDwarf(scene, object, glow) {
 
   glow.addIncludedOnlyMesh(body);
 
-  const light = new B.PointLight(`${object.id}-light`, body.position, scene);
-  light.diffuse = new B.Color3(1, 0.28, 0.05);
-  light.specular = new B.Color3(0.25, 0.05, 0.01);
-  light.intensity = object.lightIntensity ?? 1.7;
-  light.range = object.lightRange ?? diameter * 10;
-
   scene.onBeforeRenderObservable.add(() => {
     const seconds = performance.now() * 0.001;
     material.setFloat("time", seconds);
@@ -125,277 +400,284 @@ function createBrownDwarf(scene, object, glow) {
   return body;
 }
 
-function createHabitablePlanet(scene, object) {
-  const diameter = object.radius * object.scale * 2;
-  const planet = B.MeshBuilder.CreateSphere(
-    object.id,
-    { diameter, segments: 64 },
-    scene,
-  );
-  planet.position = B.Vector3.FromArray(object.position);
+function registerNebulaShader() {
+  B.Effect.ShadersStore.nebulaFragmentShader = `
+    precision highp float;
 
-  const material = new B.StandardMaterial(`${object.id}-material`, scene);
-  material.diffuseTexture = createHabitablePlanetTexture(scene, object);
-  material.specularColor = new B.Color3(0.05, 0.06, 0.07);
-  material.emissiveColor = new B.Color3(0.006, 0.008, 0.01);
-  planet.material = material;
+    uniform sampler2D textureSampler;
+    uniform sampler2D depthSampler;
+    uniform sampler2D volumeSampler;
 
-  scene.onBeforeRenderObservable.add(() => {
-    planet.rotation.y += scene.getEngine().getDeltaTime() * 0.00002;
-  });
+    uniform mat4 invWorld;
+    uniform vec3 cameraPosition;
+    uniform vec3 cameraForward;
+    uniform vec3 cameraRight;
+    uniform vec3 cameraUp;
+    uniform float tanHalfFov;
+    uniform float aspect;
+    uniform float nearZ;
+    uniform float farZ;
+    uniform float time;
+    uniform float density;
+    uniform float absorption;
+    uniform float innerVoid;
+    uniform float emissionStrength;
+    uniform float anisotropy;
+    uniform float atlasColumns;
+    uniform float atlasRows;
+    uniform float volumeResolution;
+    uniform vec3 coolColor;
+    uniform vec3 warmColor;
+    uniform vec3 violetColor;
+    uniform vec3 hotColor;
+    uniform vec3 coreColor;
+    uniform vec3 dustColor;
 
-  return planet;
-}
+    varying vec2 vUV;
 
-function createHabitablePlanetTexture(scene, object) {
-  const texture = new B.DynamicTexture(
-    `${object.id}-texture`,
-    { width: 512, height: 256 },
-    scene,
-    false,
-  );
-  const ctx = texture.getContext();
-
-  const ocean = ctx.createLinearGradient(0, 0, 0, 256);
-  ocean.addColorStop(0, "#07101c");
-  ocean.addColorStop(0.5, "#11304a");
-  ocean.addColorStop(1, "#070b12");
-  ctx.fillStyle = ocean;
-  ctx.fillRect(0, 0, 512, 256);
-
-  for (let i = 0; i < 34; i += 1) {
-    const x = (i * 83) % 512;
-    const y = 32 + ((i * 47) % 184);
-    const land = i % 3 === 0 ? "42, 76, 54" : "74, 82, 56";
-    ctx.fillStyle = `rgba(${land}, 0.72)`;
-    ctx.beginPath();
-    ctx.ellipse(x, y, 18 + (i % 7) * 7, 7 + (i % 5) * 5, i * 0.41, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  for (let i = 0; i < 22; i += 1) {
-    const x = (i * 131) % 512;
-    const y = 25 + ((i * 29) % 205);
-    ctx.strokeStyle = "rgba(220, 232, 232, 0.28)";
-    ctx.lineWidth = 2 + (i % 3);
-    ctx.beginPath();
-    ctx.ellipse(x, y, 42 + (i % 6) * 9, 4 + (i % 4), i * 0.2, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  texture.update();
-  return texture;
-}
-
-function createDebrisSwarms(scene, object) {
-  const random = createRandom(object.seed ?? 1);
-  const center = B.Vector3.FromArray(object.position);
-  const root = new B.TransformNode(object.id, scene);
-  const rockMaterial = new B.StandardMaterial(`${object.id}-rock-material`, scene);
-  const laneMaterial = new B.StandardMaterial(`${object.id}-lane-material`, scene);
-  const swarms = [];
-
-  rockMaterial.diffuseColor = new B.Color3(0.3, 0.25, 0.22);
-  rockMaterial.specularColor = new B.Color3(0.025, 0.02, 0.018);
-  laneMaterial.emissiveColor = new B.Color3(0.42, 0.15, 0.04);
-  laneMaterial.diffuseColor = new B.Color3(0.28, 0.12, 0.05);
-  laneMaterial.alpha = 0.24;
-  laneMaterial.disableLighting = true;
-
-  for (let index = 0; index < object.swarmCount; index += 1) {
-    const swarm = createDebrisSwarm(scene, object, index, random, rockMaterial, laneMaterial);
-    swarm.root.parent = root;
-    swarms.push(swarm);
-  }
-
-  scene.onBeforeRenderObservable.add(() => {
-    const seconds = scene.getEngine().getDeltaTime() / 1000;
-    const cameraPosition = scene.activeCamera.position;
-
-    for (const swarm of swarms) {
-      swarm.phase += swarm.speed * seconds;
-      swarm.root.position.copyFrom(
-        center
-          .add(swarm.u.scale(Math.cos(swarm.phase) * swarm.radius))
-          .addInPlace(swarm.v.scale(Math.sin(swarm.phase) * swarm.radius * swarm.eccentricity))
-          .addInPlace(swarm.normal.scale(Math.sin(swarm.phase * 1.7) * swarm.verticalDrift)),
-      );
-      swarm.root.rotation.y += seconds * swarm.tumble;
-      swarm.root.rotation.x += seconds * swarm.tumble * 0.37;
-
-      const distance = B.Vector3.Distance(cameraPosition, swarm.root.position);
-      if (swarm.dustMesh) swarm.dustMesh.setEnabled(distance < object.farRenderDistance);
-      swarm.rockMesh.setEnabled(distance < object.nearRenderDistance);
+    vec3 rotateY(vec3 p, float angle) {
+      float s = sin(angle);
+      float c = cos(angle);
+      return vec3(p.x * c - p.z * s, p.y, p.x * s + p.z * c);
     }
-  });
 
-  return root;
-}
+    vec2 atlasUV(vec2 xy, float slice) {
+      float tileX = mod(slice, atlasColumns);
+      float tileY = floor(slice / atlasColumns);
+      vec2 localUV = (xy * (volumeResolution - 1.0) + 0.5) / volumeResolution;
+      return (vec2(tileX, tileY) + localUV) / vec2(atlasColumns, atlasRows);
+    }
 
-function createDebrisSwarm(scene, object, index, random, rockMaterial, laneMaterial) {
-  const normal = randomUnitVector(random);
-  const reference = Math.abs(B.Vector3.Dot(normal, B.Axis.Y)) > 0.82
-    ? B.Axis.X
-    : B.Axis.Y;
-  const u = B.Vector3.Cross(normal, reference).normalize();
-  const v = B.Vector3.Cross(normal, u).normalize();
-  const root = new B.TransformNode(`${object.id}-swarm-${index}`, scene);
-  const radius = object.orbitRadiusMin + random() * (object.orbitRadiusMax - object.orbitRadiusMin);
-  const eccentricity = 0.55 + random() * 0.55;
-  const arcLength = object.arcLengthMin + random() * (object.arcLengthMax - object.arcLengthMin);
-  const arcStart = random() * Math.PI * 2;
-  const lanes = createSwarmLanes(scene, object, index, random, laneMaterial, {
-    normal,
-    u,
-    v,
-    radius,
-    eccentricity,
-    arcStart,
-    arcLength,
-  });
-  const swarm = {
-    root,
-    normal,
-    u,
-    v,
-    radius,
-    eccentricity,
-    phase: random() * Math.PI * 2,
-    speed: 0.0025 + random() * 0.007,
-    tumble: (random() - 0.5) * 0.08,
-    verticalDrift: 16 + random() * 72,
-    dustMesh: lanes,
-    rockMesh: createSwarmRocks(scene, object, random, rockMaterial, {
-      u,
-      v,
-      normal,
-      radius,
-      eccentricity,
-      arcStart,
-      arcLength,
-    }),
-  };
+    vec4 sampleVolume(vec3 p) {
+      vec3 uvw = p * 0.5 + 0.5;
+      if (
+        any(lessThan(uvw, vec3(0.0))) ||
+        any(greaterThan(uvw, vec3(1.0)))
+      ) {
+        return vec4(0.0);
+      }
 
-  lanes.parent = root;
-  swarm.rockMesh.parent = root;
-  swarm.rockMesh.setEnabled(false);
+      float z = uvw.z * (volumeResolution - 1.0);
+      float z0 = floor(z);
+      float z1 = min(z0 + 1.0, volumeResolution - 1.0);
+      vec4 a = texture2D(volumeSampler, atlasUV(uvw.xy, z0));
+      vec4 b = texture2D(volumeSampler, atlasUV(uvw.xy, z1));
+      return mix(a, b, fract(z));
+    }
 
-  return swarm;
-}
+    vec4 sampleMedium(vec3 p) {
+      vec3 q = rotateY(p, time * 0.006);
+      q += vec3(
+        sin(q.y * 7.0 + time * 0.035),
+        sin(q.z * 6.0 - time * 0.028),
+        sin(q.x * 7.5 + time * 0.024)
+      ) * 0.012;
+      return sampleVolume(q);
+    }
 
-function createSwarmLanes(scene, object, index, random, material, stream) {
-  const root = new B.TransformNode(`${object.id}-lanes-${index}`, scene);
+    float mediumDensity(vec4 medium) {
+      float erosion = (1.0 - medium.g) * 0.12;
+      return max(0.0, medium.r - erosion) * density;
+    }
 
-  for (let lane = 0; lane < object.lanesPerSwarm; lane += 1) {
-    const offset = (lane - (object.lanesPerSwarm - 1) * 0.5) * object.laneWidth;
-    const path = createArcPath(stream, {
-      arcStart: stream.arcStart + (random() - 0.5) * 0.12,
-      arcLength: stream.arcLength * (0.82 + random() * 0.36),
-      radiusOffset: offset + (random() - 0.5) * object.laneWidth,
-      planeOffset: (random() - 0.5) * object.laneWidth * 1.4,
-      wobble: 3 + random() * 8,
-      samples: 46,
-    });
-    const laneMesh = B.MeshBuilder.CreateTube(
-      `${object.id}-lane-${index}-${lane}`,
-      {
-        path,
-        radius: object.laneThickness * (0.65 + random() * 0.8),
-        tessellation: 5,
-        cap: B.Mesh.NO_CAP,
-      },
-      scene,
-    );
+    float hgPhase(float cosTheta, float g) {
+      float g2 = g * g;
+      float denom = pow(1.0 + g2 - 2.0 * g * cosTheta, 1.5);
+      return (1.0 - g2) / max(0.0001, 12.5663706 * denom);
+    }
 
-    laneMesh.material = material;
-    laneMesh.isPickable = false;
-    laneMesh.parent = root;
-  }
+    float approximateLightTransmittance(vec3 p, vec4 medium) {
+      float pathLength = max(0.0, length(p) - innerVoid);
+      float opticalDepth =
+        (medium.r * 0.72 + medium.a * 1.45) *
+        density *
+        absorption *
+        pathLength;
+      return exp(-opticalDepth);
+    }
 
-  return root;
-}
-
-function createSwarmRocks(scene, object, random, material, stream) {
-  const source = B.MeshBuilder.CreateSphere(
-    `${object.id}-rock-source`,
-    { diameter: 1, segments: 4 },
-    scene,
-  );
-  const sps = new B.SolidParticleSystem(`${object.id}-rocks`, scene, {
-    updatable: false,
-  });
-
-  sps.addShape(source, object.rocksPerSwarm, {
-    positionFunction: (particle) => {
-      const scale =
-        object.minRockScale +
-        random() ** 2.2 * (object.maxRockScale - object.minRockScale);
-      const warmth = 0.45 + random() * 0.4;
-
-      particle.position = randomOnArc(random, stream, {
-        radiusJitter: object.laneWidth * 2.5,
-        planeJitter: object.laneWidth * 1.8,
-      });
-      particle.rotation.set(random() * Math.PI, random() * Math.PI, random() * Math.PI);
-      particle.scale.set(
-        scale * (0.7 + random() * 0.8),
-        scale * (0.5 + random() * 0.7),
-        scale * (0.75 + random() * 1.1),
+    vec3 sampleColor(
+      vec3 p,
+      vec4 medium,
+      float localDensity,
+      float lightAmount
+    ) {
+      float roseField =
+        sin(p.x * 3.2 + p.y * 1.7 - p.z * 2.4) * 0.5 + 0.5;
+      float violetField =
+        sin(p.x * 1.5 - p.y * 3.6 + p.z * 2.1 + 1.8) * 0.5 + 0.5;
+      float tealField =
+        sin(-p.x * 2.7 + p.y * 2.2 + p.z * 1.4 - 0.7) * 0.5 + 0.5;
+      float roseMask = smoothstep(0.3, 0.82, roseField * 0.65 + medium.g * 0.5);
+      float violetMask = smoothstep(
+        0.42,
+        0.88,
+        violetField * 0.56 + medium.g * 0.38 + medium.b * 0.18
       );
-      particle.color = new B.Color4(
-        0.34 * warmth,
-        0.29 * warmth,
-        0.25 * warmth,
-        1,
+      float tealMask = smoothstep(
+        0.38,
+        0.86,
+        tealField * 0.72 + (1.0 - medium.g) * 0.34
       );
-    },
-  });
+      float coralMask = smoothstep(0.38, 0.92, medium.b * 0.82 + medium.g * 0.3);
+      float coreLobeA =
+        1.0 - smoothstep(0.08, 0.38, length(p - vec3(0.16, 0.08, -0.08)));
+      float coreLobeB =
+        1.0 - smoothstep(0.06, 0.3, length(p - vec3(-0.32, 0.16, 0.2)));
+      float coreMask =
+        pow(clamp(medium.b, 0.0, 1.0), 1.45) *
+        (0.34 + max(coreLobeA, coreLobeB) * 1.2);
 
-  const mesh = sps.buildMesh();
-  mesh.material = material;
-  mesh.isPickable = false;
-  source.dispose();
-  return mesh;
-}
+      float tealZone = smoothstep(
+        -0.28,
+        0.72,
+        -p.x * 1.08 - p.y * 0.24 + p.z * 0.18
+      );
+      float roseZone = smoothstep(
+        -0.32,
+        0.76,
+        p.x * 0.82 + p.y * 0.14 - p.z * 0.24
+      );
+      float violetZone = smoothstep(
+        -0.36,
+        0.7,
+        -p.x * 0.22 + p.y * 0.9 + p.z * 0.32
+      );
 
-function createArcPath(stream, options) {
-  return Array.from({ length: options.samples }, (_unused, sample) => {
-    const t = sample / (options.samples - 1);
-    const angle = options.arcStart + options.arcLength * t;
-    const wobble = Math.sin(t * Math.PI * 2.0 + options.arcStart * 1.7) * options.wobble;
-    const radius = stream.radius + options.radiusOffset + wobble;
-    const planeOffset =
-      options.planeOffset +
-      Math.sin(t * Math.PI * 3.0 + stream.arcStart) * options.wobble * 0.45;
+      float tealWeight =
+        pow(max(tealMask, 0.08), 1.9) *
+        (0.35 + tealZone * 3.2) *
+        (1.0 - medium.b * 0.38);
+      float violetWeight =
+        pow(max(violetMask, 0.05), 2.0) *
+        (0.42 + violetZone * 1.7);
+      float roseWeight =
+        pow(max(roseMask, 0.04), 2.15) *
+        (0.35 + roseZone * 2.1);
+      float coralWeight = pow(max(coralMask, 0.03), 2.3);
+      float weightSum =
+        tealWeight + violetWeight + roseWeight + coralWeight + 0.0001;
+      vec3 color =
+        (
+          coolColor * tealWeight +
+          violetColor * violetWeight +
+          warmColor * roseWeight +
+          hotColor * coralWeight
+        ) / weightSum;
 
-    return stream.u
-      .scale(Math.cos(angle) * radius)
-      .addInPlace(stream.v.scale(Math.sin(angle) * radius * stream.eccentricity))
-      .addInPlace(stream.normal.scale(planeOffset));
-  });
-}
+      color = mix(color, dustColor, medium.a * 0.68);
+      color *= 0.22 + lightAmount * (0.54 + medium.g * 0.3);
+      color +=
+        (
+          coolColor * tealWeight +
+          violetColor * violetWeight +
+          warmColor * roseWeight
+        ) * medium.r * emissionStrength * 0.24;
+      color += coolColor * tealZone * medium.r * emissionStrength * 0.34;
+      color +=
+        violetColor * violetZone * medium.r * emissionStrength * 0.18;
+      color += hotColor * medium.b * emissionStrength * (0.2 + lightAmount * 0.72);
+      color +=
+        coreColor *
+        max(coreMask, smoothstep(0.68, 0.98, medium.b) * 0.22) *
+        emissionStrength *
+        1.8;
+      float ionizedGas = tealZone * smoothstep(0.08, 0.54, medium.r);
+      color = mix(
+        color,
+        coolColor * (0.28 + lightAmount * 0.72),
+        ionizedGas * 0.72
+      );
+      float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
+      color = max(vec3(0.0), mix(vec3(luminance), color, 1.22));
+      return color * (0.48 + localDensity * 1.08);
+    }
 
-function randomOnArc(random, stream, options) {
-  const angle = stream.arcStart + stream.arcLength * random();
-  const radius = stream.radius + (random() - 0.5) * options.radiusJitter;
-  const planeOffset = (random() - 0.5) * options.planeJitter;
+    bool raySphere(vec3 ro, vec3 rd, out float t0, out float t1) {
+      float b = dot(ro, rd);
+      float c = dot(ro, ro) - 1.0;
+      float h = b * b - c;
+      if (h < 0.0) return false;
+      h = sqrt(h);
+      t0 = -b - h;
+      t1 = -b + h;
+      return true;
+    }
 
-  return stream.u
-    .scale(Math.cos(angle) * radius)
-    .addInPlace(stream.v.scale(Math.sin(angle) * radius * stream.eccentricity))
-    .addInPlace(stream.normal.scale(planeOffset));
-}
+    void main() {
+      vec4 sceneColor = texture2D(textureSampler, vUV);
+      vec2 ndc = vUV * 2.0 - 1.0;
+      vec3 rdWorld = normalize(
+        cameraForward +
+        cameraRight * ndc.x * aspect * tanHalfFov +
+        cameraUp * ndc.y * tanHalfFov
+      );
+      vec3 ro = (invWorld * vec4(cameraPosition, 1.0)).xyz;
+      vec3 localDirection = (invWorld * vec4(rdWorld, 0.0)).xyz;
+      float localPerWorld = length(localDirection);
+      vec3 rd = localDirection / max(localPerWorld, 0.00001);
 
-function randomUnitVector(random) {
-  const y = random() * 2 - 1;
-  const angle = random() * Math.PI * 2;
-  const ring = Math.sqrt(1 - y * y);
+      float t0;
+      float t1;
+      if (!raySphere(ro, rd, t0, t1)) {
+        gl_FragColor = sceneColor;
+        return;
+      }
 
-  return new B.Vector3(
-    ring * Math.cos(angle),
-    y,
-    ring * Math.sin(angle),
-  );
+      float tEnter = max(t0, 0.0);
+      float tExit = t1;
+      float sceneDepth = texture2D(depthSampler, vUV).r;
+      float viewDepth =
+        nearZ * farZ / max(0.0001, farZ - sceneDepth * (farZ - nearZ));
+      float rayDepth =
+        viewDepth / max(0.001, dot(rdWorld, cameraForward));
+      tExit = min(tExit, rayDepth * localPerWorld);
+
+      if (tExit <= tEnter) {
+        gl_FragColor = sceneColor;
+        return;
+      }
+
+      float totalLen = tExit - tEnter;
+      float stepLen = max(totalLen / 40.0, 0.014);
+
+      vec3 accum = vec3(0.0);
+      float transmittance = 1.0;
+      float travel = tEnter + stepLen * 0.5;
+
+      for (int i = 0; i < 40; i++) {
+        if (travel >= tExit || transmittance < 0.03) break;
+
+        vec3 p = ro + rd * travel;
+        vec4 medium = sampleMedium(p);
+
+        float d = mediumDensity(medium);
+        if (d > 0.002) {
+          vec3 lightDir = normalize(-p);
+          float lightTr = approximateLightTransmittance(p, medium);
+          float phase = hgPhase(dot(rd, lightDir), anisotropy);
+          float centerGlow = 1.0 - smoothstep(0.2, 0.86, length(p));
+          float lightAmount =
+            lightTr * (0.18 + phase * 2.0 + centerGlow * 0.24);
+
+          vec3 sampleCol = sampleColor(p, medium, d, lightAmount);
+
+          float extinction = d * absorption * stepLen;
+          float alpha = 1.0 - exp(-extinction);
+
+          accum += transmittance * sampleCol * alpha;
+          transmittance *= (1.0 - alpha);
+        }
+
+        travel += stepLen;
+      }
+
+      gl_FragColor = vec4(
+        sceneColor.rgb * transmittance + accum,
+        sceneColor.a
+      );
+    }
+  `;
 }
 
 function registerBrownDwarfShader() {
@@ -550,3 +832,90 @@ function createRandom(seed) {
   return () =>
     (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 4294967296;
 }
+
+const brownDwarf = {
+  id: "brown_dwarf",
+  name: "Brown Dwarf",
+  description: "A solitary dim brown dwarf in deep space.",
+
+  spawn: {
+    position: [0, 0, -130],
+    target: [0, 0, 0],
+  },
+
+  player: {
+    speed: 12,
+    boostSpeed: 42,
+  },
+
+  lighting: {
+    starAmbient: 0,
+  },
+
+  sky: {
+    seed: 2300,
+    radius: 900,
+    background: ["#02040b", "#000000"],
+    starLayers: [
+      { count: 1800, pointSize: 1.0, brightness: 0.42 },
+      { count: 260, pointSize: 1.5, brightness: 0.62 },
+      { count: 35, pointSize: 2.2, brightness: 0.8 },
+    ],
+  },
+
+  nebula: {
+    id: "brown_dwarf_orange_nebula",
+    seed: 23017,
+    position: [0, 0, 0],
+    rotation: [0.08, -0.35, 0.12],
+    radius: 90,
+    segments: 40,
+    density: 0.82,
+    absorption: 1.45,
+    emissionStrength: 0.62,
+    anisotropy: 0.34,
+    stepScale: 0.72,
+    innerVoid: 0.34,
+    outerSoftness: 0.24,
+    warpStrength: 0.22,
+    coolColor: [0.14, 0.22, 0.82],
+    warmColor: [1.15, 0.16, 0.035],
+    hotColor: [1.95, 0.58, 0.1],
+    dustColor: [0.02, 0.006, 0.012],
+  },
+
+  spriteTypes: {
+    brownDwarf: {
+      shape: "brownDwarf",
+      radius: 1,
+      color: [150, 72, 45],
+      glow: 0.35,
+      metadata: {
+        massJupiter: 30,
+        radiusJupiter: 1,
+        estimatedTemperatureK: 950,
+        spectralStyle: "cool T-type",
+        atmosphere:
+          "Dim near-visible glow, methane absorption, and patchy sulfide/silicate cloud bands.",
+      },
+    },
+  },
+
+  sprites: [
+    {
+      id: "central_brown_dwarf",
+      type: "brownDwarf",
+      position: [0, 0, 0],
+      scale: 30,
+      rotation: -0.08,
+      lightIntensity: 1.9,
+      lightRange: 650,
+      tags: ["star", "brown_dwarf", "navigation_anchor"],
+    },
+  ],
+  structureTypes: {},
+  structures: [],
+  signals: [],
+};
+
+export default brownDwarf;

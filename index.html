@@ -55,6 +55,36 @@
       .hud strong {
         color: #ffffff;
       }
+
+      .metrics {
+        position: fixed;
+        right: 16px;
+        top: 16px;
+        display: grid;
+        grid-template-columns: repeat(3, auto);
+        gap: 8px;
+        color: rgba(238, 245, 255, 0.82);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        pointer-events: none;
+        user-select: none;
+      }
+
+      .metrics span {
+        min-width: 76px;
+        border: 1px solid rgba(170, 205, 255, 0.16);
+        border-radius: 6px;
+        background: rgba(2, 7, 18, 0.72);
+        padding: 6px 8px;
+        text-align: right;
+        backdrop-filter: blur(12px);
+      }
+
+      @media (max-width: 820px) {
+        .metrics {
+          top: 58px;
+        }
+      }
     </style>
   </head>
   <body>
@@ -65,6 +95,14 @@
       <span>Space / Shift vertical</span>
       <span>E boost</span>
       <span>Click + mouse look</span>
+    </div>
+    <div
+      class="metrics"
+      title="CPU and GPU percentages show usage of a 16.7 ms frame budget"
+    >
+      <span id="metric-fps">FPS --</span>
+      <span id="metric-cpu">CPU --</span>
+      <span id="metric-gpu">GPU --</span>
     </div>
     <script src="https://cdn.babylonjs.com/babylon.js"></script>
     <script type="module" src="./app.js"></script>
