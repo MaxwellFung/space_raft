@@ -1,5 +1,5 @@
 import { createBrownDwarf } from "./brown-dwarf-renderer.js";
-import { createNebula } from "./nebula-renderer.js";
+import { createDebrisField } from "./debris-field-renderer.js";
 
 const B = window.BABYLON;
 
@@ -25,8 +25,8 @@ export function buildLevel(scene, level) {
 
   return {
     starfield: createStarfield(scene, level.sky),
-    nebula: level.nebula
-      ? createNebula(scene, level.nebula, occluder)
+    debrisField: level.debrisField
+      ? createDebrisField(scene, level.debrisField, occluder)
       : null,
     objects,
   };

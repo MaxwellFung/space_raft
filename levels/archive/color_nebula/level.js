@@ -1,8 +1,9 @@
-const brownDwarf = {
+// Archived 2026-07-06: the original colorful nebula level, preserved as a
+// loadable snapshot before the live environment became the Debris Field.
+const colorNebula = {
   id: "brown_dwarf",
-  name: "Debris Field",
-  description:
-    "Human-scale remnants of a shattered rocky planet orbit a dim brown dwarf.",
+  name: "Brown Dwarf",
+  description: "A solitary dim brown dwarf in deep space.",
 
   spawn: {
     position: [0, 0, -240],
@@ -29,12 +30,8 @@ const brownDwarf = {
     ],
   },
 
-  debrisField: {
-    id: "shattered_planet_debris_field",
-    material: "differentiated rocky-planet fragments",
-    fragmentSizeMeters: [0.5, 3],
-    composition:
-      "Mafic basalt, silicate crust and mantle, feldspar, and nickel-iron fragments.",
+  nebula: {
+    id: "brown_dwarf_orange_nebula",
     seed: 23017,
     position: [0, 0, 0],
     rotation: [0.08, -0.35, 0.12],
@@ -52,14 +49,12 @@ const brownDwarf = {
     anisotropy: 0.38,
     innerVoid: 0.16,
     outerSoftness: 0.2,
-    // Fresh mafic rind -> gunmetal basalt -> iron-rich crust -> pale fracture.
-    // The brown dwarf shifts the directly lit end toward muted amber.
-    coolColor: [0.075, 0.095, 0.11],
-    violetColor: [0.24, 0.23, 0.215],
-    warmColor: [0.58, 0.285, 0.12],
-    hotColor: [1.18, 0.66, 0.27],
-    coreColor: [2.05, 1.72, 1.18],
-    dustColor: [0.004, 0.0035, 0.003],
+    coolColor: [0.015, 0.9, 1.08],
+    violetColor: [0.62, 0.16, 1.22],
+    warmColor: [1.35, 0.12, 0.52],
+    hotColor: [1.55, 0.42, 0.09],
+    coreColor: [2.65, 2.0, 1.45],
+    dustColor: [0.004, 0.006, 0.018],
   },
 
   spriteTypes: {
@@ -96,4 +91,4 @@ const brownDwarf = {
   signals: [],
 };
 
-export default brownDwarf;
+export default colorNebula;
