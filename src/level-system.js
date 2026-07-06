@@ -1,5 +1,7 @@
 import { createBrownDwarf } from "./brown-dwarf-renderer.js";
+import { createBrownDwarfImpacts } from "./brown-dwarf-impact-renderer.js";
 import { createDebrisField } from "./debris-field-renderer.js";
+import { createOrbitalPlatform } from "./orbital-platform-renderer.js";
 
 const B = window.BABYLON;
 
@@ -22,13 +24,40 @@ export function buildLevel(scene, level) {
   const occluder = definitions.find(
     (object) => object.shape === "brownDwarf",
   );
+  const primaryMesh = objects.find(Boolean);
+
+  const debrisField = level.debrisField
+    ? createDebrisField(scene, level.debrisField, occluder)
+    : null;
+  const impacts = level.brownDwarfImpacts && occluder
+    ? createBrownDwarfImpacts(
+        scene,
+        level.brownDwarfImpacts,
+        occluder,
+        primaryMesh,
+        glow,
+      )
+    : null;
+  const platform = level.platform
+    ? createOrbitalPlatform(
+        scene,
+        level.platform,
+        occluder,
+        debrisField?.light,
+      )
+    : null;
+  if (debrisField?.rocks && platform) {
+    debrisField.rocks.setRenderCenter(() => platform.root.position);
+    debrisField.rocks.setFlowDirection(() => platform.orbit.tangent);
+  }
 
   return {
     starfield: createStarfield(scene, level.sky),
-    debrisField: level.debrisField
-      ? createDebrisField(scene, level.debrisField, occluder)
-      : null,
+    debrisField,
+    impacts,
+    platform,
     objects,
+    primaryMesh,
   };
 }
 

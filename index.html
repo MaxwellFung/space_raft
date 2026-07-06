@@ -44,16 +44,29 @@
       }
 
       .hud strong,
-      .hud span {
+      .hud span,
+      .hud button {
         border: 1px solid rgba(170, 205, 255, 0.16);
         border-radius: 6px;
         background: rgba(2, 7, 18, 0.58);
+        color: inherit;
+        font: inherit;
         padding: 6px 8px;
         backdrop-filter: blur(12px);
       }
 
       .hud strong {
         color: #ffffff;
+      }
+
+      .hud button {
+        cursor: pointer;
+        pointer-events: auto;
+      }
+
+      .hud button[aria-pressed="true"] {
+        border-color: rgba(255, 184, 84, 0.6);
+        color: #ffe1a8;
       }
 
       .metrics {

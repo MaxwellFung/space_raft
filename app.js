@@ -4,6 +4,8 @@ import { buildLevel } from "./src/level-system.js";
 const B = window.BABYLON;
 const canvas = document.querySelector("#sandbox");
 const metrics = document.querySelector(".metrics");
+const hud = document.querySelector(".hud");
+const backgroundMusic = createBackgroundMusic("./background.mp3");
 
 addEventListener("error", (event) => showRuntimeError(event.error ?? event.message));
 addEventListener("unhandledrejection", (event) =>
@@ -18,6 +20,7 @@ const engine = new B.Engine(canvas, true, {
 engine.setHardwareScalingLevel(1 / Math.min(devicePixelRatio, 1.5));
 engine.metadata = { performance: {} };
 const scene = new B.Scene(engine);
+scene.metadata = { timeScale: 1 };
 const performanceMonitor = createPerformanceMonitor(engine, metrics);
 
 scene.clearColor.set(0, 0, 0, 1);
@@ -39,6 +42,7 @@ camera.setTarget(B.Vector3.FromArray(brownDwarfLevel.spawn.target));
 camera.attachControl(canvas, true);
 
 canvas.addEventListener("click", () => canvas.requestPointerLock?.());
+installBackgroundMusicUnlock(backgroundMusic);
 
 const keys = new Set();
 const movementKeys = new Set([
@@ -59,19 +63,71 @@ addEventListener("keydown", (event) => {
 addEventListener("keyup", (event) => keys.delete(event.code));
 
 const level = buildLevel(scene, brownDwarfLevel);
+const playerPhysics = {
+  verticalVelocity: 0,
+  grounded: Boolean(level.platform),
+};
+const timeSpeeds = [0, 0.25, 1, 4, 16, 64];
+let timeSpeedIndex = 2;
+let flyMode = false;
+if (level.platform) {
+  const orbit = level.platform.orbit;
+  const orbitStatus = document.createElement("span");
+  orbitStatus.textContent =
+    `Orbit ${(orbit.speedMps / 1000).toFixed(1)} km/s · ` +
+    `${orbit.radiusKm.toLocaleString()} km`;
+  hud.append(orbitStatus);
+}
+const timeButton = createHudButton();
+const flyButton = createHudButton();
+timeButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  timeSpeedIndex = (timeSpeedIndex + 1) % timeSpeeds.length;
+  scene.metadata.timeScale = timeSpeeds[timeSpeedIndex];
+  updateHudButtons();
+});
+flyButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  flyMode = !flyMode;
+  playerPhysics.verticalVelocity = 0;
+  updateHudButtons();
+});
+hud.append(timeButton, flyButton);
+updateHudButtons();
 
 scene.onBeforeRenderObservable.add(() => {
   const seconds = Math.min(engine.getDeltaTime() / 1000, 0.05);
+  const platformPhysics = level.platform?.physics;
   const move = B.Vector3.Zero();
   const forward = camera.getDirection(B.Axis.Z);
   const right = camera.getDirection(B.Axis.X);
+
+  if (camera.parent) {
+    const inverseParent = camera.parent
+      .getWorldMatrix()
+      .clone()
+      .invert();
+    B.Vector3.TransformNormalToRef(forward, inverseParent, forward);
+    B.Vector3.TransformNormalToRef(right, inverseParent, right);
+  }
+  if (platformPhysics && !flyMode) {
+    forward.y = 0;
+    right.y = 0;
+    if (forward.lengthSquared() > 0) forward.normalize();
+    if (right.lengthSquared() > 0) right.normalize();
+  }
 
   if (keys.has("KeyW")) move.addInPlace(forward);
   if (keys.has("KeyS")) move.subtractInPlace(forward);
   if (keys.has("KeyD")) move.addInPlace(right);
   if (keys.has("KeyA")) move.subtractInPlace(right);
-  if (keys.has("Space")) move.y += 1;
-  if (keys.has("ShiftLeft") || keys.has("ShiftRight")) move.y -= 1;
+  if (!platformPhysics) {
+    if (keys.has("Space")) move.y += 1;
+    if (keys.has("ShiftLeft") || keys.has("ShiftRight")) move.y -= 1;
+  } else if (flyMode) {
+    if (keys.has("Space")) move.y += 1;
+    if (keys.has("ShiftLeft") || keys.has("ShiftRight")) move.y -= 1;
+  }
 
   if (move.lengthSquared() > 0) {
     const speed = keys.has("KeyE")
@@ -79,8 +135,11 @@ scene.onBeforeRenderObservable.add(() => {
       : brownDwarfLevel.player.speed;
     camera.position.addInPlace(move.normalize().scale(speed * seconds));
   }
+  if (platformPhysics && !flyMode) {
+    updatePlatformGravity(platformPhysics, seconds);
+  }
 
-  level.starfield.position.copyFrom(camera.position);
+  level.starfield.position.copyFrom(camera.globalPosition);
 });
 
 engine.runRenderLoop(() => {
@@ -94,6 +153,81 @@ function showRuntimeError(error) {
   const message = error?.stack ?? error?.message ?? String(error);
   metrics.textContent = `Render error: ${message}`;
   console.error(error);
+}
+
+function createHudButton() {
+  const button = document.createElement("button");
+  button.type = "button";
+  return button;
+}
+
+function createBackgroundMusic(src) {
+  const audio = new Audio(src);
+  audio.loop = true;
+  audio.preload = "auto";
+  audio.volume = 0.21;
+  return audio;
+}
+
+function installBackgroundMusicUnlock(audio) {
+  let started = false;
+  let starting = false;
+  const events = ["pointerdown", "keydown", "touchstart"];
+  const start = () => {
+    if (started || starting) return;
+    starting = true;
+    audio.play()
+      .then(() => {
+        starting = false;
+        started = true;
+        for (const eventName of events) removeEventListener(eventName, start);
+      })
+      .catch((error) => {
+        starting = false;
+        console.warn("Background music is waiting for user interaction.", error);
+      });
+  };
+
+  start();
+  for (const eventName of events) addEventListener(eventName, start);
+}
+
+function updateHudButtons() {
+  const timeScale = scene.metadata.timeScale;
+  timeButton.textContent =
+    timeScale === 0 ? "Time paused" : `Time ${timeScale}x`;
+  timeButton.title = "Cycle simulation time speed";
+  flyButton.textContent = flyMode ? "Fly on" : "Fly off";
+  flyButton.title = "Toggle fake gravity / free flight";
+  flyButton.setAttribute("aria-pressed", String(flyMode));
+}
+
+function updatePlatformGravity(platform, seconds) {
+  const halfWidth = platform.width * 0.5;
+  const halfDepth = platform.depth * 0.5;
+  const overDeck =
+    Math.abs(camera.position.x) <= halfWidth &&
+    Math.abs(camera.position.z) <= halfDepth;
+
+  if (keys.has("Space") && playerPhysics.grounded) {
+    playerPhysics.verticalVelocity = platform.jumpSpeed;
+    playerPhysics.grounded = false;
+  }
+
+  playerPhysics.verticalVelocity -= platform.gravity * seconds;
+  camera.position.y += playerPhysics.verticalVelocity * seconds;
+
+  if (
+    overDeck &&
+    playerPhysics.verticalVelocity <= 0 &&
+    camera.position.y <= platform.eyeHeight
+  ) {
+    camera.position.y = platform.eyeHeight;
+    playerPhysics.verticalVelocity = 0;
+    playerPhysics.grounded = true;
+  } else {
+    playerPhysics.grounded = false;
+  }
 }
 
 function createPerformanceMonitor(engine, container) {

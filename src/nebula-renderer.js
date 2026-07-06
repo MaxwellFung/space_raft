@@ -39,6 +39,7 @@ export function createNebula(scene, nebula, occluder) {
   let updateInterval = 1;
   let marchSteps = nebula.marchSteps ?? 20;
   let lastQualityUpdate = 0;
+  let scaledTime = 0;
 
   for (const target of targets) {
     target.setTexture("volumeSampler", volume.detail);
@@ -60,7 +61,10 @@ export function createNebula(scene, nebula, occluder) {
   );
 
   scene.onBeforeRenderObservable.add(() => {
-    root.rotation.y += engine.getDeltaTime() * 0.0000016;
+    const timeScale = scene.metadata?.timeScale ?? 1;
+    const seconds = Math.min(engine.getDeltaTime() / 1000, 0.05);
+    scaledTime += seconds * timeScale;
+    root.rotation.y += seconds * timeScale * 0.0016;
     frameIndex += 1;
     updateAdaptiveQuality();
     if (frameIndex % updateInterval !== 0) return;
@@ -80,7 +84,7 @@ export function createNebula(scene, nebula, occluder) {
     const history = latest;
     target.setTexture("historySampler", history);
     target.setMatrix("invWorld", inverseWorld);
-    target.setVector3("cameraPosition", camera.position);
+    target.setVector3("cameraPosition", camera.globalPosition);
     target.setVector3("cameraForward", cameraForward);
     target.setVector3("cameraRight", cameraRight);
     target.setVector3("cameraUp", cameraUp);
@@ -96,7 +100,7 @@ export function createNebula(scene, nebula, occluder) {
     target.setFloat("aspect", engine.getAspectRatio(camera));
     target.setFloat("previousTanHalfFov", Math.tan(camera.fov * 0.5));
     target.setFloat("previousAspect", engine.getAspectRatio(camera));
-    target.setFloat("time", performance.now() * 0.001);
+    target.setFloat("time", scaledTime);
     target.setFloat("frameIndex", frameIndex % 64);
     target.setFloat("marchSteps", marchSteps);
     target.setFloat(
@@ -215,7 +219,7 @@ function createComposite(
     camera.getDirectionToRef(B.Axis.X, cameraRight);
     camera.getDirectionToRef(B.Axis.Y, cameraUp);
     effect.setTexture("nebulaSampler", texture);
-    effect.setVector3("cameraPosition", camera.position);
+    effect.setVector3("cameraPosition", camera.globalPosition);
     effect.setVector3("cameraForward", cameraForward);
     effect.setVector3("cameraRight", cameraRight);
     effect.setVector3("cameraUp", cameraUp);
@@ -254,6 +258,7 @@ function createVolumeTextures(scene, nebula) {
           seed,
           innerVoid,
           outerSoftness,
+          nebula,
         );
         const density =
           Math.max(0, medium.coarse - (1 - medium.erosion) * 0.12) *
@@ -316,11 +321,52 @@ function createVolumeTextures(scene, nebula) {
   return { detail, occupancy };
 }
 
-function sampleMediumData(px, py, pz, seed, innerVoid, outerSoftness) {
+export function sampleNebulaDensity(nebula, px, py, pz) {
+  const medium = sampleMediumData(
+    px,
+    py,
+    pz,
+    nebula.seed ?? 1,
+    nebula.innerVoid ?? 0.34,
+    nebula.outerSoftness ?? 0.24,
+    nebula,
+  );
+  return (
+    Math.max(0, medium.coarse - (1 - medium.erosion) * 0.12) *
+    (nebula.density ?? 0.82)
+  );
+}
+
+function sampleMediumData(
+  px,
+  py,
+  pz,
+  seed,
+  innerVoid,
+  outerSoftness,
+  nebula = {},
+) {
   const radius = Math.hypot(px, py, pz);
   const outer = 1 - smoothStep(1 - outerSoftness, 1, radius);
-  const inner = smoothStep(innerVoid, innerVoid + 0.18, radius);
-  const envelope = outer * inner;
+  const innerSoftness = nebula.innerSoftness ?? 0.18;
+  const inner = smoothStep(innerVoid, innerVoid + innerSoftness, radius);
+  const voidStrength = nebula.voidStrength ?? 0;
+  const voidScale = nebula.voidScale ?? 1.6;
+  const voidThreshold = nebula.voidThreshold ?? 0.52;
+  const voidSoftness = nebula.voidSoftness ?? 0.16;
+  const voidNoise = valueFbm(
+    px * voidScale + 11.8,
+    py * voidScale - 4.6,
+    pz * voidScale + 2.9,
+    seed + 151,
+    2,
+  );
+  const voidMask = smoothStep(
+    voidThreshold,
+    voidThreshold + voidSoftness,
+    voidNoise,
+  );
+  const envelope = outer * inner * lerp(1 - voidStrength, 1, voidMask);
   const macro = valueFbm(px * 1.15, py * 1.15, pz * 1.15, seed, 3);
   const detail = valueFbm(
     px * 3.1 + 7.2,

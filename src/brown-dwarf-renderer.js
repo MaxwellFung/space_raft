@@ -25,10 +25,14 @@ export function createBrownDwarf(scene, object, glow) {
   body.material = material;
   glow.addIncludedOnlyMesh(body);
 
+  let scaledTime = 0;
   scene.onBeforeRenderObservable.add(() => {
-    material.setFloat("time", performance.now() * 0.001);
-    material.setVector3("cameraPosition", scene.activeCamera.position);
-    body.rotation.y += scene.getEngine().getDeltaTime() * 0.000006;
+    const timeScale = scene.metadata?.timeScale ?? 1;
+    const seconds = Math.min(scene.getEngine().getDeltaTime() / 1000, 0.05);
+    scaledTime += seconds * timeScale;
+    material.setFloat("time", scaledTime);
+    material.setVector3("cameraPosition", scene.activeCamera.globalPosition);
+    body.rotation.y += seconds * timeScale * 0.006;
   });
 
   return body;
@@ -183,8 +187,8 @@ function registerShader() {
         cloud * 0.55 + filament * 0.45 + curl * 0.25
       );
 
-      vec3 blackRed = vec3(0.012, 0.0015, 0.001);
-      vec3 deepRed = vec3(0.20, 0.018, 0.008);
+      vec3 blackRed = vec3(0.055, 0.006, 0.0025);
+      vec3 deepRed = vec3(0.24, 0.028, 0.011);
       vec3 ember = vec3(0.78, 0.12, 0.035);
       vec3 yellowHot = vec3(2.6, 1.08, 0.18);
 
@@ -195,14 +199,15 @@ function registerShader() {
         clamp(streaks * 0.45 - dark * 0.35, 0.0, 1.0)
       );
       color = mix(color, yellowHot, clamp(hot, 0.0, 1.0));
-      color *= 1.0 - clamp(dark * 0.82, 0.0, 0.86);
+      color *= 1.0 - clamp(dark * 0.48, 0.0, 0.58);
+      color += vec3(0.08, 0.013, 0.004) * (0.35 + streaks * 0.65);
 
       float facing = clamp(dot(worldNormal, viewDirection), 0.0, 1.0);
-      float limb = smoothstep(0.0, 0.82, facing);
-      color *= mix(0.08, 1.0, limb);
+      float limbDarkening = smoothstep(0.0, 0.7, facing);
+      color *= mix(0.58, 1.0, limbDarkening);
       color +=
-        vec3(0.12, 0.018, 0.004) *
-        pow(1.0 - facing, 2.4);
+        vec3(0.34, 0.06, 0.014) *
+        pow(1.0 - facing, 2.0);
 
       gl_FragColor = vec4(color, 1.0);
     }

@@ -6,12 +6,30 @@ const brownDwarf = {
 
   spawn: {
     position: [0, 0, -240],
-    target: [0, 0, 0],
+    target: [78, 14, 12],
   },
 
   player: {
-    speed: 12,
-    boostSpeed: 42,
+    speed: 5,
+    boostSpeed: 12,
+  },
+
+  platform: {
+    id: "interceptor_platform",
+    widthMeters: 6,
+    depthMeters: 6,
+    thicknessMeters: 0.35,
+    eyeHeightMeters: 1.7,
+    lightHeightMeters: 2.6,
+    lightRangeMeters: 16,
+    lightIntensity: 1.7,
+    metersPerWorldUnit: 8,
+    orbitRadiusKm: 300000,
+    // Sampled against the debris density field: starts inside a dense clump
+    // and crosses roughly equal high-density debris and empty gaps per orbit.
+    initialDirection: [-0.585, 0.657, 0.477],
+    gravity: 20,
+    jumpSpeed: 5.4,
   },
 
   lighting: {
@@ -32,13 +50,28 @@ const brownDwarf = {
   debrisField: {
     id: "shattered_planet_debris_field",
     material: "differentiated rocky-planet fragments",
-    fragmentSizeMeters: [0.5, 3],
+    fragmentSizeMeters: [5, 100],
+    metersPerWorldUnit: 8,
     composition:
       "Mafic basalt, silicate crust and mantle, feldspar, and nickel-iron fragments.",
     seed: 23017,
     position: [0, 0, 0],
     rotation: [0.08, -0.35, 0.12],
-    radius: 460,
+    radius: 620,
+    nearFragmentCount: 520,
+    rockRenderDistance: 210,
+    rockClumpCount: 7,
+    rockClumpRadius: 12,
+    nearRockDriftSpan: 10,
+    interceptClumpCount: 3,
+    interceptClumpDistance: [24, 72],
+    rockDensityGain: 2.8,
+    rockDensityThreshold: 0.15,
+    rockDensityExponent: 2.1,
+    nearRockFlowSpeed: 4.6,
+    minSpinRadiansPerSecond: 0.015,
+    maxSpinRadiansPerSecond: 0.09,
+    rockLightIntensity: 5.5,
     renderScale: 0.5,
     volumeResolution: 40,
     occupancyResolution: 10,
@@ -50,7 +83,10 @@ const brownDwarf = {
     absorption: 0.68,
     emissionStrength: 1.08,
     anisotropy: 0.38,
-    innerVoid: 0.16,
+    // Brown dwarf radius is 70 and this volume radius is 620, so the surface
+    // sits at ~0.113 in normalized nebula coordinates. Start slightly inside
+    // the occluded body so the same dense cloud visibly reaches the surface.
+    innerVoid: 0.07,
     outerSoftness: 0.2,
     // Fresh mafic rind -> gunmetal basalt -> iron-rich crust -> pale fracture.
     // The brown dwarf shifts the directly lit end toward muted amber.
@@ -62,6 +98,26 @@ const brownDwarf = {
     dustColor: [0.004, 0.0035, 0.003],
   },
 
+  brownDwarfImpacts: {
+    id: "debris_reentry_impacts",
+    seed: 91427,
+    spawnRatePerSecond: 34,
+    maxImpacts: 820,
+    initialImpactCount: 240,
+    showEntryTrails: false,
+    showImpactCores: true,
+    showImpactBlooms: true,
+    showAtmosphericScars: true,
+    sizeRange: [0.48, 4.95],
+    sizePower: 2.6,
+    surfaceLift: 0.42,
+    entryHeightRange: [12, 42],
+    entrySecondsRange: [0.38, 1.08],
+    plumeSecondsRange: [1.1, 2.4],
+    scarSecondsRange: [5.0, 10.0],
+    timeScaleInfluence: 0.45,
+  },
+
   spriteTypes: {
     brownDwarf: {
       shape: "brownDwarf",
@@ -69,7 +125,7 @@ const brownDwarf = {
       color: [150, 72, 45],
       glow: 0.35,
       metadata: {
-        massJupiter: 30,
+        massJupiter: 50,
         radiusJupiter: 1,
         estimatedTemperatureK: 950,
         spectralStyle: "cool T-type",
@@ -84,10 +140,10 @@ const brownDwarf = {
       id: "central_brown_dwarf",
       type: "brownDwarf",
       position: [0, 0, 0],
-      scale: 30,
+      scale: 70,
       rotation: -0.08,
-      lightIntensity: 1.9,
-      lightRange: 650,
+      lightIntensity: 2.2,
+      lightRange: 1600,
       tags: ["star", "brown_dwarf", "navigation_anchor"],
     },
   ],
