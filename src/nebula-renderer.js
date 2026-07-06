@@ -33,7 +33,7 @@ export function createNebula(scene, nebula, occluder) {
     : 0;
   const localOccluderPosition = B.Vector3.Zero();
   let latest = targets[0];
-  let writeIndex = 0;
+  let writeIndex = 1;
   let historyValid = false;
   let frameIndex = 0;
   let updateInterval = 1;
@@ -373,6 +373,14 @@ function prelightColor(px, py, pz, medium, density, nebula) {
   const core = nebula.coreColor ?? [2.2, 1.65, 1.15];
   const dustColor = nebula.dustColor ?? [0.02, 0.006, 0.012];
   const emissionStrength = nebula.emissionStrength ?? 0.62;
+  const absorption = nebula.absorption ?? 1.45;
+  const innerVoid = nebula.innerVoid ?? 0.34;
+  const radius = Math.hypot(px, py, pz);
+  const lightTransmittance = Math.exp(
+    -density * absorption * Math.max(0, radius - innerVoid),
+  );
+  const centerGlow = 1 - smoothStep(0.2, 0.86, radius);
+  const assumedLight = lightTransmittance * (0.29 + centerGlow * 0.24);
   const roseField = Math.sin(px * 3.2 + py * 1.7 - pz * 2.4) * 0.5 + 0.5;
   const violetField =
     Math.sin(px * 1.5 - py * 3.6 + pz * 2.1 + 1.8) * 0.5 + 0.5;
@@ -441,7 +449,8 @@ function prelightColor(px, py, pz, medium, density, nebula) {
       dustColor[channel],
       medium.dust * 0.68,
     );
-    color[channel] *= 0.5 + medium.erosion * 0.18;
+    color[channel] *=
+      0.22 + assumedLight * (0.54 + medium.erosion * 0.3);
     color[channel] +=
       (cool[channel] * tealWeight +
         violet[channel] * violetWeight +
@@ -454,7 +463,10 @@ function prelightColor(px, py, pz, medium, density, nebula) {
     color[channel] +=
       violet[channel] * violetZone * medium.coarse * emissionStrength * 0.18;
     color[channel] +=
-      hot[channel] * medium.emission * emissionStrength * 0.48;
+      hot[channel] *
+      medium.emission *
+      emissionStrength *
+      (0.2 + assumedLight * 0.72);
   }
 
   const coreA =
@@ -466,6 +478,16 @@ function prelightColor(px, py, pz, medium, density, nebula) {
     (0.34 + Math.max(coreA, coreB) * 1.2);
   for (let channel = 0; channel < 3; channel += 1) {
     color[channel] += core[channel] * coreMask * emissionStrength * 1.8;
+  }
+
+  const ionizedGas =
+    tealZone * smoothStep(0.08, 0.54, medium.coarse);
+  for (let channel = 0; channel < 3; channel += 1) {
+    color[channel] = lerp(
+      color[channel],
+      cool[channel] * (0.28 + assumedLight * 0.72),
+      ionizedGas * 0.72,
+    );
   }
 
   const luminance =
@@ -720,7 +742,7 @@ function registerShaders() {
           vec3 sampleColor =
             medium.rgb *
             colorRange *
-            (0.72 + lightAmount * 0.46 + emissionStrength * 0.06);
+            (0.84 + lightAmount * 0.24 + emissionStrength * 0.02);
           float alpha =
             1.0 - exp(-localDensity * absorption * stepLength);
           scattering += transmittance * sampleColor * alpha;
