@@ -259,7 +259,7 @@ async function loadShipModel(
     updatePhysicsFromShip(shipRoot, physics, platform);
     shipRoot.parent = root;
     createControlPanel(scene, root, platform.controlPanel, physics);
-    await loadFloorProp(scene, root, platform.oxygenTank, physics);
+    await loadFloorProps(scene, root, platform, physics);
     shipRoot.metadata = {
       ...(shipRoot.metadata ?? {}),
       brownDwarfWindowShadows: createBrownDwarfWindowShadows(
@@ -316,6 +316,10 @@ function createControlPanel(scene, platformRoot, panel, physics) {
     true,
   );
   drawControlPanelTexture(texture, panel);
+  if (panel.mirror) {
+    texture.uScale = -1;
+    texture.uOffset = 1;
+  }
 
   const material = new B.StandardMaterial(`${display.name}-material`, scene);
   material.diffuseTexture = texture;
@@ -348,7 +352,83 @@ function createControlPanel(scene, platformRoot, panel, physics) {
   backingMaterial.backFaceCulling = false;
   backing.material = backingMaterial;
 
+  createControlPanelBevels(
+    scene,
+    platformRoot,
+    display,
+    width,
+    height,
+    side,
+    panel,
+  );
+
   return display;
+}
+
+function createControlPanelBevels(
+  scene,
+  platformRoot,
+  display,
+  width,
+  height,
+  side,
+  panel,
+) {
+  const bevelWidth = panel.bevelWidth ?? 0.05;
+  const bevelDepth = panel.bevelDepth ?? 0.03;
+  const material = new B.StandardMaterial(`${display.name}-bevel-material`, scene);
+  material.diffuseColor = new B.Color3(0.035, 0.018, 0.015);
+  material.emissiveColor = new B.Color3(0.05, 0.002, 0);
+  material.specularColor = new B.Color3(0.18, 0.03, 0.02);
+  material.backFaceCulling = false;
+
+  const bars = [
+    {
+      name: "top",
+      size: [width + bevelWidth * 2, bevelWidth, bevelDepth],
+      offset: [0, height * 0.5 + bevelWidth * 0.5, 0],
+    },
+    {
+      name: "bottom",
+      size: [width + bevelWidth * 2, bevelWidth, bevelDepth],
+      offset: [0, -height * 0.5 - bevelWidth * 0.5, 0],
+    },
+    {
+      name: "left",
+      size: [bevelWidth, height, bevelDepth],
+      offset: [-width * 0.5 - bevelWidth * 0.5, 0, 0],
+    },
+    {
+      name: "right",
+      size: [bevelWidth, height, bevelDepth],
+      offset: [width * 0.5 + bevelWidth * 0.5, 0, 0],
+    },
+  ];
+
+  for (const bar of bars) {
+    const mesh = B.MeshBuilder.CreateBox(
+      `${display.name}-bevel-${bar.name}`,
+      {
+        width: bar.size[0],
+        height: bar.size[1],
+        depth: bar.size[2],
+      },
+      scene,
+    );
+    mesh.parent = platformRoot;
+    mesh.position.copyFrom(display.position);
+    mesh.rotation.copyFrom(display.rotation);
+    mesh.translate(B.Axis.X, bar.offset[0], B.Space.LOCAL);
+    mesh.translate(B.Axis.Y, bar.offset[1], B.Space.LOCAL);
+    mesh.translate(
+      B.Axis.Z,
+      side === "leftWall" ? -bevelDepth * 0.35 : bevelDepth * 0.35,
+      B.Space.LOCAL,
+    );
+    mesh.isPickable = false;
+    mesh.renderingGroupId = display.renderingGroupId;
+    mesh.material = material;
+  }
 }
 
 function drawControlPanelTexture(texture, panel) {
@@ -379,7 +459,7 @@ function drawControlPanelTexture(texture, panel) {
   context.fillStyle = "#ff2118";
   context.textBaseline = "middle";
   context.font = "700 34px ui-monospace, SFMono-Regular, Menlo, monospace";
-  context.fillText(panel.title ?? "STEAMPUMP", 34, 50);
+  context.fillText(panel.title ?? "STATS", 34, 50);
 
   context.font = "700 40px ui-monospace, SFMono-Regular, Menlo, monospace";
   rows.forEach(([label, value], index) => {
@@ -433,11 +513,49 @@ async function loadFloorProp(scene, platformRoot, prop, physics) {
     if (prop.keepInside !== false) {
       nudgeFloorPropInside(propRoot, physics, prop.insidePadding ?? 0.04);
     }
+    if (prop.snapTo) {
+      snapFloorPropToInterior(
+        propRoot,
+        physics,
+        prop.snapTo,
+        prop.wallPadding ?? 0.05,
+      );
+      if (prop.keepInside !== false) {
+        nudgeFloorPropInside(propRoot, physics, prop.insidePadding ?? 0.04);
+      }
+    }
     propRoot.parent = platformRoot;
     return propRoot;
   } catch (error) {
     console.error("Failed to load floor prop.", error);
     return null;
+  }
+}
+
+async function loadFloorProps(scene, platformRoot, platform, physics) {
+  const props = [
+    platform.oxygenTank,
+    ...(platform.floorProps ?? []),
+  ].filter(Boolean);
+
+  for (const prop of props) {
+    await loadFloorProp(scene, platformRoot, prop, physics);
+  }
+}
+
+function snapFloorPropToInterior(root, physics, snapTo, padding) {
+  const meshes = getRenderableMeshes(root);
+  if (!meshes.length) return;
+
+  const bounds = getMeshBounds(meshes);
+  if (snapTo === "leftWall") {
+    root.position.x += (physics.minX ?? bounds.min.x) + padding - bounds.min.x;
+  } else if (snapTo === "rightWall") {
+    root.position.x += (physics.maxX ?? bounds.max.x) - padding - bounds.max.x;
+  } else if (snapTo === "frontWall") {
+    root.position.z += (physics.minZ ?? bounds.min.z) + padding - bounds.min.z;
+  } else if (snapTo === "backWall") {
+    root.position.z += (physics.maxZ ?? bounds.max.z) - padding - bounds.max.z;
   }
 }
 
@@ -600,7 +718,8 @@ function applyGlassPaneTreatment(mesh, glassMaterial, platform) {
   mesh.hasVertexAlpha = false;
   mesh.excludeFromDepthRenderer = true;
   mesh.receiveShadows = false;
-  mesh.renderingGroupId = platform.glassRenderingGroupId ?? 2;
+  mesh.renderingGroupId = platform.glassRenderingGroupId ?? 4;
+  mesh.alphaIndex = platform.glassAlphaIndex ?? 1000;
 
   if (platform.glassEdges !== false && mesh.enableEdgesRendering) {
     mesh.enableEdgesRendering(platform.glassEdgeEpsilon ?? 0.55, true);
@@ -638,6 +757,7 @@ function createGlassThicknessShell(mesh, glassMaterial, platform) {
   shell.hasVertexAlpha = false;
   shell.excludeFromDepthRenderer = true;
   shell.renderingGroupId = mesh.renderingGroupId;
+  shell.alphaIndex = mesh.alphaIndex;
   shell.scaling = mesh.scaling.multiplyByFloats(scale, scale, scale);
   shell.metadata = {
     ...(shell.metadata ?? {}),
