@@ -456,9 +456,7 @@ function createRockGroup(scene, field, name, family, seed) {
     },
     scene,
   );
-  mesh.forceSharedVertices?.();
   sculptAsteroidMesh(mesh, seed);
-  mesh.forceSharedVertices?.();
   mesh.isPickable = false;
   mesh.alwaysSelectAsActiveMesh = true;
   mesh.useVertexColors = true;
@@ -594,13 +592,15 @@ function createRockTextures(scene, name, family, seed) {
     `${name}-albedo`,
     { width: size, height: size },
     scene,
-    false,
+    true,
+    B.Texture.TRILINEAR_SAMPLINGMODE,
   );
   const normal = new B.DynamicTexture(
     `${name}-normal`,
     { width: size, height: size },
     scene,
-    false,
+    true,
+    B.Texture.TRILINEAR_SAMPLINGMODE,
   );
   const albedoContext = albedo.getContext();
   const normalContext = normal.getContext();
