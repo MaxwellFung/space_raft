@@ -6,10 +6,17 @@ import { createOrbitalPlatform } from "./orbital-platform-renderer.js";
 const B = window.BABYLON;
 
 export function buildLevel(scene, level) {
-  const starlight = new B.HemisphericLight("starlight", B.Vector3.Up(), scene);
-  starlight.diffuse = new B.Color3(0.08, 0.1, 0.14);
-  starlight.groundColor = B.Color3.Black();
-  starlight.intensity = level.lighting?.starAmbient ?? 0.012;
+  const starAmbient = level.lighting?.starAmbient ?? 0;
+  if (level.lighting?.allowAmbientLight && starAmbient > 0) {
+    const starlight = new B.HemisphericLight(
+      "starlight",
+      B.Vector3.Up(),
+      scene,
+    );
+    starlight.diffuse = new B.Color3(0.08, 0.1, 0.14);
+    starlight.groundColor = B.Color3.Black();
+    starlight.intensity = starAmbient;
+  }
 
   const glow = new B.GlowLayer("hot-region-glow", scene, {
     blurKernelSize: 128,
@@ -40,11 +47,10 @@ export function buildLevel(scene, level) {
     : null;
   const platform = level.platform
     ? createOrbitalPlatform(
-        scene,
-        level.platform,
-        occluder,
-        debrisField?.light,
-      )
+      scene,
+      level.platform,
+      occluder,
+    )
     : null;
   if (debrisField?.rocks && platform) {
     debrisField.rocks.setRenderCenter(() => platform.root.position);

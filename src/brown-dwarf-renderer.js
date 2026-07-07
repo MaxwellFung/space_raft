@@ -10,7 +10,12 @@ export function createBrownDwarf(scene, object, glow) {
     scene,
   );
   body.position = B.Vector3.FromArray(object.position);
-  body.rotation.y = object.rotation ?? 0;
+  if (Array.isArray(object.rotation)) {
+    body.rotation = B.Vector3.FromArray(object.rotation);
+  } else {
+    body.rotation.y = object.rotation ?? 0;
+  }
+  body.metadata = object.metadata ?? {};
 
   const material = new B.ShaderMaterial(
     `${object.id}-material`,
@@ -24,6 +29,8 @@ export function createBrownDwarf(scene, object, glow) {
   material.backFaceCulling = true;
   body.material = material;
   glow.addIncludedOnlyMesh(body);
+  const light = createBrownDwarfLight(scene, object, body);
+  if (light) body.metadata.brownDwarfLight = light;
 
   let scaledTime = 0;
   scene.onBeforeRenderObservable.add(() => {
@@ -39,6 +46,24 @@ export function createBrownDwarf(scene, object, glow) {
   });
 
   return body;
+}
+
+function createBrownDwarfLight(scene, object, body) {
+  const intensity = object.lightIntensity ?? 2.2;
+  if (intensity <= 0) return null;
+
+  const light = new B.PointLight(
+    `${object.id}-light`,
+    body.position.clone(),
+    scene,
+  );
+  light.diffuse = new B.Color3(1, 0.48, 0.16);
+  light.specular = new B.Color3(1, 0.58, 0.24);
+  light.intensity = intensity;
+  light.range = object.lightRange ?? body.getBoundingInfo().boundingSphere.radiusWorld * 16;
+  light.radius = body.getBoundingInfo().boundingSphere.radiusWorld;
+  light.falloffType = B.Light.FALLOFF_STANDARD;
+  return light;
 }
 
 function profile(scene, name, fn) {

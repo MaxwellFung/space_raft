@@ -198,6 +198,8 @@ function createComposite(
   occluderRadius,
 ) {
   const engine = scene.getEngine();
+  const depthRenderer = scene.enableDepthRenderer(camera, false);
+  const depthMap = depthRenderer.getDepthMap();
   const cameraForward = B.Vector3.Zero();
   const cameraRight = B.Vector3.Zero();
   const cameraUp = B.Vector3.Zero();
@@ -215,7 +217,7 @@ function createComposite(
       "occluderPosition",
       "occluderRadius",
     ],
-    ["nebulaSampler"],
+    ["nebulaSampler", "depthSampler"],
     1,
     camera,
     B.Texture.BILINEAR_SAMPLINGMODE,
@@ -230,6 +232,7 @@ function createComposite(
     camera.getDirectionToRef(B.Axis.X, cameraRight);
     camera.getDirectionToRef(B.Axis.Y, cameraUp);
     effect.setTexture("nebulaSampler", texture);
+    effect.setTexture("depthSampler", depthMap);
     effect.setVector3("cameraPosition", camera.globalPosition);
     effect.setVector3("cameraForward", cameraForward);
     effect.setVector3("cameraRight", cameraRight);
@@ -836,6 +839,7 @@ function registerShaders() {
 
     uniform sampler2D textureSampler;
     uniform sampler2D nebulaSampler;
+    uniform sampler2D depthSampler;
     uniform vec3 cameraPosition;
     uniform vec3 cameraForward;
     uniform vec3 cameraRight;
@@ -863,6 +867,10 @@ function registerShaders() {
       float b = dot(offset, rd);
       float c = dot(offset, offset) - occluderRadius * occluderRadius;
       return b * b - c >= 0.0 && -b > 0.0;
+    }
+
+    bool hasOpaqueSceneDepth(vec2 uv) {
+      return texture2D(depthSampler, uv).r < 0.999;
     }
 
     vec4 edgeAwareNebula() {
@@ -903,6 +911,11 @@ function registerShaders() {
 
     void main() {
       vec4 sceneColor = texture2D(textureSampler, vUV);
+      if (hasOpaqueSceneDepth(vUV)) {
+        gl_FragColor = sceneColor;
+        return;
+      }
+
       vec4 nebula = edgeAwareNebula();
       gl_FragColor = vec4(
         sceneColor.rgb * nebula.a + nebula.rgb,

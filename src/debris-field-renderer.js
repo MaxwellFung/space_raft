@@ -28,6 +28,8 @@ function createRockField(scene, field) {
   const fragmentCount = field.nearFragmentCount ?? 2600;
   const maxActiveRocks = field.maxActiveRocks ?? fragmentCount;
   const initialGraceRadius = field.initialRockGraceRadius ?? 0;
+  const protectedSpawnRadius = field.protectedSpawnRadius ?? initialGraceRadius;
+  const shipGraceRadius = field.shipGraceRadius ?? protectedSpawnRadius;
   const guaranteedFrontRock = field.guaranteedFrontRock ?? true;
   const guaranteedFrontRockDistance = field.guaranteedFrontRockDistance ?? 28;
   const guaranteedFrontRockSize =
@@ -41,6 +43,7 @@ function createRockField(scene, field) {
   const fadeStart = field.rockFadeStart ?? renderDistance * 0.68;
   const fadeEnd = field.rockFadeEnd ?? renderDistance * 0.98;
   const densityFadeWidth = field.rockDensityFadeWidth ?? 0.18;
+  const nearDensityBypassRadius = field.nearRockDensityBypassRadius ?? 0;
   const transitionSeconds = field.rockTransitionSeconds ?? 1.2;
   const coOrbitFraction = field.coOrbitFraction ?? 0.78;
   const relativeDriftSpeed = field.relativeDriftSpeed ?? flowSpeed * 0.08;
@@ -132,18 +135,24 @@ function createRockField(scene, field) {
     if (initialSeed && guaranteedFrontRock) {
       const guaranteedFrontRockRadius =
         estimateRockWorldRadius(guaranteedFrontRockSize);
-      pushRock(
-        getCameraForwardLocal(
-          guaranteedFrontRockDistance + guaranteedFrontRockRadius,
+      const local = getCameraForwardLocal(
+        Math.max(
+          guaranteedFrontRockDistance,
+          protectedSpawnRadius + guaranteedFrontRockRadius,
         ),
-        guaranteedFrontRockSize,
-        random,
-        {
-          relativeVelocity: B.Vector3.Zero(),
-          material: groups.pick(random),
-          ignoreDensity: true,
-        },
       );
+      if (!isInsideProtectedSpawn(local, guaranteedFrontRockRadius)) {
+        pushRock(
+          local,
+          guaranteedFrontRockSize,
+          random,
+          {
+            relativeVelocity: B.Vector3.Zero(),
+            material: groups.pick(random),
+            ignoreDensity: true,
+          },
+        );
+      }
     }
     for (let attempt = 0; attempt < fragmentCount; attempt += 1) {
       if (rocks.length >= maxActiveRocks) break;
@@ -154,30 +163,32 @@ function createRockField(scene, field) {
       if (!initialSeed && local.lengthSquared() < stableDistance * stableDistance) {
         continue;
       }
-      const world = renderCenter.add(local);
-      const density = sampleDensityAtWorld(field, world, fieldCenter);
-      if (density < densityThreshold) continue;
+      const bypassDensity =
+        nearDensityBypassRadius > 0 &&
+        local.lengthSquared() < nearDensityBypassRadius * nearDensityBypassRadius;
+      let density = 1;
+      if (!bypassDensity) {
+        const world = renderCenter.add(local);
+        density = sampleDensityAtWorld(field, world, fieldCenter);
+        if (density < densityThreshold) continue;
 
-      const visibleDensity = (density - densityThreshold) /
-        Math.max(1 - densityThreshold, 0.0001);
-      const rockProbability = Math.pow(
-        clamp01(visibleDensity * (field.rockDensityGain ?? 5.5)),
-        field.rockDensityExponent ?? 1.35,
-      );
-      if (random() > rockProbability) {
-        continue;
+        const visibleDensity = (density - densityThreshold) /
+          Math.max(1 - densityThreshold, 0.0001);
+        const rockProbability = Math.pow(
+          clamp01(visibleDensity * (field.rockDensityGain ?? 5.5)),
+          field.rockDensityExponent ?? 1.35,
+        );
+        if (random() > rockProbability) {
+          continue;
+        }
       }
 
       const size = lerp(fragmentSizes[0], fragmentSizes[1], random() ** 2);
       const rockRadius = size / metersPerWorldUnit / 3.5;
-      if (
-        initialSeed &&
-        initialGraceRadius > 0 &&
-        local.length() < initialGraceRadius + rockRadius
-      ) {
+      if (isInsideProtectedSpawn(local, rockRadius)) {
         continue;
       }
-      pushRock(local, size, random);
+      pushRock(local, size, random, { ignoreDensity: bypassDensity });
     }
     seeded = true;
   }
@@ -187,7 +198,8 @@ function createRockField(scene, field) {
     rocks.push({
       material: options.material ?? groups.pick(random),
       base: local,
-      relativeVelocity: options.relativeVelocity ?? createRelativeOrbitalVelocity(random),
+      relativeVelocity:
+        options.relativeVelocity ?? createRelativeOrbitalVelocity(random),
       ignoreDensity: options.ignoreDensity ?? false,
       age: 0,
       spinAxis: randomDirection(random),
@@ -206,6 +218,7 @@ function createRockField(scene, field) {
         random() * Math.PI * 2,
         random() * Math.PI * 2,
       ),
+      radius: estimateRockWorldRadius(sizeMeters),
     });
   }
 
@@ -215,6 +228,17 @@ function createRockField(scene, field) {
 
   function estimateRockWorldRadius(sizeMeters) {
     return baseRockRadius(sizeMeters) * 1.55;
+  }
+
+  function isInsideProtectedSpawn(local, rockRadius) {
+    return (
+      protectedSpawnRadius > 0 &&
+      local.length() < protectedSpawnRadius + rockRadius
+    );
+  }
+
+  function isInsideShipGraceBubble(local, rockRadius) {
+    return shipGraceRadius > 0 && local.length() < shipGraceRadius + rockRadius;
   }
 
   function getCameraForwardLocal(distance) {
@@ -259,6 +283,10 @@ function createRockField(scene, field) {
       const rock = rocks[index];
       rock.age += seconds;
       const position = getRockPosition(rock);
+      if (isInsideShipGraceBubble(position, rock.radius)) {
+        rocks.splice(index, 1);
+        continue;
+      }
       if (position.lengthSquared() > renderDistance * renderDistance) {
         retiringRocks.push({
           material: rock.material,
@@ -751,6 +779,11 @@ function createRockTextures(scene, name, family, seed) {
 }
 
 function createFragmentLight(scene, field, occluder, rocks) {
+  if (!field.allowRockLight) return null;
+
+  const intensity = field.rockLightIntensity ?? 0;
+  if (intensity <= 0) return null;
+
   const position = occluder?.position ?? [0, 0, 0];
   const light = new B.PointLight(
     `${field.id}-reflected-light`,
@@ -759,7 +792,7 @@ function createFragmentLight(scene, field, occluder, rocks) {
   );
   light.diffuse = new B.Color3(1, 0.46, 0.18);
   light.specular = new B.Color3(1, 0.62, 0.3);
-  light.intensity = field.rockLightIntensity ?? 5.5;
+  light.intensity = intensity;
   light.range = field.radius * 1.65;
   light.radius = occluder ? occluder.radius * occluder.scale : 30;
   light.falloffType = B.Light.FALLOFF_STANDARD;
@@ -778,19 +811,38 @@ function applyMatrices(mesh, matrices) {
 }
 
 function applyInstanceBuffers(mesh, matrices, colors) {
+  const hasInstances = matrices.length > 0;
+  const matrixBuffer = hasInstances
+    ? new Float32Array(matrices)
+    : createHiddenInstanceMatrix();
+  const colorBuffer = hasInstances
+    ? new Float32Array(colors)
+    : new Float32Array([1, 1, 1, 0]);
+
   mesh.thinInstanceSetBuffer(
     "matrix",
-    new Float32Array(matrices),
+    matrixBuffer,
     16,
     true,
   );
   mesh.thinInstanceSetBuffer(
     "color",
-    new Float32Array(colors),
+    colorBuffer,
     4,
     true,
   );
   mesh.thinInstanceRefreshBoundingInfo(true);
+}
+
+function createHiddenInstanceMatrix() {
+  const matrix = B.Matrix.Compose(
+    new B.Vector3(0.0001, 0.0001, 0.0001),
+    B.Quaternion.Identity(),
+    new B.Vector3(0, -100000, 0),
+  );
+  const values = [];
+  matrix.copyToArray(values, 0);
+  return new Float32Array(values);
 }
 
 function sampleDensityAtWorld(field, world, fieldCenter) {

@@ -1,0 +1,55 @@
+{
+  "id": "brown-dwarf-default",
+  "level": "brown_dwarf",
+  "spawn": {
+    "position": [0, 0, -240],
+    "target": [78, 14, 12]
+  },
+  "objects": {
+    "central_brown_dwarf": {
+      "position": [0, 0, 0],
+      "rotationDegrees": [0, 0, 0],
+      "scale": 70
+    }
+  },
+  "debrisField": {
+    "position": [0, 0, 0],
+    "rotationDegrees": [4.58, -20.05, 6.88],
+    "nearFragmentCount": 720,
+    "maxActiveRocks": 520,
+    "rockRenderDistance": 240,
+    "rockStableDistance": 132,
+    "rockFadeStart": 172,
+    "rockFadeEnd": 238,
+    "rockClumpCount": 7,
+    "rockClumpRadius": 14,
+    "rockClumpDistance": 108,
+    "interceptClumpCount": 7,
+    "interceptClumpDistance": [6, 94],
+    "shipGraceRadius": 2.2,
+    "protectedSpawnRadius": 2.2,
+    "initialRockGraceRadius": 2.2,
+    "guaranteedFrontRock": true,
+    "nearRockDensityBypassRadius": 32
+  },
+  "platform": {
+    "modelRotationDegrees": [0, 0, 0],
+    "orbit": {
+      "enabled": true,
+      "primary": "central_brown_dwarf",
+      "fixed": false,
+      "radiusKm": 1200000,
+      "renderRadius": 360,
+      "radialDirection": [1, 0, 0],
+      "normalDirection": [0, 1, 0],
+      "phaseDegrees": 0,
+      "rollDegrees": 90,
+      "lockOrientation": true,
+      "floorUp": "radial",
+      "forward": "prograde",
+      "showGuide": false,
+      "guideColor": [1, 0.88, 0.05],
+      "guideAlpha": 0.95
+    }
+  }
+}
