@@ -27,15 +27,22 @@ export function createBrownDwarf(scene, object, glow) {
 
   let scaledTime = 0;
   scene.onBeforeRenderObservable.add(() => {
-    const timeScale = scene.metadata?.timeScale ?? 1;
-    const seconds = Math.min(scene.getEngine().getDeltaTime() / 1000, 0.05);
-    scaledTime += seconds * timeScale;
-    material.setFloat("time", scaledTime);
-    material.setVector3("cameraPosition", scene.activeCamera.globalPosition);
-    body.rotation.y += seconds * timeScale * 0.006;
+    profile(scene, "Brown dwarf", () => {
+      const timeScale = scene.metadata?.timeScale ?? 1;
+      const seconds = Math.min(scene.getEngine().getDeltaTime() / 1000, 0.05);
+      scaledTime += seconds * timeScale;
+      material.setFloat("time", scaledTime);
+      material.setVector3("cameraPosition", scene.activeCamera.globalPosition);
+      body.rotation.y += seconds * timeScale * 0.006;
+      scene.metadata?.profiler?.setGpuWeight("Brown dwarf", 18);
+    });
   });
 
   return body;
+}
+
+function profile(scene, name, fn) {
+  return scene.metadata?.profiler?.measure(name, fn) ?? fn();
 }
 
 function registerShader() {

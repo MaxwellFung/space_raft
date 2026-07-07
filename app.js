@@ -20,7 +20,10 @@ const engine = new B.Engine(canvas, true, {
 engine.setHardwareScalingLevel(1 / Math.min(devicePixelRatio, 1.5));
 engine.metadata = { performance: {} };
 const scene = new B.Scene(engine);
-scene.metadata = { timeScale: 1 };
+scene.metadata = {
+  timeScale: 1,
+  profiler: createAssetProfiler(),
+};
 const performanceMonitor = createPerformanceMonitor(engine, metrics);
 
 scene.clearColor.set(0, 0, 0, 1);
@@ -96,50 +99,54 @@ hud.append(timeButton, flyButton);
 updateHudButtons();
 
 scene.onBeforeRenderObservable.add(() => {
-  const seconds = Math.min(engine.getDeltaTime() / 1000, 0.05);
-  const platformPhysics = level.platform?.physics;
-  const move = B.Vector3.Zero();
-  const forward = camera.getDirection(B.Axis.Z);
-  const right = camera.getDirection(B.Axis.X);
+  scene.metadata.profiler.measure("Player", () => {
+    const seconds = Math.min(engine.getDeltaTime() / 1000, 0.05);
+    const platformPhysics = level.platform?.physics;
+    const move = B.Vector3.Zero();
+    const forward = camera.getDirection(B.Axis.Z);
+    const right = camera.getDirection(B.Axis.X);
 
-  if (camera.parent) {
-    const inverseParent = camera.parent
-      .getWorldMatrix()
-      .clone()
-      .invert();
-    B.Vector3.TransformNormalToRef(forward, inverseParent, forward);
-    B.Vector3.TransformNormalToRef(right, inverseParent, right);
-  }
-  if (platformPhysics && !flyMode) {
-    forward.y = 0;
-    right.y = 0;
-    if (forward.lengthSquared() > 0) forward.normalize();
-    if (right.lengthSquared() > 0) right.normalize();
-  }
+    if (camera.parent) {
+      const inverseParent = camera.parent
+        .getWorldMatrix()
+        .clone()
+        .invert();
+      B.Vector3.TransformNormalToRef(forward, inverseParent, forward);
+      B.Vector3.TransformNormalToRef(right, inverseParent, right);
+    }
+    if (platformPhysics && !flyMode) {
+      forward.y = 0;
+      right.y = 0;
+      if (forward.lengthSquared() > 0) forward.normalize();
+      if (right.lengthSquared() > 0) right.normalize();
+    }
 
-  if (keys.has("KeyW")) move.addInPlace(forward);
-  if (keys.has("KeyS")) move.subtractInPlace(forward);
-  if (keys.has("KeyD")) move.addInPlace(right);
-  if (keys.has("KeyA")) move.subtractInPlace(right);
-  if (!platformPhysics) {
-    if (keys.has("Space")) move.y += 1;
-    if (keys.has("ShiftLeft") || keys.has("ShiftRight")) move.y -= 1;
-  } else if (flyMode) {
-    if (keys.has("Space")) move.y += 1;
-    if (keys.has("ShiftLeft") || keys.has("ShiftRight")) move.y -= 1;
-  }
+    if (keys.has("KeyW")) move.addInPlace(forward);
+    if (keys.has("KeyS")) move.subtractInPlace(forward);
+    if (keys.has("KeyD")) move.addInPlace(right);
+    if (keys.has("KeyA")) move.subtractInPlace(right);
+    if (!platformPhysics) {
+      if (keys.has("Space")) move.y += 1;
+      if (keys.has("ShiftLeft") || keys.has("ShiftRight")) move.y -= 1;
+    } else if (flyMode) {
+      if (keys.has("Space")) move.y += 1;
+      if (keys.has("ShiftLeft") || keys.has("ShiftRight")) move.y -= 1;
+    }
 
-  if (move.lengthSquared() > 0) {
-    const speed = keys.has("KeyE")
-      ? brownDwarfLevel.player.boostSpeed
-      : brownDwarfLevel.player.speed;
-    camera.position.addInPlace(move.normalize().scale(speed * seconds));
-  }
-  if (platformPhysics && !flyMode) {
-    updatePlatformGravity(platformPhysics, seconds);
-  }
+    if (move.lengthSquared() > 0) {
+      const speed = keys.has("KeyE")
+        ? brownDwarfLevel.player.boostSpeed
+        : brownDwarfLevel.player.speed;
+      camera.position.addInPlace(move.normalize().scale(speed * seconds));
+    }
+    if (platformPhysics && !flyMode) {
+      updatePlatformGravity(platformPhysics, seconds);
+    }
 
-  level.starfield.position.copyFrom(camera.globalPosition);
+    level.starfield.position.copyFrom(camera.globalPosition);
+    scene.metadata.profiler.setGpuWeight("Starfield", 1.8);
+    scene.metadata.profiler.setGpuWeight("Platform", level.platform ? 0.8 : 0);
+  });
 });
 
 engine.runRenderLoop(() => {
@@ -230,11 +237,83 @@ function updatePlatformGravity(platform, seconds) {
   }
 }
 
+function createAssetProfiler() {
+  const currentCpu = new Map();
+  const smoothedCpu = new Map();
+  const gpuWeights = new Map();
+
+  return {
+    beginFrame() {
+      currentCpu.clear();
+    },
+
+    measure(name, fn) {
+      const start = performance.now();
+      try {
+        return fn();
+      } finally {
+        this.addCpu(name, performance.now() - start);
+      }
+    },
+
+    addCpu(name, milliseconds) {
+      currentCpu.set(name, (currentCpu.get(name) ?? 0) + milliseconds);
+    },
+
+    setGpuWeight(name, weight) {
+      if (!Number.isFinite(weight) || weight <= 0) {
+        gpuWeights.delete(name);
+      } else {
+        gpuWeights.set(name, weight);
+      }
+    },
+
+    getCpuBreakdown(totalCpuMs) {
+      for (const [name, milliseconds] of currentCpu) {
+        const previous = smoothedCpu.get(name) ?? milliseconds;
+        smoothedCpu.set(name, previous * 0.84 + milliseconds * 0.16);
+      }
+      const measured = [...smoothedCpu.entries()]
+        .filter(([, milliseconds]) => milliseconds > 0.002);
+      const measuredTotal = measured.reduce(
+        (sum, [, milliseconds]) => sum + milliseconds,
+        0,
+      );
+      const denominator = Math.max(totalCpuMs, measuredTotal, 0.0001);
+      const other = Math.max(0, totalCpuMs - measuredTotal);
+      const rows = measured.map(([name, milliseconds]) => ({
+        name,
+        percent: (milliseconds / denominator) * 100,
+      }));
+      if (other / denominator > 0.04) {
+        rows.push({ name: "Render/other", percent: (other / denominator) * 100 });
+      }
+      return rows.sort((a, b) => b.percent - a.percent);
+    },
+
+    getGpuBreakdown() {
+      const rows = [...gpuWeights.entries()]
+        .filter(([, weight]) => weight > 0)
+        .map(([name, weight]) => ({ name, weight }));
+      const total = rows.reduce((sum, row) => sum + row.weight, 0);
+      if (total <= 0) return [];
+      return rows
+        .map((row) => ({
+          name: row.name,
+          percent: (row.weight / total) * 100,
+        }))
+        .sort((a, b) => b.percent - a.percent);
+    },
+  };
+}
+
 function createPerformanceMonitor(engine, container) {
   const frameBudget = 1000 / 60;
   const fpsElement = container.querySelector("#metric-fps");
   const cpuElement = container.querySelector("#metric-cpu");
   const gpuElement = container.querySelector("#metric-gpu");
+  const cpuBreakdownElement = container.querySelector("#metric-cpu-breakdown");
+  const gpuBreakdownElement = container.querySelector("#metric-gpu-breakdown");
   const gl = engine._gl;
   const supportsTimerQuery =
     typeof WebGL2RenderingContext !== "undefined" &&
@@ -286,6 +365,7 @@ function createPerformanceMonitor(engine, container) {
   return {
     beginFrame() {
       pollGpuQueries();
+      engine.scenes[0]?.metadata?.profiler?.beginFrame();
       return {
         cpuStart: performance.now(),
         gpuQuery: beginGpuQuery(),
@@ -313,6 +393,13 @@ function createPerformanceMonitor(engine, container) {
       fpsElement.textContent = `FPS ${fps}`;
       cpuElement.textContent =
         `CPU ${smoothedCpuMs.toFixed(1)}ms ${cpuPercent.toFixed(0)}%`;
+      const profiler = engine.scenes[0]?.metadata?.profiler;
+      if (profiler && cpuBreakdownElement && gpuBreakdownElement) {
+        cpuBreakdownElement.textContent =
+          `CPU parts ${formatBreakdown(profiler.getCpuBreakdown(smoothedCpuMs))}`;
+        gpuBreakdownElement.textContent =
+          `GPU est ${formatBreakdown(profiler.getGpuBreakdown())}`;
+      }
 
       if (smoothedGpuMs === null) {
         gpuElement.textContent = "GPU n/a";
@@ -323,4 +410,12 @@ function createPerformanceMonitor(engine, container) {
       }
     },
   };
+}
+
+function formatBreakdown(rows) {
+  if (!rows.length) return "--";
+  return rows
+    .slice(0, 5)
+    .map((row) => `${row.name} ${Math.round(row.percent)}%`)
+    .join(" · ");
 }

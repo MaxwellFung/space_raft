@@ -99,21 +99,23 @@ export function createBrownDwarfImpacts(scene, config, primary, primaryMesh, glo
   }
 
   scene.onBeforeRenderObservable.add(() => {
-    const rawSeconds = Math.min(scene.getEngine().getDeltaTime() / 1000, 0.05);
-    const sceneTimeScale = scene.metadata?.timeScale ?? 1;
-    const seconds = rawSeconds * lerp(1, sceneTimeScale, timeScaleInfluence);
-    simulationTime += seconds;
-    spawnAccumulator += seconds * spawnRate;
+    profile(scene, "Impacts", () => {
+      const rawSeconds = Math.min(scene.getEngine().getDeltaTime() / 1000, 0.05);
+      const sceneTimeScale = scene.metadata?.timeScale ?? 1;
+      const seconds = rawSeconds * lerp(1, sceneTimeScale, timeScaleInfluence);
+      simulationTime += seconds;
+      spawnAccumulator += seconds * spawnRate;
 
-    while (spawnAccumulator >= 1 && impacts.length < maxImpacts) {
-      spawnAccumulator -= 1;
-      impacts.push(createImpact(random));
-    }
-    if (impacts.length < Math.min(maxImpacts, spawnRate * 2)) {
-      impacts.push(createImpact(random));
-    }
+      while (spawnAccumulator >= 1 && impacts.length < maxImpacts) {
+        spawnAccumulator -= 1;
+        impacts.push(createImpact(random));
+      }
+      if (impacts.length < Math.min(maxImpacts, spawnRate * 2)) {
+        impacts.push(createImpact(random));
+      }
 
-    updateImpacts(seconds);
+      updateImpacts(seconds);
+    });
   });
 
   return root;
@@ -293,6 +295,16 @@ export function createBrownDwarfImpacts(scene, config, primary, primaryMesh, glo
     applyInstanceBuffers(flashMesh, flashMatrices, flashColors);
     applyInstanceBuffers(plumeMesh, plumeMatrices, plumeColors);
     applyInstanceBuffers(scarMesh, scarMatrices, scarColors);
+    scene.metadata?.profiler?.setGpuWeight(
+      "Impacts",
+      (trailMatrices.length +
+        flashMatrices.length +
+        plumeMatrices.length +
+        scarMatrices.length) /
+        16 *
+        0.12 +
+        0.5,
+    );
   }
 
   function pushSurfaceDisc(matrices, colors, position, normal, size, twist, color) {
@@ -566,6 +578,10 @@ function matrixFromAxes(xAxis, yAxis, zAxis) {
   values[14] = 0;
   values[15] = 1;
   return matrix;
+}
+
+function profile(scene, name, fn) {
+  return scene.metadata?.profiler?.measure(name, fn) ?? fn();
 }
 
 function randomDirection(random) {

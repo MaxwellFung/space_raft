@@ -61,65 +61,76 @@ export function createNebula(scene, nebula, occluder) {
   );
 
   scene.onBeforeRenderObservable.add(() => {
-    const timeScale = scene.metadata?.timeScale ?? 1;
-    const seconds = Math.min(engine.getDeltaTime() / 1000, 0.05);
-    scaledTime += seconds * timeScale;
-    root.rotation.y += seconds * timeScale * 0.0016;
-    frameIndex += 1;
-    updateAdaptiveQuality();
-    if (frameIndex % updateInterval !== 0) return;
+    profile(scene, "Nebula", () => {
+      const timeScale = scene.metadata?.timeScale ?? 1;
+      const seconds = Math.min(engine.getDeltaTime() / 1000, 0.05);
+      scaledTime += seconds * timeScale;
+      root.rotation.y += seconds * timeScale * 0.0016;
+      frameIndex += 1;
+      updateAdaptiveQuality();
+      if (frameIndex % updateInterval !== 0) return;
 
-    root.computeWorldMatrix(true);
-    inverseWorld.copyFrom(root.getWorldMatrix()).invert();
-    B.Vector3.TransformCoordinatesToRef(
-      occluderPosition,
-      inverseWorld,
-      localOccluderPosition,
-    );
-    camera.getDirectionToRef(B.Axis.Z, cameraForward);
-    camera.getDirectionToRef(B.Axis.X, cameraRight);
-    camera.getDirectionToRef(B.Axis.Y, cameraUp);
+      root.computeWorldMatrix(true);
+      inverseWorld.copyFrom(root.getWorldMatrix()).invert();
+      B.Vector3.TransformCoordinatesToRef(
+        occluderPosition,
+        inverseWorld,
+        localOccluderPosition,
+      );
+      camera.getDirectionToRef(B.Axis.Z, cameraForward);
+      camera.getDirectionToRef(B.Axis.X, cameraRight);
+      camera.getDirectionToRef(B.Axis.Y, cameraUp);
 
-    const target = targets[writeIndex];
-    const history = latest;
-    target.setTexture("historySampler", history);
-    target.setMatrix("invWorld", inverseWorld);
-    target.setVector3("cameraPosition", camera.globalPosition);
-    target.setVector3("cameraForward", cameraForward);
-    target.setVector3("cameraRight", cameraRight);
-    target.setVector3("cameraUp", cameraUp);
-    target.setVector3("previousForward", previousForward);
-    target.setVector3("previousRight", previousRight);
-    target.setVector3("previousUp", previousUp);
-    target.setVector3("occluderPosition", localOccluderPosition);
-    target.setFloat(
-      "occluderRadius",
-      occluderRadius / Math.max(nebula.radius, 0.0001),
-    );
-    target.setFloat("tanHalfFov", Math.tan(camera.fov * 0.5));
-    target.setFloat("aspect", engine.getAspectRatio(camera));
-    target.setFloat("previousTanHalfFov", Math.tan(camera.fov * 0.5));
-    target.setFloat("previousAspect", engine.getAspectRatio(camera));
-    target.setFloat("time", scaledTime);
-    target.setFloat("frameIndex", frameIndex % 64);
-    target.setFloat("marchSteps", marchSteps);
-    target.setFloat(
-      "historyWeight",
-      historyValid ? (nebula.temporalBlend ?? 0.82) : 0,
-    );
-    if (!target.isReady()) {
-      const compilationError = target.getEffect()?.getCompilationError();
-      if (compilationError) console.error(compilationError);
-      return;
-    }
-    target.render();
+      const target = targets[writeIndex];
+      const history = latest;
+      target.setTexture("historySampler", history);
+      target.setMatrix("invWorld", inverseWorld);
+      target.setVector3("cameraPosition", camera.globalPosition);
+      target.setVector3("cameraForward", cameraForward);
+      target.setVector3("cameraRight", cameraRight);
+      target.setVector3("cameraUp", cameraUp);
+      target.setVector3("previousForward", previousForward);
+      target.setVector3("previousRight", previousRight);
+      target.setVector3("previousUp", previousUp);
+      target.setVector3("occluderPosition", localOccluderPosition);
+      target.setFloat(
+        "occluderRadius",
+        occluderRadius / Math.max(nebula.radius, 0.0001),
+      );
+      target.setFloat("tanHalfFov", Math.tan(camera.fov * 0.5));
+      target.setFloat("aspect", engine.getAspectRatio(camera));
+      target.setFloat("previousTanHalfFov", Math.tan(camera.fov * 0.5));
+      target.setFloat("previousAspect", engine.getAspectRatio(camera));
+      target.setFloat("time", scaledTime);
+      target.setFloat("frameIndex", frameIndex % 64);
+      target.setFloat("marchSteps", marchSteps);
+      target.setFloat(
+        "historyWeight",
+        historyValid ? (nebula.temporalBlend ?? 0.82) : 0,
+      );
+      scene.metadata?.profiler?.setGpuWeight(
+        "Nebula",
+        engine.getRenderWidth() *
+          engine.getRenderHeight() *
+          renderScale *
+          renderScale *
+          marchSteps *
+          0.000015,
+      );
+      if (!target.isReady()) {
+        const compilationError = target.getEffect()?.getCompilationError();
+        if (compilationError) console.error(compilationError);
+        return;
+      }
+      target.render();
 
-    latest = target;
-    writeIndex = 1 - writeIndex;
-    previousForward.copyFrom(cameraForward);
-    previousRight.copyFrom(cameraRight);
-    previousUp.copyFrom(cameraUp);
-    historyValid = true;
+      latest = target;
+      writeIndex = 1 - writeIndex;
+      previousForward.copyFrom(cameraForward);
+      previousRight.copyFrom(cameraRight);
+      previousUp.copyFrom(cameraUp);
+      historyValid = true;
+    });
   });
 
   engine.onResizeObservable.add(() => {
@@ -636,6 +647,10 @@ function lerp(a, b, amount) {
 
 function clamp01(value) {
   return Math.min(Math.max(value, 0), 1);
+}
+
+function profile(scene, name, fn) {
+  return scene.metadata?.profiler?.measure(name, fn) ?? fn();
 }
 
 function registerShaders() {

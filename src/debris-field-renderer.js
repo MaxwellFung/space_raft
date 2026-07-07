@@ -1,6 +1,7 @@
 import { createNebula, sampleNebulaDensity } from "./nebula-renderer.js";
 
 const B = window.BABYLON;
+const ROCK_TEXTURE_SIZE = 512;
 
 export function createDebrisField(scene, debrisField, occluder) {
   const mist = createNebula(scene, debrisField, occluder);
@@ -20,31 +21,48 @@ function createRockField(scene, field) {
 
   const fragmentSizes = field.fragmentSizeMeters ?? [0.5, 3];
   const metersPerWorldUnit = field.metersPerWorldUnit ?? 8;
+  const runtimeSeed = field.randomizeRocks === false
+    ? "fixed"
+    : createRuntimeSeed();
   const renderDistance = field.rockRenderDistance ?? 44;
   const fragmentCount = field.nearFragmentCount ?? 2600;
+  const maxActiveRocks = field.maxActiveRocks ?? fragmentCount;
+  const initialGraceRadius = field.initialRockGraceRadius ?? 0;
+  const guaranteedFrontRock = field.guaranteedFrontRock ?? true;
+  const guaranteedFrontRockDistance = field.guaranteedFrontRockDistance ?? 28;
+  const guaranteedFrontRockSize =
+    field.guaranteedFrontRockSizeMeters ??
+    (fragmentSizes[0] + fragmentSizes[1]) * 0.32;
   const flowSpeed = field.nearRockFlowSpeed ?? 4.2;
   const clumpCount = field.rockClumpCount ?? 9;
   const clumpRadius = field.rockClumpRadius ?? 7;
-  const driftSpan = field.nearRockDriftSpan ?? clumpRadius * 0.9;
+  const clumpDistance = field.rockClumpDistance ?? renderDistance * 0.55;
+  const stableDistance = field.rockStableDistance ?? renderDistance * 0.58;
   const fadeStart = field.rockFadeStart ?? renderDistance * 0.68;
   const fadeEnd = field.rockFadeEnd ?? renderDistance * 0.98;
   const densityFadeWidth = field.rockDensityFadeWidth ?? 0.18;
   const transitionSeconds = field.rockTransitionSeconds ?? 1.2;
+  const coOrbitFraction = field.coOrbitFraction ?? 0.78;
+  const relativeDriftSpeed = field.relativeDriftSpeed ?? flowSpeed * 0.08;
+  const fastDriftSpeed = field.fastRelativeDriftSpeed ?? flowSpeed * 0.65;
   const interceptClumpCount = field.interceptClumpCount ?? 4;
   const interceptDistance = field.interceptClumpDistance ?? [8, 38];
   const fieldCenter = B.Vector3.FromArray(field.position);
   const renderCenter = B.Vector3.Zero();
   const flowDirection = B.Vector3.Zero();
+  const orbitRadial = B.Vector3.Zero();
+  const orbitNormal = B.Vector3.Up();
   let centerProvider = () => scene.activeCamera.globalPosition;
   let flowProvider = () => B.Axis.Z;
   let lastCell = "";
-  let flowOffset = 0;
   let simulationTime = 0;
-  const groups = createRockGroups(scene, field);
+  let seeded = false;
+  const groups = createRockGroups(scene, field, runtimeSeed);
   const matrices = groups.map(() => []);
   const colors = groups.map(() => []);
   const rocks = [];
   const retiringRocks = [];
+  let visibleRockInstances = 0;
 
   groups.forEach((mesh, index) => {
     mesh.parent = root;
@@ -52,22 +70,42 @@ function createRockField(scene, field) {
   });
 
   scene.onBeforeRenderObservable.add(() => {
-    const timeScale = scene.metadata?.timeScale ?? 1;
-    const seconds =
-      Math.min(scene.getEngine().getDeltaTime() / 1000, 0.05) * timeScale;
-    simulationTime += seconds;
-    const center = centerProvider();
-    renderCenter.copyFrom(center);
-    root.position.copyFrom(renderCenter);
-    flowDirection.copyFrom(flowProvider()).normalize();
-    const cell = makeCellKey(renderCenter, renderDistance * 0.38);
-    if (cell !== lastCell) {
-      lastCell = cell;
-      regenerateRocks(cell);
-    }
+    profile(scene, "Asteroids", () => {
+      const timeScale = scene.metadata?.timeScale ?? 1;
+      const seconds =
+        Math.min(scene.getEngine().getDeltaTime() / 1000, 0.05) * timeScale;
+      simulationTime += seconds;
+      const center = centerProvider();
+      renderCenter.copyFrom(center);
+      root.position.copyFrom(renderCenter);
+      flowDirection.copyFrom(flowProvider()).normalize();
+      orbitRadial.copyFrom(renderCenter).subtractInPlace(fieldCenter);
+      if (orbitRadial.lengthSquared() > 0.0001) {
+        orbitRadial.normalize();
+      } else {
+        orbitRadial.copyFrom(B.Axis.X);
+      }
+      B.Vector3.CrossToRef(orbitRadial, flowDirection, orbitNormal);
+      if (orbitNormal.lengthSquared() > 0.0001) {
+        orbitNormal.normalize();
+      } else {
+        orbitNormal.copyFrom(B.Axis.Y);
+      }
+      const cell = makeCellKey(renderCenter, renderDistance * 0.38);
+      if (cell !== lastCell) {
+        lastCell = cell;
+        regenerateRocks(cell);
+      }
 
-    flowOffset = (flowOffset + flowSpeed * seconds) % (driftSpan * 2);
-    updateRockMatrices(seconds);
+      updateRockMatrices(seconds);
+      scene.metadata?.profiler?.setGpuWeight(
+        "Asteroids",
+        visibleRockInstances *
+          ((field.rockMeshSubdivisions ?? 5) + 1) *
+          0.06 +
+          groups.length * 0.35,
+      );
+    });
   });
 
   root.setRenderCenter = (provider) => {
@@ -80,22 +118,42 @@ function createRockField(scene, field) {
   return root;
 
   function regenerateRocks(cell) {
-    retireCurrentRocks();
-    rocks.length = 0;
-    const random = createRandom(hashString(`${field.seed}:${cell}`));
+    const initialSeed = !seeded;
+    retireOuterRocks();
+    const random = createRandom(hashString(`${field.seed}:${runtimeSeed}:${cell}`));
     const densityThreshold = field.rockDensityThreshold ?? 0.08;
     const clumps = createClumps(
       random,
       clumpCount,
-      renderDistance * 0.86,
+      clumpDistance,
       interceptClumpCount,
       interceptDistance,
     );
+    if (initialSeed && guaranteedFrontRock) {
+      const guaranteedFrontRockRadius =
+        estimateRockWorldRadius(guaranteedFrontRockSize);
+      pushRock(
+        getCameraForwardLocal(
+          guaranteedFrontRockDistance + guaranteedFrontRockRadius,
+        ),
+        guaranteedFrontRockSize,
+        random,
+        {
+          relativeVelocity: B.Vector3.Zero(),
+          material: groups.pick(random),
+          ignoreDensity: true,
+        },
+      );
+    }
     for (let attempt = 0; attempt < fragmentCount; attempt += 1) {
+      if (rocks.length >= maxActiveRocks) break;
       const clump = clumps[Math.floor(random() * clumps.length)];
       const local = clump
         .add(randomPointInSphere(random, clumpRadius * lerp(0.45, 1.35, random())));
       if (local.lengthSquared() > renderDistance * renderDistance) continue;
+      if (!initialSeed && local.lengthSquared() < stableDistance * stableDistance) {
+        continue;
+      }
       const world = renderCenter.add(local);
       const density = sampleDensityAtWorld(field, world, fieldCenter);
       if (density < densityThreshold) continue;
@@ -112,34 +170,74 @@ function createRockField(scene, field) {
 
       const size = lerp(fragmentSizes[0], fragmentSizes[1], random() ** 2);
       const rockRadius = size / metersPerWorldUnit / 3.5;
-      rocks.push({
-        material: groups.pick(random),
-        base: local,
-        drift: random() * driftSpan * 2,
-        age: 0,
-        spinAxis: randomDirection(random),
-        spinRate: lerp(
-          field.minSpinRadiansPerSecond ?? 0.015,
-          field.maxSpinRadiansPerSecond ?? 0.09,
-          random(),
-        ) * (random() < 0.5 ? -1 : 1),
-        scale: new B.Vector3(
-          rockRadius * lerp(0.72, 1.08, random()),
-          rockRadius * lerp(0.62, 0.96, random()),
-          rockRadius * lerp(0.9, 1.48, random()),
-        ),
-        rotation: B.Quaternion.RotationYawPitchRoll(
-          random() * Math.PI * 2,
-          random() * Math.PI * 2,
-          random() * Math.PI * 2,
-        ),
-      });
+      if (
+        initialSeed &&
+        initialGraceRadius > 0 &&
+        local.length() < initialGraceRadius + rockRadius
+      ) {
+        continue;
+      }
+      pushRock(local, size, random);
     }
+    seeded = true;
   }
 
-  function retireCurrentRocks() {
-    for (const rock of rocks) {
+  function pushRock(local, sizeMeters, random, options = {}) {
+    const rockRadius = baseRockRadius(sizeMeters);
+    rocks.push({
+      material: options.material ?? groups.pick(random),
+      base: local,
+      relativeVelocity: options.relativeVelocity ?? createRelativeOrbitalVelocity(random),
+      ignoreDensity: options.ignoreDensity ?? false,
+      age: 0,
+      spinAxis: randomDirection(random),
+      spinRate: lerp(
+        field.minSpinRadiansPerSecond ?? 0.015,
+        field.maxSpinRadiansPerSecond ?? 0.09,
+        random(),
+      ) * (random() < 0.5 ? -1 : 1),
+      scale: new B.Vector3(
+        rockRadius * lerp(0.72, 1.08, random()),
+        rockRadius * lerp(0.62, 0.96, random()),
+        rockRadius * lerp(0.9, 1.48, random()),
+      ),
+      rotation: B.Quaternion.RotationYawPitchRoll(
+        random() * Math.PI * 2,
+        random() * Math.PI * 2,
+        random() * Math.PI * 2,
+      ),
+    });
+  }
+
+  function baseRockRadius(sizeMeters) {
+    return sizeMeters / metersPerWorldUnit / 3.5;
+  }
+
+  function estimateRockWorldRadius(sizeMeters) {
+    return baseRockRadius(sizeMeters) * 1.55;
+  }
+
+  function getCameraForwardLocal(distance) {
+    const camera = scene.activeCamera;
+    root.computeWorldMatrix(true);
+    camera.parent?.computeWorldMatrix?.(true);
+    camera.computeWorldMatrix(true);
+    const cameraPosition = camera.globalPosition.clone();
+    const forward = camera.getDirection(B.Axis.Z);
+    if (forward.lengthSquared() < 0.0001) forward.copyFrom(B.Axis.Z);
+    forward.normalize();
+    return cameraPosition
+      .subtract(renderCenter)
+      .addInPlace(forward.scale(distance));
+  }
+
+  function retireOuterRocks() {
+    for (let index = rocks.length - 1; index >= 0; index -= 1) {
+      const rock = rocks[index];
       const position = getRockPosition(rock);
+      if (position.lengthSquared() < stableDistance * stableDistance) {
+        continue;
+      }
       retiringRocks.push({
         material: rock.material,
         position,
@@ -149,6 +247,7 @@ function createRockField(scene, field) {
         scale: rock.scale,
         rotation: rock.rotation,
       });
+      rocks.splice(index, 1);
     }
   }
 
@@ -156,21 +255,36 @@ function createRockField(scene, field) {
     for (const matrixSet of matrices) matrixSet.length = 0;
     for (const colorSet of colors) colorSet.length = 0;
     const densityThreshold = field.rockDensityThreshold ?? 0.08;
-    for (const rock of rocks) {
+    for (let index = rocks.length - 1; index >= 0; index -= 1) {
+      const rock = rocks[index];
       rock.age += seconds;
       const position = getRockPosition(rock);
-      wrapVectorInSphere(position, renderDistance);
+      if (position.lengthSquared() > renderDistance * renderDistance) {
+        retiringRocks.push({
+          material: rock.material,
+          position,
+          age: 0,
+          spinAxis: rock.spinAxis,
+          spinRate: rock.spinRate,
+          scale: rock.scale,
+          rotation: rock.rotation,
+        });
+        rocks.splice(index, 1);
+        continue;
+      }
       const world = renderCenter.add(position);
       const density = sampleDensityAtWorld(field, world, fieldCenter);
-      if (density < densityThreshold) {
+      if (!rock.ignoreDensity && density < densityThreshold) {
         continue;
       }
       const distanceFade = 1 - smoothstep(fadeStart, fadeEnd, position.length());
-      const densityFade = smoothstep(
-        densityThreshold,
-        densityThreshold + densityFadeWidth,
-        density,
-      );
+      const densityFade = rock.ignoreDensity
+        ? 1
+        : smoothstep(
+            densityThreshold,
+            densityThreshold + densityFadeWidth,
+            density,
+          );
       const birthFade = smoothstep(0, transitionSeconds, rock.age);
       const fade = clamp01(distanceFade * densityFade * birthFade);
       if (fade <= 0.015) continue;
@@ -198,7 +312,6 @@ function createRockField(scene, field) {
         continue;
       }
       const position = rock.position.clone();
-      wrapVectorInSphere(position, renderDistance);
       const distanceFade = 1 - smoothstep(fadeStart, fadeEnd, position.length());
       const deathFade = 1 - smoothstep(0, transitionSeconds, rock.age);
       const fade = clamp01(distanceFade * deathFade);
@@ -222,12 +335,42 @@ function createRockField(scene, field) {
     groups.forEach((mesh, index) =>
       applyInstanceBuffers(mesh, matrices[index], colors[index]),
     );
+    visibleRockInstances = matrices.reduce(
+      (sum, matrixSet) => sum + matrixSet.length / 16,
+      0,
+    );
   }
 
   function getRockPosition(rock) {
-    return rock.base.add(
-      flowDirection.scale(((rock.drift + flowOffset) % (driftSpan * 2)) - driftSpan),
-    );
+    return rock.base.add(rock.relativeVelocity.scale(rock.age));
+  }
+
+  function createRelativeOrbitalVelocity(random) {
+    if (random() < coOrbitFraction) {
+      const speed = lerp(
+        relativeDriftSpeed * 0.18,
+        relativeDriftSpeed,
+        random() ** 1.8,
+      );
+      const shearDirection = random() < 0.5 ? -1 : 1;
+      return flowDirection
+        .scale(speed * shearDirection)
+        .addInPlace(orbitRadial.scale(speed * lerp(-0.12, 0.12, random())))
+        .addInPlace(orbitNormal.scale(speed * lerp(-0.08, 0.08, random())));
+    }
+
+    const speed = lerp(fastDriftSpeed * 0.45, fastDriftSpeed, random() ** 0.75);
+    const shearDirection = random() < 0.5 ? -1 : 1;
+
+    // Local Hill-frame approximation: small semi-major-axis differences show up
+    // as steady tangential Kepler shear, while more eccentric/inclined fragments
+    // cross the observer's path with stronger radial and vertical components.
+    // No sinusoidal reversal, so rocks drift like real neighboring orbits
+    // instead of bobbing back and forth.
+    return flowDirection
+      .scale(speed * shearDirection)
+      .addInPlace(orbitRadial.scale(speed * lerp(-0.65, 0.65, random())))
+      .addInPlace(orbitNormal.scale(speed * lerp(-0.42, 0.42, random())));
   }
 }
 
@@ -252,7 +395,7 @@ function createClumps(
   return clumps;
 }
 
-function createRockGroups(scene, field) {
+function createRockGroups(scene, field, runtimeSeed) {
   const families = [
     {
       name: "carbonaceous",
@@ -293,7 +436,7 @@ function createRockGroups(scene, field) {
           field,
           `${family.name}-${variant + 1}`,
           family,
-          hashString(`${field.seed}:${family.name}:${variant}`),
+          hashString(`${field.seed}:${runtimeSeed}:${family.name}:${variant}`),
         ),
       );
     }
@@ -307,31 +450,53 @@ function createRockGroup(scene, field, name, family, seed) {
     `${field.id}-${name}`,
     {
       radius: 1,
-      subdivisions: field.rockMeshSubdivisions ?? 3,
+      subdivisions: field.rockMeshSubdivisions ?? 5,
       flat: false,
       updatable: true,
     },
     scene,
   );
+  mesh.forceSharedVertices?.();
   sculptAsteroidMesh(mesh, seed);
+  mesh.forceSharedVertices?.();
   mesh.isPickable = false;
   mesh.alwaysSelectAsActiveMesh = true;
   mesh.useVertexColors = true;
   mesh.hasVertexAlpha = true;
 
+  const textures = createRockTextures(
+    scene,
+    `${field.id}-${name}`,
+    family,
+    seed,
+  );
+  const textureRandom = createRandom(seed ^ 0x51ed270b);
+  const textureTiling = field.rockTextureTiling ?? 3.25;
+  const textureUScale = textureTiling * lerp(0.86, 1.18, textureRandom());
+  const textureVScale = textureTiling * lerp(0.9, 1.14, textureRandom());
+  for (const texture of [textures.albedo, textures.normal]) {
+    texture.uScale = textureUScale;
+    texture.vScale = textureVScale;
+  }
   const material = new B.StandardMaterial(
     `${field.id}-${name}-material`,
     scene,
   );
   material.diffuseColor = B.Color3.FromArray(family.color);
-  material.diffuseTexture = createRockTexture(scene, `${field.id}-${name}-texture`, family, seed);
+  material.diffuseTexture = textures.albedo;
+  material.bumpTexture = textures.normal;
+  material.bumpTexture.level = field.rockNormalStrength ?? 1.35;
+  material.invertNormalMapY = true;
+  material.useParallax = true;
+  material.useParallaxOcclusion = true;
+  material.parallaxScaleBias = field.rockParallaxScaleBias ?? 0.018;
   material.specularColor = new B.Color3(
-    0.028 + family.metallic * 0.5,
-    0.026 + family.metallic * 0.34,
-    0.022 + family.metallic * 0.22,
+    0.014 + family.metallic * 0.22,
+    0.013 + family.metallic * 0.16,
+    0.012 + family.metallic * 0.1,
   );
-  material.specularPower = 18;
-  material.ambientColor = new B.Color3(0.006, 0.005, 0.004);
+  material.specularPower = 42;
+  material.ambientColor = new B.Color3(0.0025, 0.0023, 0.002);
   material.maxSimultaneousLights = 2;
   material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
   material.alphaMode = B.Engine.ALPHA_COMBINE;
@@ -350,12 +515,18 @@ function sculptAsteroidMesh(mesh, seed) {
   const axisA = randomDirection(random);
   const axisB = randomDirection(random);
   const axisC = randomDirection(random);
-  const craterCount = 8 + Math.floor(random() * 9);
+  const axisD = randomDirection(random);
+  const craterCount = 16 + Math.floor(random() * 18);
   const craters = Array.from({ length: craterCount }, () => ({
     direction: randomDirection(random),
-    radius: lerp(0.18, 0.42, random()),
-    depth: lerp(0.06, 0.18, random()),
-    rim: lerp(0.025, 0.08, random()),
+    radius: lerp(0.08, 0.38, random() ** 1.35),
+    depth: lerp(0.025, 0.16, random()),
+    rim: lerp(0.015, 0.065, random()),
+  }));
+  const chips = Array.from({ length: 5 + Math.floor(random() * 7) }, () => ({
+    normal: randomDirection(random),
+    offset: lerp(0.42, 0.86, random()),
+    strength: lerp(0.05, 0.18, random()),
   }));
 
   for (let index = 0; index < positions.length; index += 3) {
@@ -365,42 +536,77 @@ function sculptAsteroidMesh(mesh, seed) {
       positions[index + 2],
     ).normalize();
     const facets =
-      Math.abs(B.Vector3.Dot(direction, axisA)) * 0.13 +
-      Math.abs(B.Vector3.Dot(direction, axisB)) * 0.09 +
-      Math.abs(B.Vector3.Dot(direction, axisC)) * 0.07;
+      Math.abs(B.Vector3.Dot(direction, axisA)) * 0.17 +
+      Math.abs(B.Vector3.Dot(direction, axisB)) * 0.13 +
+      Math.abs(B.Vector3.Dot(direction, axisC)) * 0.1 +
+      Math.abs(B.Vector3.Dot(direction, axisD)) * 0.07;
     const ridged =
-      ridgedNoise(direction.x * 3.1 + seed * 0.001, direction.y * 3.1, direction.z * 3.1) * 0.16 +
-      ridgedNoise(direction.x * 7.6, direction.y * 7.6 + seed * 0.002, direction.z * 7.6) * 0.07 +
-      valueNoise3D(direction.x * 15.0, direction.y * 15.0, direction.z * 15.0 + seed) * 0.035;
-    let amount = 0.82 + facets + ridged;
+      ridgedNoise(direction.x * 2.5 + seed * 0.001, direction.y * 2.5, direction.z * 2.5) * 0.18 +
+      ridgedNoise(direction.x * 7.4, direction.y * 7.4 + seed * 0.002, direction.z * 7.4) * 0.1 +
+      valueNoise3D(direction.x * 18.0, direction.y * 18.0, direction.z * 18.0 + seed) * 0.045;
+    let amount = 0.78 + facets + ridged;
+    for (const chip of chips) {
+      const cut = B.Vector3.Dot(direction, chip.normal) - chip.offset;
+      if (cut > 0) {
+        amount -= smoothstep(0, 0.22, cut) * chip.strength;
+      }
+    }
     for (const crater of craters) {
       const angularDistance = Math.acos(clamp(B.Vector3.Dot(direction, crater.direction), -1, 1));
       const depression = 1 - smoothstep(crater.radius * 0.3, crater.radius, angularDistance);
       const rim = smoothstep(crater.radius * 0.72, crater.radius, angularDistance) *
         (1 - smoothstep(crater.radius, crater.radius + crater.rim, angularDistance));
       amount -= depression * crater.depth;
-      amount += rim * crater.depth * 0.42;
+      amount += rim * crater.depth * 0.58;
     }
-    amount = clamp(amount, 0.54, 1.34);
+    amount = clamp(amount, 0.46, 1.38);
     positions[index] = direction.x * amount;
     positions[index + 1] = direction.y * amount;
     positions[index + 2] = direction.z * amount;
   }
-  B.VertexData.ComputeNormals(positions, indices, normals);
+  smoothAsteroidNormals(positions, normals, seed);
   mesh.updateVerticesData(B.VertexBuffer.PositionKind, positions);
   mesh.updateVerticesData(B.VertexBuffer.NormalKind, normals);
 }
 
-function createRockTexture(scene, name, family, seed) {
-  const size = 256;
-  const texture = new B.DynamicTexture(
-    name,
+function smoothAsteroidNormals(positions, normals, seed) {
+  for (let index = 0; index < positions.length; index += 3) {
+    const direction = new B.Vector3(
+      positions[index],
+      positions[index + 1],
+      positions[index + 2],
+    ).normalize();
+    const detail = new B.Vector3(
+      valueNoise3D(direction.x * 11.0 + seed * 0.003, direction.y * 11.0, direction.z * 11.0) - 0.5,
+      valueNoise3D(direction.x * 11.0, direction.y * 11.0 + seed * 0.004, direction.z * 11.0) - 0.5,
+      valueNoise3D(direction.x * 11.0, direction.y * 11.0, direction.z * 11.0 + seed * 0.005) - 0.5,
+    ).scaleInPlace(0.12);
+    direction.addInPlace(detail).normalize();
+    normals[index] = direction.x;
+    normals[index + 1] = direction.y;
+    normals[index + 2] = direction.z;
+  }
+}
+
+function createRockTextures(scene, name, family, seed) {
+  const size = ROCK_TEXTURE_SIZE;
+  const albedo = new B.DynamicTexture(
+    `${name}-albedo`,
     { width: size, height: size },
     scene,
     false,
   );
-  const context = texture.getContext();
-  const image = context.createImageData(size, size);
+  const normal = new B.DynamicTexture(
+    `${name}-normal`,
+    { width: size, height: size },
+    scene,
+    false,
+  );
+  const albedoContext = albedo.getContext();
+  const normalContext = normal.getContext();
+  const albedoImage = albedoContext.createImageData(size, size);
+  const normalImage = normalContext.createImageData(size, size);
+  const heights = new Float32Array(size * size);
   const random = createRandom(seed ^ 0x9e3779b9);
   const veinCount = 4 + Math.floor(random() * 7);
   const veins = Array.from({ length: veinCount }, () => ({
@@ -409,19 +615,31 @@ function createRockTexture(scene, name, family, seed) {
     width: lerp(0.008, 0.026, random()),
     strength: lerp(0.08, 0.34, random()),
   }));
+  const craterCount = 42 + Math.floor(random() * 44);
+  const craters = Array.from({ length: craterCount }, () => ({
+    u: random(),
+    v: random(),
+    radius: lerp(0.012, 0.075, random() ** 1.85),
+    depth: lerp(0.05, 0.36, random() ** 0.65),
+    rim: lerp(0.12, 0.34, random()),
+  }));
 
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
       const u = x / size;
       const v = y / size;
-      const nx = u * 7.5;
-      const ny = v * 7.5;
+      const nx = u * 10.5;
+      const ny = v * 10.5;
       const grain =
-        valueNoise3D(nx, ny, seed * 0.017) * 0.58 +
-        valueNoise3D(nx * 2.7 + 19.7, ny * 2.7, seed * 0.031) * 0.28 +
-        ridgedNoise(nx * 5.5, ny * 5.5, seed * 0.011) * 0.14;
-      const pits = ridgedNoise(nx * 12.0 + 4.0, ny * 12.0 - 8.0, seed * 0.023);
+        valueNoise3D(nx, ny, seed * 0.017) * 0.48 +
+        valueNoise3D(nx * 2.9 + 19.7, ny * 2.9, seed * 0.031) * 0.28 +
+        ridgedNoise(nx * 6.4, ny * 6.4, seed * 0.011) * 0.24;
+      const pebble =
+        ridgedNoise(nx * 22.0 + 4.0, ny * 22.0 - 8.0, seed * 0.023) * 0.65 +
+        valueNoise3D(nx * 48.0, ny * 48.0, seed * 0.037) * 0.35;
+      const pits = ridgedNoise(nx * 18.0 + 4.0, ny * 18.0 - 8.0, seed * 0.023);
       let brightMineral = 0;
+      let fractureDark = 0;
       for (const vein of veins) {
         const line =
           Math.cos(vein.angle) * (u - 0.5) +
@@ -431,10 +649,45 @@ function createRockTexture(scene, name, family, seed) {
         brightMineral +=
           (1 - smoothstep(0, vein.width, Math.abs(line + (veinNoise - 0.5) * 0.12))) *
           vein.strength;
+        fractureDark +=
+          (1 - smoothstep(vein.width * 0.45, vein.width * 2.2, Math.abs(line + (veinNoise - 0.5) * 0.08))) *
+          vein.strength *
+          0.46;
       }
-      const fleck = valueNoise3D(nx * 34.0, ny * 34.0, seed * 0.07) > 0.935 ? 0.42 : 0;
-      const shadowPits = Math.pow(clamp01(1 - pits), 3.0) * 0.26;
-      const amount = clamp01(0.52 + grain * 0.5 + brightMineral + fleck - shadowPits);
+      let craterShadow = 0;
+      let craterRim = 0;
+      let craterHeight = 0;
+      for (const crater of craters) {
+        const dx = wrappedDelta(u, crater.u);
+        const dy = wrappedDelta(v, crater.v);
+        const distance = Math.hypot(dx, dy);
+        if (distance > crater.radius * (1 + crater.rim)) continue;
+        const normalized = distance / Math.max(crater.radius, 0.0001);
+        const bowl =
+          (1 - smoothstep(0.15, 1.0, normalized)) *
+          crater.depth;
+        const rim =
+          smoothstep(0.74, 1.0, normalized) *
+          (1 - smoothstep(1.0, 1.0 + crater.rim, normalized)) *
+          crater.depth *
+          0.52;
+        craterShadow += bowl * 0.72;
+        craterRim += rim * 0.46;
+        craterHeight += rim - bowl;
+      }
+      const fleck = valueNoise3D(nx * 42.0, ny * 42.0, seed * 0.07) > 0.952 ? 0.48 : 0;
+      const shadowPits = Math.pow(clamp01(1 - pits), 3.0) * 0.2;
+      const amount = clamp01(
+        0.42 +
+          grain * 0.42 +
+          pebble * 0.16 +
+          brightMineral +
+          fleck +
+          craterRim -
+          craterShadow -
+          shadowPits -
+          fractureDark,
+      );
       const warmShift = valueNoise3D(nx * 1.6 + 88.0, ny * 1.6, seed * 0.041);
       const base = family.color;
       const highlight = family.highlight;
@@ -444,16 +697,57 @@ function createRockTexture(scene, name, family, seed) {
         lerp(base[2], highlight[2], amount) * lerp(0.88, 1.04, warmShift),
       ];
       const offset = (y * size + x) * 4;
-      image.data[offset] = Math.round(clamp01(color[0]) * 255);
-      image.data[offset + 1] = Math.round(clamp01(color[1]) * 255);
-      image.data[offset + 2] = Math.round(clamp01(color[2]) * 255);
-      image.data[offset + 3] = 255;
+      albedoImage.data[offset] = Math.round(clamp01(color[0]) * 255);
+      albedoImage.data[offset + 1] = Math.round(clamp01(color[1]) * 255);
+      albedoImage.data[offset + 2] = Math.round(clamp01(color[2]) * 255);
+      albedoImage.data[offset + 3] = 255;
+      heights[y * size + x] =
+        grain * 0.22 +
+        pebble * 0.08 +
+        brightMineral * 0.06 -
+        fractureDark * 0.05 +
+        craterHeight;
     }
   }
 
-  context.putImageData(image, 0, 0);
-  texture.update();
-  return texture;
+  let minimumHeight = Infinity;
+  let maximumHeight = -Infinity;
+  for (const height of heights) {
+    minimumHeight = Math.min(minimumHeight, height);
+    maximumHeight = Math.max(maximumHeight, height);
+  }
+  const heightRange = Math.max(maximumHeight - minimumHeight, 0.0001);
+  const normalStrength = 8.5;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const left = heights[y * size + ((x - 1 + size) % size)];
+      const right = heights[y * size + ((x + 1) % size)];
+      const up = heights[((y - 1 + size) % size) * size + x];
+      const down = heights[((y + 1) % size) * size + x];
+      const dx = (right - left) * normalStrength;
+      const dy = (down - up) * normalStrength;
+      const length = Math.hypot(dx, dy, 1);
+      const offset = (y * size + x) * 4;
+      normalImage.data[offset] = Math.round((-dx / length * 0.5 + 0.5) * 255);
+      normalImage.data[offset + 1] = Math.round((dy / length * 0.5 + 0.5) * 255);
+      normalImage.data[offset + 2] = Math.round((1 / length * 0.5 + 0.5) * 255);
+      normalImage.data[offset + 3] = Math.round(
+        clamp01((heights[y * size + x] - minimumHeight) / heightRange) * 255,
+      );
+    }
+  }
+
+  albedoContext.putImageData(albedoImage, 0, 0);
+  normalContext.putImageData(normalImage, 0, 0);
+  albedo.update();
+  normal.update();
+  normal.gammaSpace = false;
+  for (const texture of [albedo, normal]) {
+    texture.wrapU = B.Texture.WRAP_ADDRESSMODE;
+    texture.wrapV = B.Texture.WRAP_ADDRESSMODE;
+    texture.anisotropicFilteringLevel = 4;
+  }
+  return { albedo, normal };
 }
 
 function createFragmentLight(scene, field, occluder, rocks) {
@@ -509,6 +803,13 @@ function randomPointInSphere(random, radius) {
   return randomDirection(random).scale(radius * random() ** (1 / 3));
 }
 
+function wrappedDelta(value, center) {
+  let delta = value - center;
+  if (delta > 0.5) delta -= 1;
+  if (delta < -0.5) delta += 1;
+  return delta;
+}
+
 function wrapVectorInSphere(position, radius) {
   const diameter = radius * 2;
   for (const axis of ["x", "y", "z"]) {
@@ -525,6 +826,17 @@ function makeCellKey(position, cellSize) {
     Math.floor(position.x / cellSize),
     Math.floor(position.y / cellSize),
     Math.floor(position.z / cellSize),
+  ].join(":");
+}
+
+function createRuntimeSeed() {
+  const cryptoValues = new Uint32Array(2);
+  globalThis.crypto?.getRandomValues?.(cryptoValues);
+  return [
+    Date.now().toString(36),
+    Math.floor(Math.random() * 0xffffffff).toString(36),
+    cryptoValues[0].toString(36),
+    cryptoValues[1].toString(36),
   ].join(":");
 }
 
@@ -548,6 +860,10 @@ function pickWeightedRockGroup(groups, families, variantsPerFamily, random) {
     }
   }
   return Math.max(groups.length - 1, 0);
+}
+
+function profile(scene, name, fn) {
+  return scene.metadata?.profiler?.measure(name, fn) ?? fn();
 }
 
 function randomDirection(random) {

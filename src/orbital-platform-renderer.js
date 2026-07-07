@@ -81,13 +81,16 @@ export function createOrbitalPlatform(
 
   updateOrbit();
   scene.onBeforeRenderObservable.add(() => {
-    const timeScale = scene.metadata?.timeScale ?? 1;
-    const seconds = Math.min(scene.getEngine().getDeltaTime() / 1000, 0.05);
-    orbitAngle =
-      (orbitAngle +
-        angularSpeed * seconds * timeScale) %
-      (Math.PI * 2);
-    updateOrbit();
+    profile(scene, "Platform", () => {
+      const timeScale = scene.metadata?.timeScale ?? 1;
+      const seconds = Math.min(scene.getEngine().getDeltaTime() / 1000, 0.05);
+      orbitAngle =
+        (orbitAngle +
+          angularSpeed * seconds * timeScale) %
+        (Math.PI * 2);
+      updateOrbit();
+      scene.metadata?.profiler?.setGpuWeight("Platform", 0.8);
+    });
   });
 
   const camera = scene.activeCamera;
@@ -97,7 +100,11 @@ export function createOrbitalPlatform(
     platform.eyeHeightMeters / metersPerWorldUnit,
     0,
   );
-  aimCameraAtPrimary();
+  camera.rotation.set(
+    0,
+    platform.initialCameraYawRadians ?? 0,
+    0,
+  );
 
   function updateOrbit() {
     const radial = initialDirection
@@ -109,16 +116,6 @@ export function createOrbitalPlatform(
       radial.scale(renderRadius),
     );
     root.rotation.y = -Math.atan2(radial.z, radial.x);
-  }
-
-  function aimCameraAtPrimary() {
-    root.computeWorldMatrix(true);
-    const inverseRoot = root.getWorldMatrix().clone().invert();
-    const localPrimary = B.Vector3.TransformCoordinates(
-      primaryPosition,
-      inverseRoot,
-    );
-    camera.setTarget(localPrimary);
   }
 
   return {
@@ -140,4 +137,8 @@ export function createOrbitalPlatform(
       jumpSpeed: platform.jumpSpeed ?? 5.4,
     },
   };
+}
+
+function profile(scene, name, fn) {
+  return scene.metadata?.profiler?.measure(name, fn) ?? fn();
 }
