@@ -54,6 +54,8 @@ function createRockField(scene, field) {
     1,
     Math.round(field.rockDensityUpdateInterval ?? 6),
   );
+  const opaqueRockFade = field.rockOpaqueFade ?? true;
+  const fadeMinScale = opaqueRockFade ? (field.rockFadeMinScale ?? 0.12) : 0.72;
   const fieldCenter = B.Vector3.FromArray(field.position);
   const renderCenter = B.Vector3.Zero();
   const flowDirection = B.Vector3.Zero();
@@ -342,14 +344,14 @@ function createRockField(scene, field) {
           simulationTime * rock.spinRate,
         ),
       );
-      const fadedScale = rock.scale.scale(lerp(0.72, 1, fade));
+      const fadedScale = rock.scale.scale(lerp(fadeMinScale, 1, fade));
       pushInstance(
         matrices[rock.material],
         colors[rock.material],
         position,
         fadedScale,
         rotation,
-        fade,
+        opaqueRockFade ? 1 : fade,
       );
     }
     for (let index = retiringRocks.length - 1; index >= 0; index -= 1) {
@@ -370,14 +372,14 @@ function createRockField(scene, field) {
           simulationTime * rock.spinRate,
         ),
       );
-      const fadedScale = rock.scale.scale(lerp(0.72, 1, fade));
+      const fadedScale = rock.scale.scale(lerp(fadeMinScale, 1, fade));
       pushInstance(
         matrices[rock.material],
         colors[rock.material],
         position,
         fadedScale,
         rotation,
-        fade,
+        opaqueRockFade ? 1 : fade,
       );
     }
     groups.forEach((mesh, index) =>
@@ -450,15 +452,15 @@ function createRockGroups(scene, field, runtimeSeed) {
   const families = [
     {
       name: "carbonaceous",
-      color: [0.055, 0.052, 0.047],
-      highlight: [0.18, 0.17, 0.15],
+      color: [0.095, 0.088, 0.078],
+      highlight: [0.24, 0.22, 0.19],
       metallic: 0.015,
       weight: 0.46,
     },
     {
       name: "basalt",
-      color: [0.09, 0.083, 0.074],
-      highlight: [0.25, 0.23, 0.2],
+      color: [0.13, 0.12, 0.105],
+      highlight: [0.31, 0.285, 0.245],
       metallic: 0.025,
       weight: 0.28,
     },
@@ -511,13 +513,14 @@ function createRockGroup(scene, field, name, family, seed) {
   mesh.isPickable = false;
   mesh.alwaysSelectAsActiveMesh = true;
   mesh.useVertexColors = true;
-  mesh.hasVertexAlpha = true;
+  mesh.hasVertexAlpha = !(field.rockOpaqueFade ?? true);
 
   const textures = createRockTextures(
     scene,
     `${field.id}-${name}`,
     family,
     seed,
+    field,
   );
   const textureRandom = createRandom(seed ^ 0x51ed270b);
   const textureTiling = field.rockTextureTiling ?? 3.25;
@@ -531,7 +534,12 @@ function createRockGroup(scene, field, name, family, seed) {
     `${field.id}-${name}-material`,
     scene,
   );
-  material.diffuseColor = B.Color3.FromArray(family.color);
+  const colorLift = field.rockColorLift ?? 0.045;
+  material.diffuseColor = new B.Color3(
+    Math.min(1, family.color[0] + colorLift * 0.5),
+    Math.min(1, family.color[1] + colorLift * 0.5),
+    Math.min(1, family.color[2] + colorLift * 0.45),
+  );
   material.diffuseTexture = textures.albedo;
   material.bumpTexture = textures.normal;
   material.bumpTexture.level = field.rockNormalStrength ?? 1.35;
@@ -548,11 +556,24 @@ function createRockGroup(scene, field, name, family, seed) {
     0.012 + family.metallic * 0.1,
   );
   material.specularPower = 42;
-  material.ambientColor = new B.Color3(0.0025, 0.0023, 0.002);
+  const ambientLift = field.rockAmbientLift ?? 0.028;
+  material.ambientColor = new B.Color3(
+    ambientLift,
+    ambientLift * 0.92,
+    ambientLift * 0.78,
+  );
   material.maxSimultaneousLights = 2;
-  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
-  material.alphaMode = B.Engine.ALPHA_COMBINE;
-  material.needDepthPrePass = true;
+  if (field.rockOpaqueFade ?? true) {
+    material.transparencyMode = B.Material.MATERIAL_OPAQUE;
+    material.alphaMode = B.Engine.ALPHA_DISABLE;
+    material.needDepthPrePass = false;
+    material.forceDepthWrite = true;
+    material.disableDepthWrite = false;
+  } else {
+    material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+    material.alphaMode = B.Engine.ALPHA_COMBINE;
+    material.needDepthPrePass = true;
+  }
   mesh.material = material;
   return mesh;
 }
@@ -640,7 +661,7 @@ function smoothAsteroidNormals(positions, normals, seed) {
   }
 }
 
-function createRockTextures(scene, name, family, seed) {
+function createRockTextures(scene, name, family, seed, field = {}) {
   const size = ROCK_TEXTURE_SIZE;
   const albedo = new B.DynamicTexture(
     `${name}-albedo`,
@@ -662,6 +683,7 @@ function createRockTextures(scene, name, family, seed) {
   const normalImage = normalContext.createImageData(size, size);
   const heights = new Float32Array(size * size);
   const random = createRandom(seed ^ 0x9e3779b9);
+  const colorLift = field.rockTextureColorLift ?? field.rockColorLift ?? 0.035;
   const veinCount = 4 + Math.floor(random() * 7);
   const veins = Array.from({ length: veinCount }, () => ({
     angle: random() * Math.PI * 2,
@@ -746,9 +768,12 @@ function createRockTextures(scene, name, family, seed) {
       const base = family.color;
       const highlight = family.highlight;
       const color = [
-        lerp(base[0], highlight[0], amount) * lerp(0.82, 1.12, warmShift),
-        lerp(base[1], highlight[1], amount) * lerp(0.84, 1.08, warmShift),
-        lerp(base[2], highlight[2], amount) * lerp(0.88, 1.04, warmShift),
+        lerp(base[0], highlight[0], amount) * lerp(0.82, 1.12, warmShift) +
+          colorLift,
+        lerp(base[1], highlight[1], amount) * lerp(0.84, 1.08, warmShift) +
+          colorLift * 0.92,
+        lerp(base[2], highlight[2], amount) * lerp(0.88, 1.04, warmShift) +
+          colorLift * 0.76,
       ];
       const offset = (y * size + x) * 4;
       albedoImage.data[offset] = Math.round(clamp01(color[0]) * 255);
