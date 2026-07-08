@@ -36,7 +36,9 @@ export function createNebula(scene, nebula, occluder) {
   let writeIndex = 1;
   let historyValid = false;
   let frameIndex = 0;
-  let updateInterval = 1;
+  const baseUpdateInterval = Math.max(1, Math.round(nebula.updateInterval ?? 2));
+  const fullRateAngularDelta = nebula.fullRateAngularDelta ?? 0.012;
+  let updateInterval = baseUpdateInterval;
   let marchSteps = nebula.marchSteps ?? 20;
   let lastQualityUpdate = 0;
   let scaledTime = 0;
@@ -68,7 +70,20 @@ export function createNebula(scene, nebula, occluder) {
       root.rotation.y += seconds * timeScale * 0.0016;
       frameIndex += 1;
       updateAdaptiveQuality();
-      if (frameIndex % updateInterval !== 0) return;
+      camera.getDirectionToRef(B.Axis.Z, cameraForward);
+      camera.getDirectionToRef(B.Axis.X, cameraRight);
+      camera.getDirectionToRef(B.Axis.Y, cameraUp);
+      const directionDot = Math.min(
+        Math.max(B.Vector3.Dot(cameraForward, previousForward), -1),
+        1,
+      );
+      const angularDelta = historyValid
+        ? Math.acos(directionDot)
+        : Number.POSITIVE_INFINITY;
+      const fullRate = !historyValid || angularDelta > fullRateAngularDelta;
+      const cadence = fullRate ? 1 : updateInterval;
+      updateGpuWeight(cadence);
+      if (!fullRate && frameIndex % updateInterval !== 0) return;
 
       root.computeWorldMatrix(true);
       inverseWorld.copyFrom(root.getWorldMatrix()).invert();
@@ -77,9 +92,6 @@ export function createNebula(scene, nebula, occluder) {
         inverseWorld,
         localOccluderPosition,
       );
-      camera.getDirectionToRef(B.Axis.Z, cameraForward);
-      camera.getDirectionToRef(B.Axis.X, cameraRight);
-      camera.getDirectionToRef(B.Axis.Y, cameraUp);
 
       const target = targets[writeIndex];
       const history = latest;
@@ -107,15 +119,6 @@ export function createNebula(scene, nebula, occluder) {
       target.setFloat(
         "historyWeight",
         historyValid ? (nebula.temporalBlend ?? 0.82) : 0,
-      );
-      scene.metadata?.profiler?.setGpuWeight(
-        "Nebula",
-        engine.getRenderWidth() *
-          engine.getRenderHeight() *
-          renderScale *
-          renderScale *
-          marchSteps *
-          0.000015,
       );
       if (!target.isReady()) {
         const compilationError = target.getEffect()?.getCompilationError();
@@ -151,14 +154,28 @@ export function createNebula(scene, nebula, occluder) {
     const minimumSteps = nebula.minimumMarchSteps ?? 12;
     if (gpuMs > 19) {
       marchSteps = minimumSteps;
-      updateInterval = 2;
+      updateInterval = Math.max(baseUpdateInterval, 3);
     } else if (gpuMs > 14.5) {
       marchSteps = Math.max(minimumSteps, targetSteps - 4);
-      updateInterval = 2;
+      updateInterval = Math.max(baseUpdateInterval, 2);
     } else {
       marchSteps = targetSteps;
-      updateInterval = 1;
+      updateInterval = baseUpdateInterval;
     }
+  }
+
+  function updateGpuWeight(cadence) {
+    scene.metadata?.profiler?.setGpuWeight(
+      "Nebula",
+      (
+        engine.getRenderWidth() *
+        engine.getRenderHeight() *
+        renderScale *
+        renderScale *
+        marchSteps *
+        0.000015
+      ) / Math.max(cadence, 1),
+    );
   }
 
   return { root, composite, targets, volume };

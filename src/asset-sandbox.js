@@ -1,4 +1,5 @@
 import brownDwarfLevel from "../levels/brown_dwarf/level.js";
+import { replaceGlassWithClearMaterial } from "./spaceship-glass.js";
 
 const B = window.BABYLON;
 const MODEL_FILE = "assets/ship.glb";
@@ -83,7 +84,7 @@ const interiorCamera = new B.UniversalCamera(
 interiorCamera.minZ = 0.01;
 interiorCamera.fov = Math.PI * 0.48;
 interiorCamera.speed = 0;
-interiorCamera.angularSensibility = 1200;
+interiorCamera.angularSensibility = 600;
 interiorCamera.inertia = 0.32;
 interiorCamera.checkCollisions = true;
 interiorCamera.keysUp = [];
@@ -249,7 +250,15 @@ async function loadModel() {
     }
 
     makeMaterialsDoubleSided(result);
-    replaceGlassWithClearMaterial(result);
+    replaceGlassWithClearMaterial(result, scene, {
+      ...brownDwarfLevel.platform,
+      glassColor: [0.82, 0.96, 1],
+      glassRimColor: [0.6, 0.86, 1],
+      glassAlpha: 0.27,
+      glassDirectIntensity: 0.48,
+      glassEnvironmentIntensity: 1.15,
+      glassThicknessAlpha: 0.16,
+    });
     enableMeshCollisions(result);
     normalizeModel(modelRoot);
     configurePlayerPhysics();
@@ -644,34 +653,6 @@ function getNamedMeshCenter(meshes, needles) {
 
   const bounds = getMeshBounds([mesh]);
   return bounds.min.add(bounds.max).scale(0.5);
-}
-
-function replaceGlassWithClearMaterial(result) {
-  const glassMaterial = new B.PBRMaterial("clear-capsule-glass", scene);
-  glassMaterial.albedoColor = new B.Color3(0.82, 0.96, 1);
-  glassMaterial.alpha = 0.28;
-  glassMaterial.metallic = 0;
-  glassMaterial.roughness = 0.01;
-  glassMaterial.indexOfRefraction = 1.46;
-  glassMaterial.directIntensity = 0.45;
-  glassMaterial.environmentIntensity = 1.25;
-  glassMaterial.microSurface = 0.98;
-  glassMaterial.backFaceCulling = false;
-  glassMaterial.twoSidedLighting = true;
-  glassMaterial.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
-  glassMaterial.needDepthPrePass = true;
-
-  for (const mesh of result.meshes) {
-    const name = `${mesh.name} ${mesh.material?.name ?? ""}`.toLowerCase();
-    if (
-      name.includes("glass") ||
-      name.includes("window") ||
-      name.includes("canopy")
-    ) {
-      mesh.material = glassMaterial;
-      mesh.visibility = 1;
-    }
-  }
 }
 
 function makeMaterialsDoubleSided(result) {

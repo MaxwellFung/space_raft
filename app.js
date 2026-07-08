@@ -1,4 +1,5 @@
 import baseBrownDwarfLevel from "./levels/brown_dwarf/level.js";
+import { createItemPortrait } from "./src/item-portraits.js";
 import { buildLevel } from "./src/level-system.js";
 import { applySaveToLevel, loadSaveFile } from "./src/save-system.js";
 
@@ -22,7 +23,7 @@ const notebookTabs = document.querySelector(".notebook-tabs");
 const notebookCopy = document.querySelector(".notebook-copy");
 const interactionPrompt = document.querySelector("#interaction-prompt");
 const backgroundMusic = createBackgroundMusic("./background.mp3");
-const BASE_MOUSE_SENSIBILITY = 5200;
+const BASE_MOUSE_SENSIBILITY = 2600;
 const CROUCH_EYE_HEIGHT_SCALE = 0.76;
 const CROUCH_TRANSITION_SPEED = 8;
 const CROUCH_SPEED_SCALE = 0.45;
@@ -83,9 +84,14 @@ addEventListener("keydown", (event) => {
   }
   if (event.code === "KeyE" && activeInteraction) {
     event.preventDefault();
-    activeInteraction.activate?.();
+    let interactionHandled = true;
+    if (activeInteraction.type === "pickup") {
+      interactionHandled = collectPickupInteraction(activeInteraction);
+    } else {
+      activeInteraction.activate?.();
+    }
     keys.delete("KeyE");
-    updateInteractionPrompt(null);
+    if (interactionHandled) updateInteractionPrompt(null);
     return;
   }
   if (movementKeys.has(event.code)) event.preventDefault();
@@ -354,11 +360,19 @@ function createItemSlot(entry, index, options = {}) {
   key.textContent = options.key ?? "";
 
   if (entry) {
-    const { count = 1, icon = "", name = "" } = entry;
+    const { count = 1, icon = "", name = "", portrait = "" } = entry;
     slot.title = name;
-    const iconLabel = document.createElement("span");
-    iconLabel.textContent = icon;
-    slot.append(iconLabel);
+    if (portrait) {
+      const image = document.createElement("img");
+      image.className = "slot-portrait";
+      image.alt = "";
+      image.src = portrait;
+      slot.append(image);
+    } else {
+      const iconLabel = document.createElement("span");
+      iconLabel.textContent = icon;
+      slot.append(iconLabel);
+    }
     if (count > 1) {
       const countLabel = document.createElement("span");
       countLabel.className = "slot-count";
@@ -368,6 +382,25 @@ function createItemSlot(entry, index, options = {}) {
   }
   slot.append(key);
   return slot;
+}
+
+function collectPickupInteraction(interaction) {
+  const slotIndex = inventoryItems.findIndex((entry) => !entry);
+  if (slotIndex === -1) {
+    updateInteractionPrompt({ prompt: "Inventory full" });
+    return false;
+  }
+
+  const item = interaction.item ?? {};
+  inventoryItems[slotIndex] = {
+    id: item.id ?? "item",
+    name: item.name ?? item.label ?? "Item",
+    count: 1,
+    portrait: item.portrait ?? createItemPortrait(item),
+  };
+  interaction.activate?.();
+  renderInventoryGrid();
+  return true;
 }
 
 function toggleInventory() {

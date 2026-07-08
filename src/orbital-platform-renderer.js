@@ -1,3 +1,9 @@
+import {
+  isSpaceshipGlassMaterial as isGlassMaterial,
+  isSpaceshipGlassMesh as isGlassMesh,
+  replaceGlassWithClearMaterial,
+} from "./spaceship-glass.js";
+
 const B = window.BABYLON;
 const GRAVITATIONAL_CONSTANT = 6.6743e-11;
 const JUPITER_MASS_KG = 1.89813e27;
@@ -10,6 +16,7 @@ export function createOrbitalPlatform(scene, platform, primary) {
   const depth = platform.depthMeters / metersPerWorldUnit;
   const root = new B.TransformNode(platform.id, scene);
   const shipRoot = new B.TransformNode(`${platform.id}-ship`, scene);
+  const interactions = [];
 
   const platformLight = createPlatformLight(
     scene,
@@ -93,7 +100,16 @@ export function createOrbitalPlatform(scene, platform, primary) {
   camera.position.set(0, physics.eyeHeight, 0);
   camera.rotation.set(0, platform.initialCameraYawRadians ?? 0, 0);
 
-  loadShipModel(scene, platform, primary, root, shipRoot, physics, camera);
+  loadShipModel(
+    scene,
+    platform,
+    primary,
+    root,
+    shipRoot,
+    physics,
+    camera,
+    interactions,
+  );
 
   function updateOrbit() {
     if (orbit.enabled ?? true) {
@@ -141,6 +157,7 @@ export function createOrbitalPlatform(scene, platform, primary) {
       guide: orbitGuide,
     },
     physics,
+    interactions,
   };
 }
 
@@ -240,6 +257,7 @@ async function loadShipModel(
   shipRoot,
   physics,
   camera,
+  interactions,
 ) {
   try {
     const modelUrl = platform.modelUrl ?? "./assets/ship.glb";
@@ -259,7 +277,7 @@ async function loadShipModel(
     updatePhysicsFromShip(shipRoot, physics, platform);
     shipRoot.parent = root;
     createControlPanel(scene, root, platform.controlPanel, physics);
-    await loadFloorProps(scene, root, platform, physics);
+    await loadFloorProps(scene, root, platform, physics, interactions);
     shipRoot.metadata = {
       ...(shipRoot.metadata ?? {}),
       brownDwarfWindowShadows: createBrownDwarfWindowShadows(
@@ -501,9 +519,10 @@ async function loadFloorProp(scene, platformRoot, prop, physics) {
       B.Vector3.FromArray(prop.position ?? [0, 0, 0]),
     );
     propRoot.computeWorldMatrix(true);
-    for (const mesh of getRenderableMeshes(propRoot)) {
+    const meshes = getRenderableMeshes(propRoot);
+    for (const mesh of meshes) {
       mesh.computeWorldMatrix(true);
-      mesh.isPickable = false;
+      mesh.isPickable = true;
       mesh.receiveShadows = true;
     }
 
@@ -532,15 +551,45 @@ async function loadFloorProp(scene, platformRoot, prop, physics) {
   }
 }
 
-async function loadFloorProps(scene, platformRoot, platform, physics) {
+async function loadFloorProps(
+  scene,
+  platformRoot,
+  platform,
+  physics,
+  interactions,
+) {
   const props = [
     platform.oxygenTank,
     ...(platform.floorProps ?? []),
   ].filter(Boolean);
 
   for (const prop of props) {
-    await loadFloorProp(scene, platformRoot, prop, physics);
+    const root = await loadFloorProp(scene, platformRoot, prop, physics);
+    if (!root) continue;
+    const interaction = createPickupInteraction(root, prop);
+    interactions?.push(interaction);
+    for (const mesh of getRenderableMeshes(root)) {
+      mesh.metadata = {
+        ...(mesh.metadata ?? {}),
+        interaction,
+      };
+    }
   }
+}
+
+function createPickupInteraction(root, prop) {
+  const name = prop.label ?? prop.id ?? "Item";
+  return {
+    type: "pickup",
+    range: prop.pickupRange ?? 1.65,
+    item: {
+      id: prop.id ?? root.name,
+      name,
+      swatch: prop.swatch ?? "#8aa0ad",
+    },
+    getPrompt: () => `Press E to pick up ${name}`,
+    activate: () => root.setEnabled(false),
+  };
 }
 
 function snapFloorPropToInterior(root, physics, snapTo, padding) {
@@ -685,88 +734,6 @@ function getPrimaryLight(scene, primary) {
   );
 }
 
-function replaceGlassWithClearMaterial(result, scene, platform) {
-  const glassMaterial = new B.PBRMaterial("clear-capsule-glass", scene);
-  glassMaterial.albedoColor = new B.Color3(1.0, 0.82, 0.55);
-  glassMaterial.alpha = platform.glassAlpha ?? 0.08;
-  glassMaterial.metallic = 0;
-  glassMaterial.roughness = 0.015;
-  glassMaterial.indexOfRefraction = 1.46;
-  glassMaterial.directIntensity = 0.58;
-  glassMaterial.environmentIntensity = 0.08;
-  glassMaterial.microSurface = 0.96;
-  glassMaterial.emissiveColor = B.Color3.Black();
-  glassMaterial.emissiveIntensity = 0;
-  glassMaterial.backFaceCulling = false;
-  glassMaterial.twoSidedLighting = true;
-  glassMaterial.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
-  glassMaterial.alphaMode = B.Engine.ALPHA_COMBINE;
-  glassMaterial.needDepthPrePass = true;
-  glassMaterial.disableDepthWrite = true;
-  glassMaterial.forceDepthWrite = false;
-
-  for (const mesh of result.meshes) {
-    if (isGlassMesh(mesh)) {
-      applyGlassPaneTreatment(mesh, glassMaterial, platform);
-    }
-  }
-}
-
-function applyGlassPaneTreatment(mesh, glassMaterial, platform) {
-  mesh.material = glassMaterial;
-  mesh.visibility = 1;
-  mesh.hasVertexAlpha = false;
-  mesh.excludeFromDepthRenderer = true;
-  mesh.receiveShadows = false;
-  mesh.renderingGroupId = platform.glassRenderingGroupId ?? 4;
-  mesh.alphaIndex = platform.glassAlphaIndex ?? 1000;
-
-  if (platform.glassEdges !== false && mesh.enableEdgesRendering) {
-    mesh.enableEdgesRendering(platform.glassEdgeEpsilon ?? 0.55, true);
-    mesh.edgesWidth = platform.glassEdgeWidth ?? 1.7;
-    mesh.edgesColor = new B.Color4(
-      1,
-      0.72,
-      0.36,
-      platform.glassEdgeAlpha ?? 0.35,
-    );
-  }
-
-  createGlassThicknessShell(mesh, glassMaterial, platform);
-}
-
-function createGlassThicknessShell(mesh, glassMaterial, platform) {
-  const scale = platform.glassThicknessScale ?? 1.008;
-  if (scale <= 1 || !mesh.clone) return null;
-
-  const shellMaterial = glassMaterial.clone(
-    `${mesh.name}-glass-thickness-material`,
-  );
-  shellMaterial.alpha =
-    platform.glassThicknessAlpha ?? Math.min(glassMaterial.alpha * 0.65, 0.16);
-  shellMaterial.roughness = 0.04;
-  shellMaterial.microSurface = 0.9;
-
-  const shell = mesh.clone(`${mesh.name}-glass-thickness`, mesh.parent, true);
-  if (!shell) return null;
-
-  shell.material = shellMaterial;
-  shell.isPickable = false;
-  shell.receiveShadows = false;
-  shell.visibility = 1;
-  shell.hasVertexAlpha = false;
-  shell.excludeFromDepthRenderer = true;
-  shell.renderingGroupId = mesh.renderingGroupId;
-  shell.alphaIndex = mesh.alphaIndex;
-  shell.scaling = mesh.scaling.multiplyByFloats(scale, scale, scale);
-  shell.metadata = {
-    ...(shell.metadata ?? {}),
-    glassThicknessShell: true,
-  };
-
-  return shell;
-}
-
 function forceOpaqueShipMaterials(result, platform) {
   const materials = [
     ...new Set(result.meshes.map((mesh) => mesh.material).filter(Boolean)),
@@ -817,22 +784,6 @@ function forceOpaqueShipMaterials(result, platform) {
       material.diffuseTexture.hasAlpha = false;
     }
   }
-}
-
-function isGlassMaterial(material) {
-  const materialName = material.name?.toLowerCase() ?? "";
-  return (
-    materialName.includes("glass") ||
-    materialName.includes("window") ||
-    materialName.includes("canopy")
-  );
-}
-
-function isGlassMesh(mesh) {
-  const name = `${mesh.name} ${mesh.material?.name ?? ""}`.toLowerCase();
-  return (
-    name.includes("glass") || name.includes("window") || name.includes("canopy")
-  );
 }
 
 function makeMaterialsDoubleSided(result) {

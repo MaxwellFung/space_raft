@@ -50,15 +50,22 @@ function createRockField(scene, field) {
   const fastDriftSpeed = field.fastRelativeDriftSpeed ?? flowSpeed * 0.65;
   const interceptClumpCount = field.interceptClumpCount ?? 4;
   const interceptDistance = field.interceptClumpDistance ?? [8, 38];
+  const densityUpdateInterval = Math.max(
+    1,
+    Math.round(field.rockDensityUpdateInterval ?? 6),
+  );
   const fieldCenter = B.Vector3.FromArray(field.position);
   const renderCenter = B.Vector3.Zero();
   const flowDirection = B.Vector3.Zero();
   const orbitRadial = B.Vector3.Zero();
   const orbitNormal = B.Vector3.Up();
+  const scratchRockPosition = B.Vector3.Zero();
+  const scratchWorldPosition = B.Vector3.Zero();
   let centerProvider = () => scene.activeCamera.globalPosition;
   let flowProvider = () => B.Axis.Z;
   let lastCell = "";
   let simulationTime = 0;
+  let asteroidFrame = 0;
   let seeded = false;
   const groups = createRockGroups(scene, field, runtimeSeed);
   const matrices = groups.map(() => []);
@@ -219,6 +226,8 @@ function createRockField(scene, field) {
         random() * Math.PI * 2,
       ),
       radius: estimateRockWorldRadius(sizeMeters),
+      densityPhase: Math.floor(random() * densityUpdateInterval),
+      cachedDensity: options.ignoreDensity ? 1 : undefined,
     });
   }
 
@@ -258,13 +267,13 @@ function createRockField(scene, field) {
   function retireOuterRocks() {
     for (let index = rocks.length - 1; index >= 0; index -= 1) {
       const rock = rocks[index];
-      const position = getRockPosition(rock);
+      const position = getRockPositionToRef(rock, scratchRockPosition);
       if (position.lengthSquared() < stableDistance * stableDistance) {
         continue;
       }
       retiringRocks.push({
         material: rock.material,
-        position,
+        position: position.clone(),
         age: 0,
         spinAxis: rock.spinAxis,
         spinRate: rock.spinRate,
@@ -276,13 +285,14 @@ function createRockField(scene, field) {
   }
 
   function updateRockMatrices(seconds) {
+    asteroidFrame += 1;
     for (const matrixSet of matrices) matrixSet.length = 0;
     for (const colorSet of colors) colorSet.length = 0;
     const densityThreshold = field.rockDensityThreshold ?? 0.08;
     for (let index = rocks.length - 1; index >= 0; index -= 1) {
       const rock = rocks[index];
       rock.age += seconds;
-      const position = getRockPosition(rock);
+      const position = getRockPositionToRef(rock, scratchRockPosition);
       if (isInsideShipGraceBubble(position, rock.radius)) {
         rocks.splice(index, 1);
         continue;
@@ -290,7 +300,7 @@ function createRockField(scene, field) {
       if (position.lengthSquared() > renderDistance * renderDistance) {
         retiringRocks.push({
           material: rock.material,
-          position,
+          position: position.clone(),
           age: 0,
           spinAxis: rock.spinAxis,
           spinRate: rock.spinRate,
@@ -300,8 +310,18 @@ function createRockField(scene, field) {
         rocks.splice(index, 1);
         continue;
       }
-      const world = renderCenter.add(position);
-      const density = sampleDensityAtWorld(field, world, fieldCenter);
+      let density = rock.cachedDensity ?? 1;
+      if (
+        !rock.ignoreDensity &&
+        (
+          rock.cachedDensity === undefined ||
+          (asteroidFrame + rock.densityPhase) % densityUpdateInterval === 0
+        )
+      ) {
+        scratchWorldPosition.copyFrom(renderCenter).addInPlace(position);
+        density = sampleDensityAtWorld(field, scratchWorldPosition, fieldCenter);
+        rock.cachedDensity = density;
+      }
       if (!rock.ignoreDensity && density < densityThreshold) {
         continue;
       }
@@ -369,8 +389,11 @@ function createRockField(scene, field) {
     );
   }
 
-  function getRockPosition(rock) {
-    return rock.base.add(rock.relativeVelocity.scale(rock.age));
+  function getRockPositionToRef(rock, target) {
+    target.copyFrom(rock.relativeVelocity);
+    target.scaleInPlace(rock.age);
+    target.addInPlace(rock.base);
+    return target;
   }
 
   function createRelativeOrbitalVelocity(random) {
@@ -513,9 +536,12 @@ function createRockGroup(scene, field, name, family, seed) {
   material.bumpTexture = textures.normal;
   material.bumpTexture.level = field.rockNormalStrength ?? 1.35;
   material.invertNormalMapY = true;
-  material.useParallax = true;
-  material.useParallaxOcclusion = true;
-  material.parallaxScaleBias = field.rockParallaxScaleBias ?? 0.018;
+  material.useParallax = field.rockUseParallax ?? false;
+  material.useParallaxOcclusion =
+    material.useParallax && (field.rockUseParallaxOcclusion ?? false);
+  material.parallaxScaleBias = material.useParallax
+    ? field.rockParallaxScaleBias ?? 0.018
+    : 0;
   material.specularColor = new B.Color3(
     0.014 + family.metallic * 0.22,
     0.013 + family.metallic * 0.16,

@@ -32,6 +32,7 @@
       body.menu-open .hud,
       body.menu-open .metrics,
       body.menu-open .survival-bars,
+      body.menu-open .crosshair,
       body.menu-open .quick-access {
         visibility: hidden;
       }
@@ -208,6 +209,53 @@
         text-align: left;
       }
 
+      .crosshair {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        width: 30px;
+        height: 30px;
+        opacity: 0.92;
+        pointer-events: none;
+        transform: translate(-50%, -50%);
+        user-select: none;
+      }
+
+      .crosshair::before,
+      .crosshair::after {
+        position: absolute;
+        content: "";
+        border-radius: 999px;
+        background: rgba(238, 248, 255, 0.92);
+        box-shadow:
+          0 0 0 1px rgba(2, 7, 18, 0.62),
+          0 0 8px rgba(255, 190, 93, 0.34);
+      }
+
+      .crosshair::before {
+        left: 14px;
+        top: 1px;
+        width: 2px;
+        height: 9px;
+        box-shadow:
+          0 19px 0 rgba(238, 248, 255, 0.92),
+          0 0 0 1px rgba(2, 7, 18, 0.62),
+          0 19px 0 1px rgba(2, 7, 18, 0.62),
+          0 0 8px rgba(255, 190, 93, 0.34);
+      }
+
+      .crosshair::after {
+        left: 1px;
+        top: 14px;
+        width: 9px;
+        height: 2px;
+        box-shadow:
+          19px 0 0 rgba(238, 248, 255, 0.92),
+          0 0 0 1px rgba(2, 7, 18, 0.62),
+          19px 0 0 1px rgba(2, 7, 18, 0.62),
+          0 0 8px rgba(255, 190, 93, 0.34);
+      }
+
       .survival-bars {
         position: fixed;
         left: 16px;
@@ -332,6 +380,13 @@
         height: 1px;
         background: rgba(255, 190, 93, 0.92);
         content: "";
+      }
+
+      .slot-portrait {
+        width: 32px;
+        height: 32px;
+        object-fit: contain;
+        pointer-events: none;
       }
 
       .slot-key,
@@ -567,6 +622,7 @@
       </section>
     </div>
     <canvas id="sandbox" aria-label="Empty starfield sandbox"></canvas>
+    <div class="crosshair" aria-hidden="true"></div>
     <div class="hud">
       <strong>Spaceraft Sandbox</strong>
       <span>WASD move</span>

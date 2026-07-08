@@ -1,3 +1,9 @@
+import {
+  createPlatformInteriorProps,
+} from "../../src/ship-interior-layout.js";
+
+const interiorProps = createPlatformInteriorProps();
+
 const brownDwarf = {
   id: "brown_dwarf",
   name: "Debris Field",
@@ -10,8 +16,8 @@ const brownDwarf = {
   },
 
   player: {
-    speed: 1,
-    boostSpeed: 2.4,
+    speed: 2,
+    boostSpeed: 4.8,
   },
 
   platform: {
@@ -27,63 +33,19 @@ const brownDwarf = {
     lightIntensity: 0,
     allowLocalLights: false,
     transparentGlass: true,
-    glassAlpha: 0.22,
-    glassThicknessScale: 1.01,
-    glassThicknessAlpha: 0.12,
-    glassEdgeWidth: 0.85,
-    glassEdgeAlpha: 0.42,
+    glassColor: [1.0, 0.82, 0.55],
+    glassRimColor: [1.0, 0.68, 0.32],
+    glassAlpha: 0.26,
+    glassThicknessScale: 0.996,
+    glassThicknessAlpha: 0.17,
+    glassEdges: false,
     brownDwarfWindowShadows: true,
     shadowMapSize: 1024,
     metersPerWorldUnit: 8,
     gravity: 30,
     jumpSpeed: 5.4,
-    oxygenTank: {
-      modelUrl: "./assets/oxygen_tank.glb",
-      position: [0, 0, 0],
-      rotationDegrees: [0, 0, 90],
-      maxSize: 0.58,
-      floorOffset: 0.015,
-      keepInside: true,
-    },
-    floorProps: [
-      {
-        id: "fuel-tank",
-        modelUrl: "./assets/fuel_tank.glb",
-        position: [0, 0, 1.05],
-        rotationDegrees: [0, 0, 90],
-        maxSize: 0.66,
-        floorOffset: 0.015,
-        keepInside: true,
-        snapTo: "frontWall",
-      },
-      {
-        id: "wooden-crate",
-        modelUrl: "./assets/wooden_crate.glb",
-        position: [0, 0, -0.35],
-        rotationDegrees: [0, 28, 0],
-        maxSize: 0.42,
-        floorOffset: 0.01,
-        keepInside: true,
-        snapTo: "leftWall",
-      },
-    ],
-    controlPanel: {
-      id: "steampump-control-panel",
-      title: "STEAMPUMP",
-      position: "rightWall",
-      wallOffset: 0.018,
-      center: [0, 1.0, -0.85],
-      size: [0.78, 0.46],
-      mirror: true,
-      bevelDepth: 0.035,
-      bevelWidth: 0.055,
-      levels: {
-        oxygen: 40,
-        fuel: 0,
-        water: 30,
-        power: 50,
-      },
-    },
+    oxygenTank: interiorProps.oxygenTank,
+    floorProps: interiorProps.floorProps,
   },
 
   lighting: {
@@ -140,6 +102,8 @@ const brownDwarf = {
     nearRockFlowSpeed: 0,
     minSpinRadiansPerSecond: 0.015,
     maxSpinRadiansPerSecond: 0.09,
+    rockMeshSubdivisions: 4,
+    rockDensityUpdateInterval: 6,
     rockLightIntensity: 0,
     rockTextureTiling: 3.6,
     rockNormalStrength: 1.65,
@@ -147,9 +111,10 @@ const brownDwarf = {
     renderScale: 0.5,
     volumeResolution: 40,
     occupancyResolution: 10,
-    marchSteps: 20,
-    minimumMarchSteps: 12,
-    temporalBlend: 0.82,
+    marchSteps: 16,
+    minimumMarchSteps: 10,
+    temporalBlend: 0.86,
+    updateInterval: 2,
     adaptiveQuality: true,
     density: 0.46,
     absorption: 0.68,
