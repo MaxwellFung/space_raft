@@ -44,6 +44,11 @@ const ZERO_G_THRUST_BOOST_MULTIPLIER = 1.55;
 const ZERO_G_MAX_SPEED = 4.6;
 const ZERO_G_THRUSTER_EMIT_RATE = 85;
 const ZERO_G_THRUSTER_EMITTER_OFFSET = 0.34;
+const HATCH_DECOMPRESSION_INITIAL_IMPULSE = 3.4;
+const HATCH_DECOMPRESSION_ACCELERATION = 6.25;
+const HATCH_DECOMPRESSION_DURATION = 1.35;
+const HATCH_DECOMPRESSION_MAX_SPEED = 6.75;
+const HATCH_WIND_PARTICLE_SECONDS = 1.15;
 const CROUCH_EYE_HEIGHT_SCALE = 0.76;
 const CROUCH_TRANSITION_SPEED = 8;
 const CROUCH_SPEED_SCALE = 0.45;
@@ -138,6 +143,8 @@ addEventListener("keydown", (event) => {
   if (event.code === "KeyE" && activeInteraction) {
     event.preventDefault();
     let interactionHandled = true;
+    const openingShipDoor =
+      activeInteraction.type === "ship-door" && !activeInteraction.isOpen;
     if (activeInteraction.type === "pickup") {
       interactionHandled = collectPickupInteraction(activeInteraction);
     } else if (activeInteraction.type === "helmet-hook") {
@@ -145,6 +152,9 @@ addEventListener("keydown", (event) => {
     } else {
       const result = activeInteraction.activate?.();
       interactionHandled = result !== false;
+    }
+    if (interactionHandled && openingShipDoor) {
+      triggerHatchDecompression(activeInteraction);
     }
     keys.delete("KeyE");
     if (interactionHandled) updateInteractionPrompt(null);
@@ -160,7 +170,7 @@ addEventListener("keyup", (event) => {
 const timeSpeeds = [0, 0.25, 1, 4, 16, 64];
 let timeSpeedIndex = 2;
 let flyMode = false;
-let zeroGravityMode = false;
+let zeroGravityMode = true;
 let toolTipsVisible = true;
 let selectedHotbarIndex = 0;
 let selectedNotebookPage = "objectives";
@@ -180,6 +190,7 @@ let playerPhysics = null;
 let zeroGravityVelocity = B.Vector3.Zero();
 let zeroGravityThrusterEffect = null;
 let zeroGravityThrusterActive = false;
+let hatchDecompression = null;
 let timeButton = null;
 let flyButton = null;
 let cameraButton = null;
@@ -685,6 +696,153 @@ function toggleTetherFromActiveHook() {
   return true;
 }
 
+function triggerHatchDecompression(interaction) {
+  if (!interaction || interaction.decompressionTriggered) return;
+
+  const direction = getHatchOutflowDirection(interaction);
+  interaction.decompressionTriggered = true;
+  hatchDecompression = {
+    direction,
+    elapsed: 0,
+    duration: HATCH_DECOMPRESSION_DURATION,
+  };
+  zeroGravityMode = true;
+  zeroGravityVelocity.addInPlace(
+    direction.scale(HATCH_DECOMPRESSION_INITIAL_IMPULSE),
+  );
+  clampVectorLengthInPlace(zeroGravityVelocity, HATCH_DECOMPRESSION_MAX_SPEED);
+  if (playerPhysics) {
+    playerPhysics.grounded = false;
+    playerPhysics.verticalVelocity = zeroGravityVelocity.y;
+  }
+  createHatchWindBurst(interaction, direction);
+  updateQuickAccessButtons();
+}
+
+function updateHatchDecompression(seconds) {
+  if (!hatchDecompression) return;
+
+  const progress = hatchDecompression.elapsed / hatchDecompression.duration;
+  const falloff = Math.max(0, 1 - progress);
+  zeroGravityVelocity.addInPlace(
+    hatchDecompression.direction.scale(
+      HATCH_DECOMPRESSION_ACCELERATION * falloff * falloff * seconds,
+    ),
+  );
+  clampVectorLengthInPlace(zeroGravityVelocity, HATCH_DECOMPRESSION_MAX_SPEED);
+  if (playerPhysics) {
+    playerPhysics.grounded = false;
+    playerPhysics.verticalVelocity = zeroGravityVelocity.y;
+  }
+
+  hatchDecompression.elapsed += seconds;
+  if (hatchDecompression.elapsed >= hatchDecompression.duration) {
+    hatchDecompression = null;
+  }
+}
+
+function getHatchOutflowDirection(interaction) {
+  const normal = interaction?.passage?.normal?.clone?.() ?? B.Axis.Z.clone();
+  if (normal.lengthSquared() <= 0.000001) return B.Axis.Z.clone();
+  return normal.normalize();
+}
+
+function createHatchWindBurst(interaction, direction) {
+  if (!scene || !level?.platform?.root) return;
+
+  const passage = interaction?.passage;
+  const localEmitter = passage?.center?.clone?.() ?? camera.position.clone();
+  const localRight = passage?.right?.clone?.() ?? B.Axis.X.clone();
+  const localUp = passage?.up?.clone?.() ?? B.Axis.Y.clone();
+  const emitter = platformLocalPointToWorld(
+    localEmitter.add(direction.scale(-0.08)),
+  );
+  const outflow = platformLocalDirectionToWorld(direction);
+  const right = platformLocalDirectionToWorld(localRight);
+  const up = platformLocalDirectionToWorld(localUp);
+  const texture = createHatchWindTexture();
+  const system = new B.ParticleSystem("hatch-decompression-wind", 520, scene);
+
+  system.particleTexture = texture;
+  system.emitter = emitter;
+  system.minEmitBox = B.Vector3.Zero();
+  system.maxEmitBox = B.Vector3.Zero();
+  system.direction1 = outflow
+    .add(right.scale(-0.42))
+    .add(up.scale(-0.24));
+  system.direction2 = outflow.add(right.scale(0.42)).add(up.scale(0.24));
+  system.minEmitPower = 2.4;
+  system.maxEmitPower = 7.5;
+  system.emitRate = 720;
+  system.minLifeTime = 0.16;
+  system.maxLifeTime = 0.48;
+  system.minSize = 0.018;
+  system.maxSize = 0.072;
+  system.updateSpeed = 0.012;
+  system.blendMode = B.ParticleSystem.BLENDMODE_ADD;
+  system.gravity = B.Vector3.Zero();
+  system.color1 = new B.Color4(0.82, 0.93, 1, 0.32);
+  system.color2 = new B.Color4(1, 1, 1, 0.22);
+  system.colorDead = new B.Color4(0.72, 0.86, 1, 0);
+  system.start();
+  stopParticleSystemAfter(system, texture, HATCH_WIND_PARTICLE_SECONDS);
+}
+
+function createHatchWindTexture() {
+  const texture = new B.DynamicTexture(
+    "hatch-decompression-wind-texture",
+    { width: 64, height: 64 },
+    scene,
+    false,
+  );
+  const context = texture.getContext();
+  const gradient = context.createLinearGradient(6, 32, 58, 32);
+  gradient.addColorStop(0, "rgba(255,255,255,0)");
+  gradient.addColorStop(0.22, "rgba(210,235,255,0.2)");
+  gradient.addColorStop(0.5, "rgba(255,255,255,0.85)");
+  gradient.addColorStop(0.78, "rgba(210,235,255,0.2)");
+  gradient.addColorStop(1, "rgba(255,255,255,0)");
+  context.clearRect(0, 0, 64, 64);
+  context.strokeStyle = gradient;
+  context.lineWidth = 4;
+  context.lineCap = "round";
+  context.beginPath();
+  context.moveTo(8, 32);
+  context.lineTo(56, 32);
+  context.stroke();
+  texture.update(false);
+  return texture;
+}
+
+function stopParticleSystemAfter(system, texture, secondsTotal) {
+  let elapsed = 0;
+  const observer = scene.onBeforeRenderObservable.add(() => {
+    elapsed += Math.min(scene.getEngine().getDeltaTime() / 1000, 0.05);
+    if (elapsed < secondsTotal) return;
+
+    system.stop();
+    scene.onBeforeRenderObservable.remove(observer);
+    setTimeout(() => {
+      system.dispose();
+      texture.dispose();
+    }, 800);
+  });
+}
+
+function platformLocalPointToWorld(point) {
+  return B.Vector3.TransformCoordinates(
+    point,
+    level.platform.root.getWorldMatrix(),
+  );
+}
+
+function platformLocalDirectionToWorld(direction) {
+  return B.Vector3.TransformNormal(
+    direction,
+    level.platform.root.getWorldMatrix(),
+  ).normalize();
+}
+
 function attachPlayerTether(interaction) {
   if (!interaction?.tetherAnchor || !level?.platform?.root) {
     updateInteractionPrompt({ prompt: "No tether anchor" });
@@ -694,7 +852,7 @@ function attachPlayerTether(interaction) {
   detachPlayerTether();
   const material = createPlayerTetherMaterial();
   const anchor = interaction.tetherAnchor.position.clone();
-  const maxLength = interaction.tetherLength ?? 2.35;
+  const maxLength = interaction.tetherLength ?? 4.7;
   const deployedLength = Math.min(maxLength, TETHER_INITIAL_DEPLOYED_LENGTH);
   const activeLength = getTetherDesiredLength(
     anchor,
@@ -2353,9 +2511,14 @@ function restorePlayerState(player) {
     );
   }
   flyMode = Boolean(player.flyMode);
-  zeroGravityMode = Boolean(player.zeroGravityMode);
+  zeroGravityMode =
+    player.zeroGravityMode === undefined
+      ? true
+      : Boolean(player.zeroGravityMode);
   if (Array.isArray(player.zeroGravityVelocity)) {
-    zeroGravityVelocity.copyFrom(B.Vector3.FromArray(player.zeroGravityVelocity));
+    zeroGravityVelocity.copyFrom(
+      B.Vector3.FromArray(player.zeroGravityVelocity),
+    );
   } else {
     zeroGravityVelocity.copyFromFloats(0, 0, 0);
   }
@@ -2548,6 +2711,7 @@ function installPlayerLoop() {
         if (keys.has("Space")) move.y += 1;
         if (isShiftHeld()) move.y -= 1;
       }
+      updateHatchDecompression(seconds);
 
       if (zeroGravityMovement) {
         updateZeroGravityThrusters(move, platformPhysics, seconds);
@@ -2987,7 +3151,7 @@ function updateZeroGravityThrusters(thrustInput, platform, seconds) {
   const requestedY = zeroGravityVelocity.y * seconds;
   const beforeY = camera.position.y;
   camera.position.y += requestedY;
-  constrainPlayerVerticallyToPlatform(platform);
+  constrainZeroGravityVerticallyToPlatform(platform);
   if (Math.abs(camera.position.y - beforeY - requestedY) > 0.0001) {
     zeroGravityVelocity.y = 0;
   }
@@ -3009,9 +3173,8 @@ function updateZeroGravityThrusterEffect(thrustDirection) {
   const effect = getZeroGravityThrusterEffect();
   camera.computeWorldMatrix(true);
   const exhaustDirection = thrustDirection.scale(-1);
-  const worldExhaustDirection = transformPlayerLocalDirectionToWorld(
-    exhaustDirection,
-  );
+  const worldExhaustDirection =
+    transformPlayerLocalDirectionToWorld(exhaustDirection);
   const emitterPosition = camera.globalPosition
     .add(worldExhaustDirection.scale(ZERO_G_THRUSTER_EMITTER_OFFSET))
     .add(camera.getDirection(B.Axis.Y).scale(-0.28));
@@ -3099,9 +3262,7 @@ function isPositionInsidePlatformPhysicsVolume(position, platform) {
   const maxZ = (platform.maxZ ?? platform.depth * 0.5) + margin;
   const minY = (platform.floorY ?? 0) - margin;
   const maxY =
-    platform.ceilingY !== undefined
-      ? platform.ceilingY + margin
-      : Infinity;
+    platform.ceilingY !== undefined ? platform.ceilingY + margin : Infinity;
   return (
     position.x >= minX &&
     position.x <= maxX &&
@@ -3109,6 +3270,36 @@ function isPositionInsidePlatformPhysicsVolume(position, platform) {
     position.y <= maxY &&
     position.z >= minZ &&
     position.z <= maxZ
+  );
+}
+
+function constrainZeroGravityVerticallyToPlatform(platform) {
+  if (getOpenPlatformPassageAt(camera.position, platform)) {
+    playerPhysics.grounded = false;
+    return;
+  }
+
+  const radius = platform.radius ?? 0;
+  if (platform.floorY !== undefined) {
+    camera.position.y = Math.max(
+      camera.position.y,
+      platform.floorY + getZeroGravityFloorEyeClearance(platform),
+    );
+  }
+  if (platform.ceilingY !== undefined) {
+    camera.position.y = Math.min(camera.position.y, platform.ceilingY - radius);
+  }
+  playerPhysics.grounded = false;
+}
+
+function getZeroGravityFloorEyeClearance(platform) {
+  const floorY = platform.floorY ?? 0;
+  const standingEyeHeight =
+    platform.eyeHeight ?? playerPhysics?.platformEyeHeight ?? floorY;
+  const standingHeight = Math.max(standingEyeHeight - floorY, 0);
+  return Math.max(
+    (platform.radius ?? 0) * 2,
+    standingHeight * CROUCH_EYE_HEIGHT_SCALE,
   );
 }
 
@@ -3223,12 +3414,7 @@ function constrainPlayerToPlatform(platform, options = {}) {
   const passage = getOpenPlatformPassageAt(camera.position, platform);
 
   if (passage?.oriented) {
-    constrainPlayerToOrientedPassage(
-      camera.position,
-      passage,
-      radius,
-      options,
-    );
+    constrainPlayerToOrientedPassage(camera.position, passage, radius, options);
   } else if (passage) {
     camera.position.x = clamp(
       camera.position.x,

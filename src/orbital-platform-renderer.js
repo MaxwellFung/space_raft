@@ -281,7 +281,7 @@ async function loadShipModel(
     normalizeModel(shipRoot, platform.modelMaxSize ?? 3.3);
     applyModelRotation(shipRoot, platform);
     updatePhysicsFromShip(shipRoot, physics, platform);
-    configureShipDoorPassage(doorInteraction, physics, platform);
+    configureShipDoorPassage(scene, doorInteraction, physics, platform);
     shipRoot.parent = root;
     createControlPanel(scene, root, platform.controlPanel, physics);
     createHelmetHook(scene, root, platform.helmetHook, physics, interactions);
@@ -317,6 +317,7 @@ function installShipDoorInteraction(scene, meshes, interactions, platform) {
     isOpen: false,
     isAnimating: false,
     doorMesh,
+    doorAnimationSeconds: platform.doorAnimationSeconds ?? 0.75,
     getPrompt: () =>
       interaction.isOpen ? "Press E to close hatch" : "Press E to open hatch",
     activate: () => toggleShipDoor(scene, hinge, interaction, platform),
@@ -338,11 +339,8 @@ function configureShipDoorHinge(scene, doorMesh, platform) {
   const min = bounds.minimum;
   const max = bounds.maximum;
   const localPivot = B.Vector3.FromArray(
-    platform.doorHingePivot ?? [
-      platform.doorHingeSide === "maxX" ? max.x : min.x,
-      (min.y + max.y) * 0.5,
-      (min.z + max.z) * 0.5,
-    ],
+    platform.doorHingePivot ??
+      getDefaultDoorHingePivot(min, max, platform.doorHingeEdge ?? "maxY"),
   );
   const worldPivot = B.Vector3.TransformCoordinates(
     localPivot,
@@ -367,7 +365,22 @@ function configureShipDoorHinge(scene, doorMesh, platform) {
   return hinge;
 }
 
-function configureShipDoorPassage(interaction, physics, platform) {
+function getDefaultDoorHingePivot(min, max, edge) {
+  const centerX = (min.x + max.x) * 0.5;
+  const centerY = (min.y + max.y) * 0.5;
+  const centerZ = (min.z + max.z) * 0.5;
+  const pivots = {
+    minX: [min.x, centerY, centerZ],
+    maxX: [max.x, centerY, centerZ],
+    minY: [centerX, min.y, centerZ],
+    maxY: [centerX, max.y, centerZ],
+    minZ: [centerX, centerY, min.z],
+    maxZ: [centerX, centerY, max.z],
+  };
+  return pivots[edge] ?? pivots.maxY;
+}
+
+function configureShipDoorPassage(scene, interaction, physics, platform) {
   const doorMesh = interaction?.doorMesh;
   if (!doorMesh) return;
 
@@ -400,6 +413,151 @@ function configureShipDoorPassage(interaction, physics, platform) {
 
   interaction.passage = passage;
   physics.doorPassages = [...(physics.doorPassages ?? []), passage];
+  createShipDoorGlassPane(scene, interaction, frame, platform);
+  createShipDoorInteractionProxy(scene, interaction, passage);
+}
+
+function createShipDoorGlassPane(scene, interaction, frame, platform) {
+  if (platform.doorGlass === false) return;
+
+  const doorMesh = interaction.doorMesh;
+  const hinge = doorMesh?.parent;
+  const width = frame.halfWidth * 2 * (platform.doorGlassWidthScale ?? 0.58);
+  const height = frame.halfHeight * 2 * (platform.doorGlassHeightScale ?? 0.62);
+  if (!hinge || width <= 0 || height <= 0) return;
+
+  const pane = B.MeshBuilder.CreatePlane(
+    `${doorMesh.name}-hatch-glass`,
+    {
+      width,
+      height,
+      sideOrientation: B.Mesh.DOUBLESIDE,
+    },
+    scene,
+  );
+  const material = createShipDoorGlassMaterial(scene, platform, pane.name);
+  pane.material = material;
+  pane.isPickable = true;
+  pane.checkCollisions = false;
+  pane.receiveShadows = false;
+  pane.excludeFromDepthRenderer = true;
+  pane.renderingGroupId = platform.glassRenderingGroupId ?? 4;
+  pane.alphaIndex = (platform.glassAlphaIndex ?? 1000) + 2;
+  pane.metadata = {
+    ...(pane.metadata ?? {}),
+    interaction,
+    platformDoorGlass: true,
+  };
+
+  hinge.computeWorldMatrix(true);
+  const inverseHinge = hinge.getWorldMatrix().clone().invert();
+  pane.parent = hinge;
+  pane.position.copyFrom(
+    B.Vector3.TransformCoordinates(
+      frame.center.add(frame.normal.scale(platform.doorGlassOffset ?? 0.012)),
+      inverseHinge,
+    ),
+  );
+  pane.rotationQuaternion = quaternionFromAxes(
+    B.Vector3.TransformNormal(frame.right, inverseHinge).normalize(),
+    B.Vector3.TransformNormal(frame.up, inverseHinge).normalize(),
+    B.Vector3.TransformNormal(frame.normal, inverseHinge).normalize(),
+  );
+}
+
+function createShipDoorGlassMaterial(scene, platform, name) {
+  const material = new B.PBRMaterial(`${name}-material`, scene);
+  material.albedoColor = color3FromOption(
+    platform.doorGlassColor ?? platform.glassColor,
+    [0.76, 0.93, 1.0],
+  );
+  material.alpha =
+    platform.doorGlassAlpha ?? Math.max(platform.glassAlpha ?? 0.32, 0.38);
+  material.metallic = 0;
+  material.roughness = platform.glassRoughness ?? 0.045;
+  material.microSurface = platform.glassMicroSurface ?? 0.96;
+  material.directIntensity = platform.glassDirectIntensity ?? 0.84;
+  material.environmentIntensity = platform.glassEnvironmentIntensity ?? 0.58;
+  material.emissiveColor = color3FromOption(
+    platform.glassSheenColor,
+    [0.08, 0.15, 0.19],
+  );
+  material.emissiveIntensity = platform.doorGlassSheenIntensity ?? 0.12;
+  material.backFaceCulling = false;
+  material.twoSidedLighting = true;
+  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+  material.alphaMode = B.Engine.ALPHA_COMBINE;
+  material.needDepthPrePass = false;
+  material.disableDepthWrite = true;
+  material.forceDepthWrite = false;
+  if (material.clearCoat) {
+    material.clearCoat.isEnabled = true;
+    material.clearCoat.intensity = 0.92;
+    material.clearCoat.roughness = 0.025;
+  }
+  return material;
+}
+
+function color3FromOption(value, fallback) {
+  if (value instanceof B.Color3) return value.clone();
+  if (Array.isArray(value)) return B.Color3.FromArray(value);
+  return B.Color3.FromArray(fallback);
+}
+
+function createShipDoorInteractionProxy(scene, interaction, passage) {
+  const parent =
+    interaction.doorMesh?.parent?.parent ?? interaction.doorMesh?.parent;
+  const proxy = B.MeshBuilder.CreateBox(
+    `${interaction.doorMesh?.name ?? "ship-door"}-interaction-proxy`,
+    {
+      width: passage.halfWidth * 2,
+      height: passage.halfHeight * 2,
+      depth: 0.08,
+    },
+    scene,
+  );
+  const material = new B.StandardMaterial(`${proxy.name}-material`, scene);
+  material.alpha = 0;
+  material.disableLighting = true;
+  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+  proxy.material = material;
+  proxy.isPickable = true;
+  proxy.checkCollisions = false;
+  proxy.visibility = 0;
+  proxy.excludeFromDepthRenderer = true;
+  proxy.metadata = {
+    ...(proxy.metadata ?? {}),
+    interaction,
+    platformDoorInteractionProxy: true,
+  };
+
+  if (!parent) {
+    proxy.position.copyFrom(passage.center);
+    proxy.rotationQuaternion = quaternionFromAxes(
+      passage.right,
+      passage.up,
+      passage.normal,
+    );
+    return;
+  }
+
+  parent.computeWorldMatrix(true);
+  const inverseParent = parent.getWorldMatrix().clone().invert();
+  proxy.parent = parent;
+  proxy.position.copyFrom(
+    B.Vector3.TransformCoordinates(passage.center, inverseParent),
+  );
+  proxy.rotationQuaternion = quaternionFromAxes(
+    B.Vector3.TransformNormal(passage.right, inverseParent).normalize(),
+    B.Vector3.TransformNormal(passage.up, inverseParent).normalize(),
+    B.Vector3.TransformNormal(passage.normal, inverseParent).normalize(),
+  );
+}
+
+function quaternionFromAxes(right, up, normal) {
+  const matrix = B.Matrix.Identity();
+  B.Matrix.FromXYZAxesToRef(right, up, normal, matrix);
+  return B.Quaternion.FromRotationMatrix(matrix);
 }
 
 function getDoorPassageFrame(doorMesh, physics) {
@@ -483,11 +641,13 @@ function toggleShipDoor(scene, hinge, interaction, platform) {
 
   const closedRotation =
     hinge.metadata?.closedRotation?.clone?.() ?? hinge.rotation.clone();
+  const opening = !interaction.isOpen;
   const axis = platform.doorHingeAxis ?? "z";
-  const openAngle = degreesToRadians(platform.doorOpenAngleDegrees ?? -105);
+  const openAngle = degreesToRadians(platform.doorOpenAngleDegrees ?? 105);
   const openRotation = closedRotation.clone();
   openRotation[axis] += openAngle;
-  const targetRotation = interaction.isOpen ? closedRotation : openRotation;
+  const targetRotation = opening ? openRotation : closedRotation;
+  if (opening) interaction.isOpen = true;
 
   animateShipDoorRotation(
     scene,
@@ -495,7 +655,7 @@ function toggleShipDoor(scene, hinge, interaction, platform) {
     targetRotation,
     platform.doorAnimationSeconds ?? 0.75,
     () => {
-      interaction.isOpen = !interaction.isOpen;
+      if (!opening) interaction.isOpen = false;
       interaction.isAnimating = false;
     },
   );
@@ -708,7 +868,7 @@ function createHelmetHook(
     hookRoot: root,
     mountPoint,
     tetherAnchor,
-    tetherLength: hook.tetherLength ?? 2.35,
+    tetherLength: hook.tetherLength ?? 4.7,
     mountedRoot: null,
     mountedItem: null,
     initialMountedItem: hook.initialMountedItem
