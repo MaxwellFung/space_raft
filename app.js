@@ -37,6 +37,8 @@ const TETHER_GRAVITY = new B.Vector3(0, -5.6, 0);
 const TETHER_SLACK_RESERVE = 0.28;
 const TETHER_INITIAL_DEPLOYED_LENGTH = 0.12;
 const TETHER_DEPLOY_SPEED = 1.45;
+const TETHER_RENDER_SMOOTHING_STEPS = 5;
+const TETHER_TAUT_EPSILON = 0.025;
 const ZERO_G_THRUST_ACCELERATION = 1.55;
 const ZERO_G_THRUST_BOOST_MULTIPLIER = 1.55;
 const ZERO_G_MAX_SPEED = 4.6;
@@ -141,7 +143,8 @@ addEventListener("keydown", (event) => {
     } else if (activeInteraction.type === "helmet-hook") {
       interactionHandled = activateHelmetHook(activeInteraction);
     } else {
-      activeInteraction.activate?.();
+      const result = activeInteraction.activate?.();
+      interactionHandled = result !== false;
     }
     keys.delete("KeyE");
     if (interactionHandled) updateInteractionPrompt(null);
@@ -704,7 +707,7 @@ function attachPlayerTether(interaction) {
     getPlayerTetherAttachPoint(),
     activeLength,
   );
-  const path = getTetherRenderPath(particles, deployedLength);
+  const path = getTetherRenderPath(particles);
   const mesh = createPlayerTetherMesh(path, material);
 
   playerTether = {
@@ -737,10 +740,7 @@ function updatePlayerTether(seconds) {
   if (!playerTether || !camera) return;
 
   simulatePlayerTether(getTetherStepSeconds(seconds));
-  const path = getTetherRenderPath(
-    playerTether.particles,
-    playerTether.deployedLength,
-  );
+  const path = getTetherRenderPath(playerTether.particles);
   playerTether.mesh?.dispose();
   playerTether.mesh = createPlayerTetherMesh(path, playerTether.material);
 }
@@ -787,6 +787,10 @@ function simulatePlayerTether(seconds) {
   const particles = playerTether.particles;
   const lastIndex = particles.length - 1;
   const platform = level.platform?.physics;
+  const constrainParticlesToPlatform = isPositionInsidePlatformPhysicsVolume(
+    camera.position,
+    platform,
+  );
   playerTether.deployedLength = getTetherDeployedLength(
     playerTether.deployedLength,
     playerTether.maxLength,
@@ -812,7 +816,9 @@ function simulatePlayerTether(seconds) {
       .scale(TETHER_DAMPING);
     particle.previous.copyFrom(particle.position);
     particle.position.addInPlace(velocity).addInPlace(acceleration);
-    constrainTetherParticleToPlatform(particle.position, platform);
+    if (constrainParticlesToPlatform) {
+      constrainTetherParticleToPlatform(particle.position, platform);
+    }
   }
 
   for (
@@ -831,20 +837,55 @@ function simulatePlayerTether(seconds) {
       );
     }
     for (let index = 1; index < lastIndex; index += 1) {
-      constrainTetherParticleToPlatform(particles[index].position, platform);
+      if (constrainParticlesToPlatform) {
+        constrainTetherParticleToPlatform(particles[index].position, platform);
+      }
     }
   }
-  constrainTetherEndToMaxLength(particles[lastIndex].position);
 
+  particles[lastIndex].position.copyFrom(getPlayerTetherAttachPoint());
+  particles[lastIndex].previous.copyFrom(particles[lastIndex].position);
+
+  if (!isPlayerTetherFullyExtendedAndTaut()) return;
+
+  constrainTetherEndToMaxLength(particles[lastIndex].position);
   const before = camera.position.clone();
   camera.position.copyFrom(
     particles[lastIndex].position.subtract(TETHER_ATTACH_OFFSET),
   );
-  if (platform) constrainPlayerToPlatform(platform);
   particles[lastIndex].position.copyFrom(getPlayerTetherAttachPoint());
+  particles[lastIndex].previous.copyFrom(particles[lastIndex].position);
   const correction = camera.position.subtract(before);
-  if (playerPhysics && correction.lengthSquared() > 0.000001) {
-    playerPhysics.verticalVelocity *= 0.35;
+  if (correction.lengthSquared() > 0.000001) {
+    dampenPlayerVelocityFromTetherCorrection(correction);
+  }
+}
+
+function isPlayerTetherFullyExtendedAndTaut() {
+  if (!playerTether) return false;
+  const deployed =
+    playerTether.deployedLength >= playerTether.maxLength - TETHER_TAUT_EPSILON;
+  if (!deployed) return false;
+
+  const distance = B.Vector3.Distance(
+    playerTether.anchor,
+    getPlayerTetherAttachPoint(),
+  );
+  return distance >= playerTether.maxLength - TETHER_TAUT_EPSILON;
+}
+
+function dampenPlayerVelocityFromTetherCorrection(correction) {
+  if (!playerPhysics) return;
+  playerPhysics.verticalVelocity *= 0.35;
+
+  if (!zeroGravityMode || zeroGravityVelocity.lengthSquared() <= 0.000001) {
+    return;
+  }
+
+  const pullDirection = correction.normalize();
+  const outwardSpeed = B.Vector3.Dot(zeroGravityVelocity, pullDirection);
+  if (outwardSpeed < 0) {
+    zeroGravityVelocity.subtractInPlace(pullDirection.scale(outwardSpeed));
   }
 }
 
@@ -916,32 +957,62 @@ function getTetherStepSeconds(seconds) {
   return Math.min(seconds || 1 / 60, 1 / 30);
 }
 
-function getTetherRenderPath(particles, deployedLength = Infinity) {
-  if (!Number.isFinite(deployedLength)) {
-    return particles.map((particle) => particle.position.clone());
+function getTetherRenderPath(particles) {
+  const path = particles.map((particle) => particle.position.clone());
+  return smoothTetherRenderPath(path);
+}
+
+function smoothTetherRenderPath(path) {
+  const points = dedupeTetherPathPoints(path);
+  if (points.length < 3 || TETHER_RENDER_SMOOTHING_STEPS <= 1) {
+    return points;
   }
 
-  const path = [particles[0].position.clone()];
-  let remainingLength = Math.max(deployedLength, 0.025);
-  for (let index = 1; index < particles.length; index += 1) {
-    const previous = particles[index - 1].position;
-    const current = particles[index].position;
-    const segmentLength = B.Vector3.Distance(previous, current);
-    if (segmentLength <= 0.000001) continue;
-    if (remainingLength <= segmentLength) {
-      path.push(
-        B.Vector3.Lerp(previous, current, remainingLength / segmentLength),
+  const smoothPath = [points[0].clone()];
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const p0 = points[Math.max(index - 1, 0)];
+    const p1 = points[index];
+    const p2 = points[index + 1];
+    const p3 = points[Math.min(index + 2, points.length - 1)];
+    for (let step = 1; step <= TETHER_RENDER_SMOOTHING_STEPS; step += 1) {
+      smoothPath.push(
+        catmullRomPoint(p0, p1, p2, p3, step / TETHER_RENDER_SMOOTHING_STEPS),
       );
-      break;
     }
-    path.push(current.clone());
-    remainingLength -= segmentLength;
   }
+  return smoothPath;
+}
 
-  if (path.length === 1) {
-    path.push(path[0].add(new B.Vector3(0, -0.025, 0)));
+function dedupeTetherPathPoints(path) {
+  const points = [];
+  for (const point of path) {
+    const previous = points[points.length - 1];
+    if (previous && B.Vector3.DistanceSquared(previous, point) < 0.0000001) {
+      continue;
+    }
+    points.push(point.clone());
   }
-  return path;
+  return points;
+}
+
+function catmullRomPoint(p0, p1, p2, p3, t) {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return new B.Vector3(
+    catmullRomValue(p0.x, p1.x, p2.x, p3.x, t, t2, t3),
+    catmullRomValue(p0.y, p1.y, p2.y, p3.y, t, t2, t3),
+    catmullRomValue(p0.z, p1.z, p2.z, p3.z, t, t2, t3),
+  );
+}
+
+function catmullRomValue(v0, v1, v2, v3, t, t2, t3) {
+  return (
+    0.5 *
+    (2 * v1 +
+      (-v0 + v2) * t +
+      (2 * v0 - 5 * v1 + 4 * v2 - v3) * t2 +
+      (-v0 + 3 * v1 - 3 * v2 + v3) * t3)
+  );
 }
 
 function createPlayerTetherMaterial() {
@@ -2825,10 +2896,11 @@ function updatePlatformGravity(platform, seconds) {
   const minZ = platform.minZ ?? -platform.depth * 0.5;
   const maxZ = platform.maxZ ?? platform.depth * 0.5;
   const overDeck =
-    camera.position.x >= minX &&
-    camera.position.x <= maxX &&
-    camera.position.z >= minZ &&
-    camera.position.z <= maxZ;
+    (camera.position.x >= minX &&
+      camera.position.x <= maxX &&
+      camera.position.z >= minZ &&
+      camera.position.z <= maxZ) ||
+    Boolean(getOpenPlatformPassageAt(camera.position, platform));
 
   const eyeHeight = playerPhysics.eyeHeight ?? platform.eyeHeight;
 
@@ -2884,6 +2956,13 @@ function updateZeroGravityThrusters(thrustInput, platform, seconds) {
     clampVectorLengthInPlace(zeroGravityVelocity, ZERO_G_MAX_SPEED);
   }
 
+  if (!isPositionInsidePlatformPhysicsVolume(camera.position, platform)) {
+    camera.position.addInPlace(zeroGravityVelocity.scale(seconds));
+    playerPhysics.grounded = false;
+    playerPhysics.verticalVelocity = zeroGravityVelocity.y;
+    return;
+  }
+
   const requestedHorizontal = new B.Vector3(
     zeroGravityVelocity.x * seconds,
     0,
@@ -2892,7 +2971,7 @@ function updateZeroGravityThrusters(thrustInput, platform, seconds) {
   const beforeX = camera.position.x;
   const beforeZ = camera.position.z;
   movePlayerHorizontally(requestedHorizontal, platform);
-  constrainPlayerToPlatform(platform);
+  constrainPlayerToPlatform(platform, { constrainVertical: false });
   const actualHorizontal = new B.Vector3(
     camera.position.x - beforeX,
     0,
@@ -3010,7 +3089,35 @@ function transformPlayerLocalDirectionToWorld(direction) {
   ).normalize();
 }
 
+function isPositionInsidePlatformPhysicsVolume(position, platform) {
+  if (!platform) return false;
+  const radius = platform.radius ?? 0;
+  const margin = Math.max(radius * 1.5, 0.04);
+  const minX = (platform.minX ?? -platform.width * 0.5) - margin;
+  const maxX = (platform.maxX ?? platform.width * 0.5) + margin;
+  const minZ = (platform.minZ ?? -platform.depth * 0.5) - margin;
+  const maxZ = (platform.maxZ ?? platform.depth * 0.5) + margin;
+  const minY = (platform.floorY ?? 0) - margin;
+  const maxY =
+    platform.ceilingY !== undefined
+      ? platform.ceilingY + margin
+      : Infinity;
+  return (
+    position.x >= minX &&
+    position.x <= maxX &&
+    position.y >= minY &&
+    position.y <= maxY &&
+    position.z >= minZ &&
+    position.z <= maxZ
+  );
+}
+
 function constrainPlayerVerticallyToPlatform(platform) {
+  if (getOpenPlatformPassageAt(camera.position, platform)) {
+    playerPhysics.grounded = false;
+    return;
+  }
+
   const minY = playerPhysics.eyeHeight ?? platform.eyeHeight;
   let grounded = false;
   if (platform.floorY !== undefined && camera.position.y <= minY) {
@@ -3067,6 +3174,9 @@ function canMoveHorizontally(displacement, platform) {
   const castDistance = distance + radius * 1.35;
   const ceilingY = platform.ceilingY ?? eye.y + platform.playerHeight;
   const playerHeight = playerPhysics.eyeHeight - (platform.floorY ?? 0);
+  const destination = eye.add(displacement);
+  if (getOpenPlatformPassageAt(destination, platform)) return true;
+
   const sampleHeights = [
     0,
     -playerHeight * 0.35,
@@ -3081,7 +3191,7 @@ function canMoveHorizontally(displacement, platform) {
         .add(side.scale(sideOffset));
       const ray = createWorldRay(origin, direction, castDistance);
       const hit = scene.pickWithRay(ray, (mesh) =>
-        collisionMeshes.includes(mesh),
+        isActivePlatformCollisionMesh(mesh, collisionMeshes),
       );
       if (hit?.hit && hit.distance <= castDistance) return false;
     }
@@ -3104,27 +3214,117 @@ function createWorldRay(localOrigin, localDirection, distance) {
   return new B.Ray(worldOrigin, worldDirection, distance);
 }
 
-function constrainPlayerToPlatform(platform) {
+function constrainPlayerToPlatform(platform, options = {}) {
   const radius = platform.radius ?? 0;
   const minX = platform.minX ?? -platform.width * 0.5;
   const maxX = platform.maxX ?? platform.width * 0.5;
   const minZ = platform.minZ ?? -platform.depth * 0.5;
   const maxZ = platform.maxZ ?? platform.depth * 0.5;
+  const passage = getOpenPlatformPassageAt(camera.position, platform);
 
-  camera.position.x = Math.min(
-    Math.max(camera.position.x, minX + radius),
-    maxX - radius,
-  );
-  camera.position.z = Math.min(
-    Math.max(camera.position.z, minZ + radius),
-    maxZ - radius,
-  );
-  if (platform.floorY !== undefined) {
+  if (passage?.oriented) {
+    constrainPlayerToOrientedPassage(
+      camera.position,
+      passage,
+      radius,
+      options,
+    );
+  } else if (passage) {
+    camera.position.x = clamp(
+      camera.position.x,
+      (passage.minX ?? minX) + radius,
+      (passage.maxX ?? maxX) - radius,
+    );
+    camera.position.z = clamp(
+      camera.position.z,
+      (passage.minZ ?? minZ) + radius,
+      (passage.maxZ ?? maxZ) - radius,
+    );
+  } else {
+    camera.position.x = clamp(camera.position.x, minX + radius, maxX - radius);
+    camera.position.z = clamp(camera.position.z, minZ + radius, maxZ - radius);
+  }
+
+  if (options.constrainVertical !== false && platform.floorY !== undefined) {
     camera.position.y = Math.max(
       camera.position.y,
       playerPhysics.eyeHeight ?? platform.eyeHeight,
     );
   }
+}
+
+function isActivePlatformCollisionMesh(mesh, collisionMeshes) {
+  if (!collisionMeshes.includes(mesh)) return false;
+  const doorInteraction = mesh.metadata?.platformDoorCollision;
+  return !doorInteraction?.isOpen;
+}
+
+function getOpenPlatformPassageAt(position, platform) {
+  const radius = platform.radius ?? 0;
+  for (const passage of platform.doorPassages ?? []) {
+    if (!passage.interaction?.isOpen) continue;
+    if (!isPositionInsidePassage(position, passage, radius)) continue;
+    return passage;
+  }
+  return null;
+}
+
+function isPositionInsidePassage(position, passage, radius) {
+  if (passage.oriented) {
+    const local = getOrientedPassagePosition(position, passage);
+    return (
+      Math.abs(local.right) <= passage.halfWidth + radius &&
+      Math.abs(local.up) <= passage.halfHeight + radius &&
+      local.normal >= -passage.inwardDepth - radius &&
+      local.normal <= passage.outwardDepth + radius
+    );
+  }
+
+  return (
+    position.x >= (passage.minX ?? -Infinity) + radius &&
+    position.x <= (passage.maxX ?? Infinity) - radius &&
+    position.y >= (passage.minY ?? -Infinity) &&
+    position.y <= (passage.maxY ?? Infinity) &&
+    position.z >= (passage.minZ ?? -Infinity) + radius &&
+    position.z <= (passage.maxZ ?? Infinity) - radius
+  );
+}
+
+function constrainPlayerToOrientedPassage(position, passage, radius, options) {
+  const local = getOrientedPassagePosition(position, passage);
+  const nextRight = clamp(
+    local.right,
+    -passage.halfWidth + radius,
+    passage.halfWidth - radius,
+  );
+  const nextUp =
+    options.constrainVertical === false
+      ? local.up
+      : clamp(local.up, -passage.halfHeight, passage.halfHeight);
+  const nextNormal = clamp(
+    local.normal,
+    -passage.inwardDepth,
+    passage.outwardDepth,
+  );
+
+  position
+    .copyFrom(passage.center)
+    .addInPlace(passage.right.scale(nextRight))
+    .addInPlace(passage.up.scale(nextUp))
+    .addInPlace(passage.normal.scale(nextNormal));
+}
+
+function getOrientedPassagePosition(position, passage) {
+  const offset = position.subtract(passage.center);
+  return {
+    right: B.Vector3.Dot(offset, passage.right),
+    up: B.Vector3.Dot(offset, passage.up),
+    normal: B.Vector3.Dot(offset, passage.normal),
+  };
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function createAssetProfiler() {

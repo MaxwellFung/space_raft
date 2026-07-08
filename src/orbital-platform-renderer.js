@@ -267,7 +267,12 @@ async function loadShipModel(
       if (!node.parent) node.parent = shipRoot;
     }
 
-    installShipDoorInteraction(result.meshes, interactions, platform);
+    const doorInteraction = installShipDoorInteraction(
+      scene,
+      result.meshes,
+      interactions,
+      platform,
+    );
     makeMaterialsDoubleSided(result);
     forceOpaqueShipMaterials(result, platform);
     if (platform.transparentGlass) {
@@ -276,6 +281,7 @@ async function loadShipModel(
     normalizeModel(shipRoot, platform.modelMaxSize ?? 3.3);
     applyModelRotation(shipRoot, platform);
     updatePhysicsFromShip(shipRoot, physics, platform);
+    configureShipDoorPassage(doorInteraction, physics, platform);
     shipRoot.parent = root;
     createControlPanel(scene, root, platform.controlPanel, physics);
     createHelmetHook(scene, root, platform.helmetHook, physics, interactions);
@@ -297,24 +303,231 @@ async function loadShipModel(
   }
 }
 
-function installShipDoorInteraction(meshes, interactions, platform) {
+function installShipDoorInteraction(scene, meshes, interactions, platform) {
   const doorMesh = meshes.find((mesh) =>
     /(^|[_-])door([_-]|$)/i.test(mesh.name ?? ""),
   );
   if (!doorMesh) return;
 
+  const hinge = configureShipDoorHinge(scene, doorMesh, platform);
+
   const interaction = {
     type: "ship-door",
     range: platform.doorRange ?? 1.8,
-    prompt: "Press E to open door",
-    activate: () => false,
+    isOpen: false,
+    isAnimating: false,
+    doorMesh,
+    getPrompt: () =>
+      interaction.isOpen ? "Press E to close hatch" : "Press E to open hatch",
+    activate: () => toggleShipDoor(scene, hinge, interaction, platform),
   };
   doorMesh.isPickable = true;
   doorMesh.metadata = {
     ...(doorMesh.metadata ?? {}),
     interaction,
+    platformDoorCollision: interaction,
   };
   interactions?.push(interaction);
+  return interaction;
+}
+
+function configureShipDoorHinge(scene, doorMesh, platform) {
+  const parent = doorMesh.parent;
+  doorMesh.computeWorldMatrix(true);
+  const bounds = doorMesh.getBoundingInfo().boundingBox;
+  const min = bounds.minimum;
+  const max = bounds.maximum;
+  const localPivot = B.Vector3.FromArray(
+    platform.doorHingePivot ?? [
+      platform.doorHingeSide === "maxX" ? max.x : min.x,
+      (min.y + max.y) * 0.5,
+      (min.z + max.z) * 0.5,
+    ],
+  );
+  const worldPivot = B.Vector3.TransformCoordinates(
+    localPivot,
+    doorMesh.getWorldMatrix(),
+  );
+  const hinge = new B.TransformNode(`${doorMesh.name}-hinge`, scene);
+  hinge.parent = parent;
+  if (parent) {
+    parent.computeWorldMatrix(true);
+    const inverseParent = parent.getWorldMatrix().clone().invert();
+    hinge.position.copyFrom(
+      B.Vector3.TransformCoordinates(worldPivot, inverseParent),
+    );
+  } else {
+    hinge.position.copyFrom(worldPivot);
+  }
+  doorMesh.setParent(hinge);
+  hinge.metadata = {
+    ...(hinge.metadata ?? {}),
+    closedRotation: hinge.rotation.clone(),
+  };
+  return hinge;
+}
+
+function configureShipDoorPassage(interaction, physics, platform) {
+  const doorMesh = interaction?.doorMesh;
+  if (!doorMesh) return;
+
+  const frame = getDoorPassageFrame(doorMesh, physics);
+  if (!frame) return;
+
+  const radius = physics.radius ?? 0.05;
+  const padding = platform.doorPassagePadding ?? radius * 2.2;
+  const verticalPadding =
+    platform.doorPassageVerticalPadding ?? Math.max(radius * 4, 0.6);
+  const exteriorDepth = platform.doorExteriorDepth ?? Infinity;
+  const interiorDepth =
+    platform.doorInteriorDepth ?? Math.max(radius * 4, 0.55);
+  const passage = {
+    oriented: true,
+    interaction,
+    center: frame.center,
+    right: frame.right,
+    up: frame.up,
+    normal: frame.normal,
+    halfWidth: frame.halfWidth + padding,
+    halfHeight: Math.max(
+      frame.halfHeight + verticalPadding,
+      ((physics.ceilingY ?? frame.center.y) - (physics.floorY ?? frame.center.y)) *
+        0.5,
+    ),
+    inwardDepth: interiorDepth,
+    outwardDepth: exteriorDepth,
+  };
+
+  interaction.passage = passage;
+  physics.doorPassages = [...(physics.doorPassages ?? []), passage];
+}
+
+function getDoorPassageFrame(doorMesh, physics) {
+  const vertices = getMeshWorldVertices(doorMesh);
+  if (!vertices.length) return null;
+
+  doorMesh.computeWorldMatrix(true);
+  const world = doorMesh.getWorldMatrix();
+  const axes = [B.Axis.X, B.Axis.Y, B.Axis.Z].map((axis) =>
+    B.Vector3.TransformNormal(axis, world).normalize(),
+  );
+  const projections = axes.map((axis) => getProjectionRange(vertices, axis));
+  const normalIndex = projections
+    .map((range, index) => ({ index, span: range.max - range.min }))
+    .sort((a, b) => a.span - b.span)[0].index;
+  const tangentIndexes = [0, 1, 2].filter((index) => index !== normalIndex);
+  const upIndex =
+    Math.abs(B.Vector3.Dot(axes[tangentIndexes[0]], B.Axis.Y)) >
+    Math.abs(B.Vector3.Dot(axes[tangentIndexes[1]], B.Axis.Y))
+      ? tangentIndexes[0]
+      : tangentIndexes[1];
+  const rightIndex = tangentIndexes.find((index) => index !== upIndex);
+
+  let normal = axes[normalIndex].clone();
+  const normalMid =
+    (projections[normalIndex].min + projections[normalIndex].max) * 0.5;
+  const upMid = (projections[upIndex].min + projections[upIndex].max) * 0.5;
+  const rightMid =
+    (projections[rightIndex].min + projections[rightIndex].max) * 0.5;
+  const center = axes[normalIndex]
+    .scale(normalMid)
+    .add(axes[upIndex].scale(upMid))
+    .add(axes[rightIndex].scale(rightMid));
+  const platformCenter = new B.Vector3(
+    ((physics.minX ?? center.x) + (physics.maxX ?? center.x)) * 0.5,
+    center.y,
+    ((physics.minZ ?? center.z) + (physics.maxZ ?? center.z)) * 0.5,
+  );
+
+  if (B.Vector3.Dot(normal, center.subtract(platformCenter)) < 0) {
+    normal = normal.scale(-1);
+  }
+
+  return {
+    center,
+    right: axes[rightIndex],
+    up: axes[upIndex],
+    normal,
+    halfWidth:
+      (projections[rightIndex].max - projections[rightIndex].min) * 0.5,
+    halfHeight: (projections[upIndex].max - projections[upIndex].min) * 0.5,
+  };
+}
+
+function getMeshWorldVertices(mesh) {
+  const positions = mesh.getVerticesData(B.VertexBuffer.PositionKind);
+  if (!positions) return [];
+
+  mesh.computeWorldMatrix(true);
+  const world = mesh.getWorldMatrix();
+  const vertices = [];
+  for (let index = 0; index < positions.length / 3; index += 1) {
+    vertices.push(transformedVertex(positions, index, world));
+  }
+  return vertices;
+}
+
+function getProjectionRange(points, axis) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const point of points) {
+    const projection = B.Vector3.Dot(point, axis);
+    min = Math.min(min, projection);
+    max = Math.max(max, projection);
+  }
+  return { min, max };
+}
+
+function toggleShipDoor(scene, hinge, interaction, platform) {
+  if (interaction.isAnimating) return false;
+
+  const closedRotation =
+    hinge.metadata?.closedRotation?.clone?.() ?? hinge.rotation.clone();
+  const axis = platform.doorHingeAxis ?? "z";
+  const openAngle = degreesToRadians(platform.doorOpenAngleDegrees ?? -105);
+  const openRotation = closedRotation.clone();
+  openRotation[axis] += openAngle;
+  const targetRotation = interaction.isOpen ? closedRotation : openRotation;
+
+  animateShipDoorRotation(
+    scene,
+    hinge,
+    targetRotation,
+    platform.doorAnimationSeconds ?? 0.75,
+    () => {
+      interaction.isOpen = !interaction.isOpen;
+      interaction.isAnimating = false;
+    },
+  );
+  interaction.isAnimating = true;
+  return true;
+}
+
+function animateShipDoorRotation(scene, hinge, targetRotation, duration, onDone) {
+  const startRotation = hinge.rotation.clone();
+  const secondsTotal = Math.max(duration, 0.01);
+  let elapsed = 0;
+
+  const observer = scene.onBeforeRenderObservable.add(() => {
+    const seconds = Math.min(scene.getEngine().getDeltaTime() / 1000, 0.05);
+    elapsed += seconds;
+    const amount = easeInOutCubic(Math.min(elapsed / secondsTotal, 1));
+    hinge.rotation.x = B.Scalar.Lerp(startRotation.x, targetRotation.x, amount);
+    hinge.rotation.y = B.Scalar.Lerp(startRotation.y, targetRotation.y, amount);
+    hinge.rotation.z = B.Scalar.Lerp(startRotation.z, targetRotation.z, amount);
+    hinge.computeWorldMatrix(true);
+
+    if (elapsed >= secondsTotal) {
+      hinge.rotation.copyFrom(targetRotation);
+      hinge.computeWorldMatrix(true);
+      scene.onBeforeRenderObservable.remove(observer);
+      onDone?.();
+    }
+  });
+}
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
 function applyPlatformInitialCameraRotation(camera, platform) {
