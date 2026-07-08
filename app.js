@@ -29,6 +29,9 @@ const GLB_PICKUP_PROMPT_RANGE = 1.8;
 const MENU_STAR_DOME_RADIUS = 900;
 const PLACEMENT_RANGE = 3.2;
 const PLACEMENT_PADDING = 0.035;
+const ASTEROID_PICKUP_RANGE = 2.8;
+const HELD_ASTEROID_DISTANCE = 0.82;
+const HELD_ASTEROID_OFFSET = new B.Vector3(0, -0.08, HELD_ASTEROID_DISTANCE);
 const TETHER_ATTACH_OFFSET = new B.Vector3(0, -0.36, 0);
 const TETHER_SEGMENT_COUNT = 24;
 const TETHER_SOLVER_ITERATIONS = 7;
@@ -39,6 +42,9 @@ const TETHER_INITIAL_DEPLOYED_LENGTH = 0.12;
 const TETHER_DEPLOY_SPEED = 1.45;
 const TETHER_RENDER_SMOOTHING_STEPS = 5;
 const TETHER_TAUT_EPSILON = 0.025;
+const TETHER_PLATFORM_PULL_CORRECTION_TRANSFER = 0.45;
+const TETHER_PLATFORM_PULL_VELOCITY_TRANSFER = 0.16;
+const TETHER_PLATFORM_PULL_MAX_ACCELERATION = 1.8;
 const ZERO_G_THRUST_ACCELERATION = 1.55;
 const ZERO_G_THRUST_BOOST_MULTIPLIER = 1.55;
 const ZERO_G_MAX_SPEED = 4.6;
@@ -140,6 +146,12 @@ addEventListener("keydown", (event) => {
     keys.delete("KeyO");
     return;
   }
+  if (event.code === "KeyE" && heldAsteroid) {
+    event.preventDefault();
+    dropHeldAsteroid();
+    keys.delete("KeyE");
+    return;
+  }
   if (event.code === "KeyE" && activeInteraction) {
     event.preventDefault();
     let interactionHandled = true;
@@ -209,6 +221,7 @@ let placementInProgress = false;
 let equippedHelmet = null;
 let helmetEquipInProgress = false;
 let playerTether = null;
+let heldAsteroid = null;
 
 const inventoryItems = Array.from({ length: 20 }, () => null);
 const hotbarItems = Array.from({ length: 10 }, () => null);
@@ -1015,8 +1028,34 @@ function simulatePlayerTether(seconds) {
   particles[lastIndex].previous.copyFrom(particles[lastIndex].position);
   const correction = camera.position.subtract(before);
   if (correction.lengthSquared() > 0.000001) {
+    applyTetherPullToPlatform(correction, seconds);
     dampenPlayerVelocityFromTetherCorrection(correction);
   }
+}
+
+function applyTetherPullToPlatform(correction, seconds) {
+  if (!level?.platform?.applyExternalImpulse || seconds <= 0) return;
+
+  const pull = correction.scale(-1);
+  const pullDistance = pull.length();
+  if (pullDistance <= 0.000001) return;
+
+  const pullDirection = pull.scale(1 / pullDistance);
+  const correctionSpeed = pullDistance / seconds;
+  const playerOutwardSpeed =
+    zeroGravityMode && zeroGravityVelocity.lengthSquared() > 0.000001
+      ? Math.max(0, B.Vector3.Dot(zeroGravityVelocity, pullDirection))
+      : 0;
+  const pullAcceleration = Math.min(
+    TETHER_PLATFORM_PULL_MAX_ACCELERATION,
+    correctionSpeed * TETHER_PLATFORM_PULL_CORRECTION_TRANSFER +
+      playerOutwardSpeed * TETHER_PLATFORM_PULL_VELOCITY_TRANSFER,
+  );
+
+  level.platform.applyExternalImpulse(
+    pullDirection,
+    pullAcceleration * seconds,
+  );
 }
 
 function isPlayerTetherFullyExtendedAndTaut() {
@@ -2757,10 +2796,14 @@ function updateActiveInteraction() {
     updateInteractionPrompt(null);
     return;
   }
+  if (heldAsteroid) {
+    updateInteractionPrompt({ prompt: "Asteroid held · Press E to drop" });
+    return;
+  }
 
   const maxRange = interactions.reduce(
     (range, interaction) => Math.max(range, interaction.range ?? 1.8),
-    GLB_PICKUP_PROMPT_RANGE,
+    Math.max(GLB_PICKUP_PROMPT_RANGE, ASTEROID_PICKUP_RANGE),
   );
   const ray = createCameraLookRay(maxRange);
   const hit = scene.pickWithRay(ray, (mesh) =>
@@ -2771,7 +2814,7 @@ function updateActiveInteraction() {
     createGlbPickupPrompt(hit?.pickedMesh);
 
   if (!hit?.hit || !interaction || hit.distance > (interaction.range ?? 1.8)) {
-    updateInteractionPrompt(null);
+    updateInteractionPrompt(createAsteroidPickupInteraction());
     return;
   }
 
@@ -2825,6 +2868,141 @@ function createCameraLookRay(distance) {
   }
   direction.normalize();
   return new B.Ray(origin, direction, distance);
+}
+
+function createAsteroidPickupInteraction() {
+  const debrisRocks = level?.debrisField?.rocks;
+  if (!debrisRocks?.findAsteroidAlongRay) return null;
+
+  const ray = createCameraLookRay(ASTEROID_PICKUP_RANGE);
+  const candidate = debrisRocks.findAsteroidAlongRay(
+    ray,
+    ASTEROID_PICKUP_RANGE,
+  );
+  if (!candidate) return null;
+
+  return {
+    type: "asteroid",
+    range: ASTEROID_PICKUP_RANGE,
+    prompt: "Press E to pick up asteroid",
+    activate: () => pickUpAsteroidFromField(candidate),
+  };
+}
+
+function pickUpAsteroidFromField(candidate) {
+  if (heldAsteroid) return false;
+
+  const asteroid = level?.debrisField?.rocks?.takeAsteroid?.(candidate);
+  if (!asteroid?.sourceMesh) return false;
+
+  heldAsteroid = {
+    mesh: createHeldAsteroidMesh(asteroid),
+    radius: asteroid.radius,
+  };
+  updateInteractionPrompt({ prompt: "Asteroid held · Press E to drop" });
+  return true;
+}
+
+function createHeldAsteroidMesh(asteroid) {
+  const mesh = createAsteroidMeshFromSource(
+    asteroid.sourceMesh,
+    "held-asteroid",
+  );
+  mesh.parent = camera;
+  mesh.position.copyFrom(HELD_ASTEROID_OFFSET);
+  mesh.scaling.copyFrom(asteroid.scale);
+  mesh.rotationQuaternion =
+    asteroid.rotation?.clone?.() ?? B.Quaternion.Identity();
+  mesh.isPickable = false;
+  mesh.checkCollisions = false;
+  mesh.receiveShadows = true;
+  mesh.metadata = {
+    ...(mesh.metadata ?? {}),
+    heldAsteroid: true,
+  };
+  return mesh;
+}
+
+function createAsteroidMeshFromSource(sourceMesh, name) {
+  const positions = sourceMesh.getVerticesData(B.VertexBuffer.PositionKind);
+  const mesh = positions
+    ? new B.Mesh(name, scene)
+    : B.MeshBuilder.CreateIcoSphere(
+        name,
+        { radius: 1, subdivisions: 3, flat: false },
+        scene,
+      );
+
+  if (positions) {
+    const vertexData = new B.VertexData();
+    vertexData.positions = positions.slice();
+    vertexData.normals =
+      sourceMesh.getVerticesData(B.VertexBuffer.NormalKind)?.slice();
+    vertexData.uvs =
+      sourceMesh.getVerticesData(B.VertexBuffer.UVKind)?.slice();
+    vertexData.colors =
+      sourceMesh.getVerticesData(B.VertexBuffer.ColorKind)?.slice();
+    vertexData.indices = sourceMesh.getIndices()?.slice();
+    vertexData.applyToMesh(mesh);
+  }
+
+  mesh.material = sourceMesh.material;
+  return mesh;
+}
+
+function dropHeldAsteroid() {
+  if (!heldAsteroid?.mesh) return false;
+
+  const mesh = heldAsteroid.mesh;
+  mesh.computeWorldMatrix(true);
+  if (level?.platform?.root) {
+    mesh.setParent(level.platform.root);
+  } else {
+    mesh.parent = null;
+  }
+  mesh.isPickable = true;
+  mesh.checkCollisions = false;
+  mesh.metadata = {
+    ...(mesh.metadata ?? {}),
+    heldAsteroid: false,
+  };
+  installDroppedAsteroidInteraction(mesh);
+  heldAsteroid = null;
+  updateInteractionPrompt(null);
+  return true;
+}
+
+function installDroppedAsteroidInteraction(mesh) {
+  mesh.metadata = {
+    ...(mesh.metadata ?? {}),
+    interaction: {
+      type: "asteroid",
+      range: ASTEROID_PICKUP_RANGE,
+      getPrompt: () => "Press E to pick up asteroid",
+      activate: () => pickUpDroppedAsteroid(mesh),
+    },
+  };
+}
+
+function pickUpDroppedAsteroid(mesh) {
+  if (heldAsteroid || !mesh || mesh.isDisposed?.()) return false;
+
+  mesh.metadata = {
+    ...(mesh.metadata ?? {}),
+    interaction: null,
+    heldAsteroid: true,
+  };
+  delete mesh.metadata.interaction;
+  mesh.isPickable = false;
+  mesh.checkCollisions = false;
+  mesh.setParent(camera);
+  mesh.position.copyFrom(HELD_ASTEROID_OFFSET);
+  heldAsteroid = {
+    mesh,
+    radius: mesh.getBoundingInfo?.().boundingSphere.radiusWorld,
+  };
+  updateInteractionPrompt({ prompt: "Asteroid held · Press E to drop" });
+  return true;
 }
 
 function updateInteractionPrompt(interaction) {

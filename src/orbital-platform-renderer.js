@@ -51,6 +51,11 @@ export function createOrbitalPlatform(scene, platform, primary) {
     (radiusKm / (primaryRadiusJupiter * JUPITER_RADIUS_KM)) *
       primaryRenderRadius;
   const tangent = B.Vector3.Zero();
+  const externalDrift = B.Vector3.Zero();
+  const externalVelocity = B.Vector3.Zero();
+  const externalMaxSpeed = platform.externalMotionMaxSpeed ?? 1.15;
+  const externalMaxOffset = platform.externalMotionMaxOffset ?? 12;
+  const externalDamping = platform.externalMotionDamping ?? 0.86;
   const fixedOrbit = orbit.fixed ?? platform.geostationary ?? false;
   const initialOrbitAngle =
     orbit.phaseRadians ?? degreesToRadians(orbit.phaseDegrees ?? 0);
@@ -90,6 +95,7 @@ export function createOrbitalPlatform(scene, platform, primary) {
         orbitAngle =
           (orbitAngle + angularSpeed * seconds * timeScale) % (Math.PI * 2);
       }
+      updateExternalMotion(seconds);
       updateOrbit();
       scene.metadata?.profiler?.setGpuWeight("Platform", 1.1);
     });
@@ -110,6 +116,38 @@ export function createOrbitalPlatform(scene, platform, primary) {
     camera,
     interactions,
   );
+
+  function updateExternalMotion(seconds) {
+    if (seconds <= 0) return;
+
+    if (externalVelocity.lengthSquared() > 0.0000001) {
+      externalDrift.addInPlace(externalVelocity.scale(seconds));
+      externalVelocity.scaleInPlace(Math.pow(externalDamping, seconds));
+      if (externalVelocity.lengthSquared() < 0.000001) {
+        externalVelocity.copyFromFloats(0, 0, 0);
+      }
+    }
+    clampVectorLengthInPlace(externalDrift, externalMaxOffset);
+  }
+
+  function applyExternalImpulse(localDirection, impulse) {
+    if (!localDirection || impulse <= 0) return;
+
+    const direction = localDirection.clone();
+    if (direction.lengthSquared() <= 0.000001) return;
+    direction.normalize();
+
+    root.computeWorldMatrix(true);
+    const worldDirection = B.Vector3.TransformNormal(
+      direction,
+      root.getWorldMatrix(),
+    );
+    if (worldDirection.lengthSquared() <= 0.000001) return;
+    worldDirection.normalize();
+
+    externalVelocity.addInPlace(worldDirection.scale(impulse));
+    clampVectorLengthInPlace(externalVelocity, externalMaxSpeed);
+  }
 
   function updateOrbit() {
     if (orbit.enabled ?? true) {
@@ -142,6 +180,7 @@ export function createOrbitalPlatform(scene, platform, primary) {
       );
       root.rotation = B.Vector3.FromArray(platform.rotation ?? [0, 0, 0]);
     }
+    root.position.addInPlace(externalDrift);
   }
 
   return {
@@ -158,6 +197,7 @@ export function createOrbitalPlatform(scene, platform, primary) {
     },
     physics,
     interactions,
+    applyExternalImpulse,
   };
 }
 
@@ -1910,6 +1950,12 @@ function degreesToRadians(degrees) {
 
 function vectorDegreesToRadians(degrees) {
   return degrees.map(degreesToRadians);
+}
+
+function clampVectorLengthInPlace(vector, maxLength) {
+  const lengthSquared = vector.lengthSquared();
+  if (lengthSquared <= maxLength * maxLength) return;
+  vector.scaleInPlace(maxLength / Math.sqrt(lengthSquared));
 }
 
 function profile(scene, name, fn) {

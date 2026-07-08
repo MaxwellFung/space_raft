@@ -63,8 +63,22 @@ function createRockField(scene, field) {
   const orbitNormal = B.Vector3.Up();
   const scratchRockPosition = B.Vector3.Zero();
   const scratchWorldPosition = B.Vector3.Zero();
+  const scratchPlayerPosition = B.Vector3.Zero();
+  const scratchPlayerVelocity = B.Vector3.Zero();
+  const scratchPreviousPlayerPosition = B.Vector3.Zero();
+  const playerCollisionRadius = field.playerCollisionRadius ?? 0.34;
+  const playerCollisionCenterOffset =
+    field.playerCollisionCenterOffset ?? [0, -0.48, 0];
+  const playerCollisionOffset = B.Vector3.FromArray(playerCollisionCenterOffset);
+  const playerCollisionPush = field.playerCollisionPush ?? 0.72;
+  const playerCollisionVelocityTransfer =
+    field.playerCollisionVelocityTransfer ?? 0.86;
+  const playerCollisionMaxImpulse = field.playerCollisionMaxImpulse ?? 2.8;
+  const playerCollisionGraceSeconds = field.playerCollisionGraceSeconds ?? 1.2;
   let centerProvider = () => scene.activeCamera.globalPosition;
   let flowProvider = () => B.Axis.Z;
+  let playerProvider = () => getScenePlayerCollisionSource(scene);
+  let hasPreviousPlayerPosition = false;
   let lastCell = "";
   let simulationTime = 0;
   let asteroidFrame = 0;
@@ -126,6 +140,13 @@ function createRockField(scene, field) {
   root.setFlowDirection = (provider) => {
     flowProvider = provider;
   };
+  root.setPlayerCollisionSource = (provider) => {
+    playerProvider = provider;
+    hasPreviousPlayerPosition = false;
+  };
+  root.findAsteroidAlongRay = (ray, range = 2.8) =>
+    findAsteroidAlongRay(ray, range);
+  root.takeAsteroid = (candidate) => takeAsteroid(candidate);
 
   return root;
 
@@ -291,13 +312,23 @@ function createRockField(scene, field) {
     for (const matrixSet of matrices) matrixSet.length = 0;
     for (const colorSet of colors) colorSet.length = 0;
     const densityThreshold = field.rockDensityThreshold ?? 0.08;
+    updatePlayerCollisionSample(seconds);
     for (let index = rocks.length - 1; index >= 0; index -= 1) {
       const rock = rocks[index];
       rock.age += seconds;
+      rock.playerCollisionGrace = Math.max(
+        0,
+        (rock.playerCollisionGrace ?? 0) - seconds,
+      );
       const position = getRockPositionToRef(rock, scratchRockPosition);
+      resolvePlayerRockCollision(rock, position, seconds);
       if (isInsideShipGraceBubble(position, rock.radius)) {
-        rocks.splice(index, 1);
-        continue;
+        if (rock.playerCollisionGrace > 0) {
+          pushRockOutsideShipGraceBubble(rock, position);
+        } else {
+          rocks.splice(index, 1);
+          continue;
+        }
       }
       if (position.lengthSquared() > renderDistance * renderDistance) {
         retiringRocks.push({
@@ -338,12 +369,7 @@ function createRockField(scene, field) {
       const birthFade = smoothstep(0, transitionSeconds, rock.age);
       const fade = clamp01(distanceFade * densityFade * birthFade);
       if (fade <= 0.015) continue;
-      const rotation = rock.rotation.multiply(
-        B.Quaternion.RotationAxis(
-          rock.spinAxis,
-          simulationTime * rock.spinRate,
-        ),
-      );
+      const rotation = getRockDisplayRotation(rock);
       const fadedScale = rock.scale.scale(lerp(fadeMinScale, 1, fade));
       pushInstance(
         matrices[rock.material],
@@ -391,11 +417,169 @@ function createRockField(scene, field) {
     );
   }
 
+  function updatePlayerCollisionSample(seconds) {
+    const playerSource = playerProvider?.();
+    if (!playerSource) {
+      hasPreviousPlayerPosition = false;
+      scratchPlayerVelocity.copyFromFloats(0, 0, 0);
+      return;
+    }
+
+    const playerWorld =
+      playerSource instanceof B.Vector3
+        ? playerSource
+        : playerSource.position;
+    if (!playerWorld) {
+      hasPreviousPlayerPosition = false;
+      scratchPlayerVelocity.copyFromFloats(0, 0, 0);
+      return;
+    }
+
+    scratchPlayerPosition
+      .copyFrom(playerWorld)
+      .subtractInPlace(renderCenter)
+      .addInPlace(getPlayerCollisionOffset(playerSource, playerCollisionOffset));
+    if (hasPreviousPlayerPosition && seconds > 0) {
+      scratchPlayerVelocity
+        .copyFrom(scratchPlayerPosition)
+        .subtractInPlace(scratchPreviousPlayerPosition)
+        .scaleInPlace(1 / seconds);
+    } else {
+      scratchPlayerVelocity.copyFromFloats(0, 0, 0);
+      hasPreviousPlayerPosition = true;
+    }
+    scratchPreviousPlayerPosition.copyFrom(scratchPlayerPosition);
+  }
+
+  function resolvePlayerRockCollision(rock, position, seconds) {
+    if (!hasPreviousPlayerPosition || seconds <= 0) return;
+
+    const collisionRadius = rock.radius + playerCollisionRadius;
+    const delta = position.subtract(scratchPlayerPosition);
+    const distanceSquared = delta.lengthSquared();
+    if (
+      distanceSquared >= collisionRadius * collisionRadius ||
+      distanceSquared <= 0.0000001
+    ) {
+      return;
+    }
+
+    const distance = Math.sqrt(distanceSquared);
+    const normal = delta.scale(1 / distance);
+    const penetration = collisionRadius - distance;
+    const separation = normal.scale(penetration + 0.004);
+    position.addInPlace(separation);
+    rock.playerCollisionGrace = playerCollisionGraceSeconds;
+
+    const playerSpeedIntoRock = Math.max(
+      0,
+      B.Vector3.Dot(scratchPlayerVelocity, normal),
+    );
+    const shoveSpeed = Math.min(
+      playerCollisionMaxImpulse,
+      playerSpeedIntoRock * playerCollisionVelocityTransfer +
+        penetration * playerCollisionPush / seconds,
+    );
+    if (shoveSpeed > 0.0001) {
+      const currentOutwardSpeed = B.Vector3.Dot(rock.relativeVelocity, normal);
+      const addedSpeed = Math.max(0, shoveSpeed - currentOutwardSpeed);
+      rock.relativeVelocity.addInPlace(normal.scale(addedSpeed));
+    }
+    setRockBaseFromCurrentPosition(rock, position);
+  }
+
+  function pushRockOutsideShipGraceBubble(rock, position) {
+    if (shipGraceRadius <= 0) return;
+
+    const minDistance = shipGraceRadius + rock.radius + 0.02;
+    const distance = position.length();
+    if (distance >= minDistance) return;
+
+    let direction;
+    if (distance > 0.0001) {
+      direction = position.scale(1 / distance);
+    } else if (scratchPlayerPosition.lengthSquared() > 0.0001) {
+      direction = scratchPlayerPosition.clone().normalize();
+    } else if (flowDirection.lengthSquared() > 0.0001) {
+      direction = flowDirection.clone().normalize();
+    } else {
+      direction = B.Axis.Z.clone();
+    }
+
+    position.copyFrom(direction.scale(minDistance));
+    setRockBaseFromCurrentPosition(rock, position);
+  }
+
+  function setRockBaseFromCurrentPosition(rock, position) {
+    rock.base.copyFrom(position);
+    if (rock.age > 0) {
+      rock.base.subtractInPlace(rock.relativeVelocity.scale(rock.age));
+    }
+  }
+
   function getRockPositionToRef(rock, target) {
     target.copyFrom(rock.relativeVelocity);
     target.scaleInPlace(rock.age);
     target.addInPlace(rock.base);
     return target;
+  }
+
+  function getRockDisplayRotation(rock) {
+    return rock.rotation.multiply(
+      B.Quaternion.RotationAxis(
+        rock.spinAxis,
+        simulationTime * rock.spinRate,
+      ),
+    );
+  }
+
+  function findAsteroidAlongRay(ray, range = 2.8) {
+    if (!ray || !rocks.length) return null;
+
+    const direction = ray.direction.clone();
+    if (direction.lengthSquared() <= 0.000001) return null;
+    direction.normalize();
+
+    const origin = ray.origin.subtract(renderCenter);
+    const maxDistance = Math.min(range, ray.length ?? range);
+    let closest = null;
+    for (const rock of rocks) {
+      const position = getRockPositionToRef(rock, scratchRockPosition);
+      const pickRadius = Math.max(rock.radius, field.rockPickupRadius ?? 0.22);
+      const distance = intersectRaySphereDistance(
+        origin,
+        direction,
+        position,
+        pickRadius,
+        maxDistance,
+      );
+      if (distance === null) continue;
+      if (!closest || distance < closest.distance) {
+        closest = {
+          rock,
+          distance,
+          position: position.clone(),
+        };
+      }
+    }
+    return closest;
+  }
+
+  function takeAsteroid(candidate) {
+    const rock = candidate?.rock;
+    const index = rocks.indexOf(rock);
+    if (index === -1) return null;
+
+    const position = getRockPositionToRef(rock, scratchRockPosition).clone();
+    const displayRotation = getRockDisplayRotation(rock).clone();
+    rocks.splice(index, 1);
+    return {
+      sourceMesh: groups[rock.material],
+      position: renderCenter.add(position),
+      scale: rock.scale.clone(),
+      rotation: displayRotation,
+      radius: rock.radius,
+    };
   }
 
   function createRelativeOrbitalVelocity(random) {
@@ -446,6 +630,64 @@ function createClumps(
     clumps.push(randomPointInSphere(random, radius));
   }
   return clumps;
+}
+
+function getScenePlayerCollisionSource(scene) {
+  const camera = scene.getCameraByName?.("player-camera") ?? scene.activeCamera;
+  if (!camera) return null;
+
+  camera.computeWorldMatrix?.(true);
+  const up = camera.getDirection?.(B.Axis.Y) ?? B.Axis.Y.clone();
+  if (up.lengthSquared() > 0.0001) up.normalize();
+  return {
+    position: camera.globalPosition?.clone?.() ?? camera.position?.clone?.(),
+    up,
+  };
+}
+
+function getPlayerCollisionOffset(source, playerCollisionOffset) {
+  if (source instanceof B.Vector3) return playerCollisionOffset.clone();
+
+  const offset = B.Vector3.Zero();
+  if (source.right && playerCollisionOffset.x) {
+    offset.addInPlace(source.right.scale(playerCollisionOffset.x));
+  } else {
+    offset.x += playerCollisionOffset.x;
+  }
+  if (source.up && playerCollisionOffset.y) {
+    offset.addInPlace(source.up.scale(playerCollisionOffset.y));
+  } else {
+    offset.y += playerCollisionOffset.y;
+  }
+  if (source.forward && playerCollisionOffset.z) {
+    offset.addInPlace(source.forward.scale(playerCollisionOffset.z));
+  } else {
+    offset.z += playerCollisionOffset.z;
+  }
+  return offset;
+}
+
+function intersectRaySphereDistance(
+  origin,
+  direction,
+  center,
+  radius,
+  maxDistance,
+) {
+  const toCenter = center.subtract(origin);
+  const projected = B.Vector3.Dot(toCenter, direction);
+  if (projected < 0 || projected > maxDistance) return null;
+
+  const closestDistanceSquared =
+    toCenter.lengthSquared() - projected * projected;
+  const radiusSquared = radius * radius;
+  if (closestDistanceSquared > radiusSquared) return null;
+
+  const halfChord = Math.sqrt(
+    Math.max(radiusSquared - closestDistanceSquared, 0),
+  );
+  const hitDistance = Math.max(0, projected - halfChord);
+  return hitDistance <= maxDistance ? hitDistance : null;
 }
 
 function createRockGroups(scene, field, runtimeSeed) {
