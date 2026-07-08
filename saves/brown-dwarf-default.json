@@ -50,6 +50,120 @@
       "showGuide": false,
       "guideColor": [1, 0.88, 0.05],
       "guideAlpha": 0.95
+    },
+    "initialCameraRotationDegrees": [32.566, 183.247, 0]
+  },
+  "path": "./saves/brown-dwarf-default.json",
+  "world": {
+    "version": 1,
+    "scene": {
+      "timeScale": 1
+    },
+    "player": {
+      "position": [0.4876, 0.2511, 1.0451],
+      "rotationDegrees": [17.613, 191.543, 0],
+      "flyMode": false,
+      "thirdPersonMode": false,
+      "selectedHotbarIndex": 7
+    },
+    "inventory": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "hotbar": [null, null, null, null, null, null, null, null, null, null],
+    "pickups": {
+      "collectedIds": [
+        "battery",
+        "crate-ration-a",
+        "crate-ration-b",
+        "crate-water-bottle-a",
+        "crate-water-bottle-b",
+        "fabricator",
+        "fuel-tank",
+        "oxygen-canister",
+        "water-tank",
+        "wooden-crate"
+      ]
+    },
+    "placedItems": [
+      {
+        "item": {
+          "id": "fuel-tank",
+          "name": "Fuel",
+          "swatch": "#c58f42",
+          "modelUrl": "./assets/fuel_tank.glb",
+          "maxSize": 0.66,
+          "floorOffset": 0.095,
+          "rotation": [0, 0, 0],
+          "count": 1
+        },
+        "position": [-0.3615, -0.6539, -1.1805],
+        "rotationDegrees": [0, 0, 0]
+      },
+      {
+        "item": {
+          "id": "battery",
+          "name": "Battery",
+          "swatch": "#4c5964",
+          "modelUrl": "./assets/battery.glb",
+          "maxSize": 0.22,
+          "floorOffset": 0.095,
+          "rotation": [0, 0.3141592653589793, 0],
+          "count": 1
+        },
+        "position": [0.0142, -0.6539, -1.2289],
+        "rotationDegrees": [0, 18, 0]
+      },
+      {
+        "item": {
+          "id": "fabricator",
+          "name": "Fabricator",
+          "swatch": "#77818b",
+          "modelUrl": "./assets/fabricator.glb",
+          "maxSize": 0.5,
+          "floorOffset": 0.09,
+          "rotation": [0, -1.5707963267948966, 0],
+          "count": 1
+        },
+        "position": [0.3874, -0.6589, -0.9511],
+        "rotationDegrees": [0, -90, 0]
+      }
+    ],
+    "helmet": {
+      "equipped": null,
+      "mountedItem": {
+        "id": "astronaut-helmet",
+        "label": "Helmet",
+        "modelUrl": "./assets/astronaut_helmet.glb",
+        "maxSize": 0.23,
+        "position": [0.22, 0, 0.08],
+        "rotationDegrees": [0, -32, 0],
+        "keepInside": true,
+        "swatch": "#d7dde2",
+        "floorOffset": 0.1,
+        "name": "Helmet"
+      }
+    },
+    "tether": {
+      "attached": false
     }
   }
 }

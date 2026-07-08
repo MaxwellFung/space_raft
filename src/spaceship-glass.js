@@ -2,6 +2,13 @@ const B = window.BABYLON;
 
 export function replaceGlassWithClearMaterial(result, scene, options = {}) {
   const glassMaterial = createSpaceshipGlassMaterial(scene, options);
+  const glassRenderingGroupId = options.glassRenderingGroupId ?? 4;
+  scene.setRenderingAutoClearDepthStencil?.(
+    glassRenderingGroupId,
+    true,
+    true,
+    true,
+  );
 
   for (const mesh of result.meshes) {
     if (isSpaceshipGlassMesh(mesh)) {
@@ -20,10 +27,14 @@ export function createSpaceshipGlassMaterial(scene, options = {}) {
   glassMaterial.roughness = options.glassRoughness ?? 0.018;
   glassMaterial.indexOfRefraction = options.glassIor ?? 1.49;
   glassMaterial.directIntensity = options.glassDirectIntensity ?? 0.62;
-  glassMaterial.environmentIntensity = options.glassEnvironmentIntensity ?? 0.14;
+  glassMaterial.environmentIntensity =
+    options.glassEnvironmentIntensity ?? 0.14;
   glassMaterial.microSurface = options.glassMicroSurface ?? 0.98;
-  glassMaterial.emissiveColor = B.Color3.Black();
-  glassMaterial.emissiveIntensity = 0;
+  glassMaterial.emissiveColor = color3FromOption(
+    options.glassSheenColor,
+    [0.1, 0.16, 0.2],
+  );
+  glassMaterial.emissiveIntensity = options.glassSheenIntensity ?? 0.055;
   glassMaterial.backFaceCulling = false;
   glassMaterial.twoSidedLighting = true;
   glassMaterial.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
@@ -38,11 +49,17 @@ export function createSpaceshipGlassMaterial(scene, options = {}) {
 
   configureClearCoat(glassMaterial, options);
   configureSubSurface(glassMaterial, glassColor, options);
+  configureGlassSheen(glassMaterial, scene, options);
 
   return glassMaterial;
 }
 
-export function applySpaceshipGlassTreatment(mesh, glassMaterial, options = {}) {
+export function applySpaceshipGlassTreatment(
+  mesh,
+  glassMaterial,
+  options = {},
+) {
+  // stripGlassRimFaces(mesh, options);
   mesh.material = glassMaterial;
   mesh.visibility = 1;
   mesh.hasVertexAlpha = false;
@@ -51,6 +68,7 @@ export function applySpaceshipGlassTreatment(mesh, glassMaterial, options = {}) 
   mesh.renderingGroupId = options.glassRenderingGroupId ?? 4;
   mesh.alphaIndex = options.glassAlphaIndex ?? 1000;
   mesh.disableEdgesRendering?.();
+  expandGlassSurface(mesh, options);
 
   if (options.glassEdges === true && mesh.enableEdgesRendering) {
     const rimColor = color3FromOption(options.glassRimColor, [1, 0.72, 0.36]);
@@ -65,6 +83,80 @@ export function applySpaceshipGlassTreatment(mesh, glassMaterial, options = {}) 
   }
 
   createGlassThicknessShell(mesh, glassMaterial, options);
+}
+
+function stripGlassRimFaces(mesh, options) {
+  if (options.glassStripRimFaces !== true) return;
+
+  const positions = mesh.getVerticesData(B.VertexBuffer.PositionKind);
+  const indices = mesh.getIndices();
+  if (!positions?.length || !indices?.length) return;
+
+  const triangles = [];
+  const normalTotals = new B.Vector3(0, 0, 0);
+  for (let index = 0; index < indices.length; index += 3) {
+    const a = vertexFromPositions(positions, indices[index]);
+    const b = vertexFromPositions(positions, indices[index + 1]);
+    const c = vertexFromPositions(positions, indices[index + 2]);
+    const ab = b.subtract(a);
+    const ac = c.subtract(a);
+    const normal = B.Vector3.Cross(ab, ac);
+    const area = normal.length();
+    if (area <= 0.000001) continue;
+    normal.scaleInPlace(1 / area);
+    triangles.push({
+      indices: [indices[index], indices[index + 1], indices[index + 2]],
+      normal,
+      area,
+    });
+    normalTotals.x += Math.abs(normal.x) * area;
+    normalTotals.y += Math.abs(normal.y) * area;
+    normalTotals.z += Math.abs(normal.z) * area;
+  }
+  if (!triangles.length) return;
+
+  const dominant = dominantNormalAxis(normalTotals);
+  const threshold = options.glassRimNormalThreshold ?? 0.72;
+  const kept = [];
+  for (const triangle of triangles) {
+    if (Math.abs(B.Vector3.Dot(triangle.normal, dominant)) >= threshold) {
+      kept.push(...triangle.indices);
+    }
+  }
+  if (!kept.length || kept.length === indices.length) return;
+
+  mesh.setIndices(kept);
+  const normals = [];
+  B.VertexData.ComputeNormals(positions, kept, normals);
+  mesh.setVerticesData(B.VertexBuffer.NormalKind, normals);
+  mesh.refreshBoundingInfo?.();
+}
+
+function vertexFromPositions(positions, index) {
+  const offset = index * 3;
+  return new B.Vector3(
+    positions[offset] ?? 0,
+    positions[offset + 1] ?? 0,
+    positions[offset + 2] ?? 0,
+  );
+}
+
+function dominantNormalAxis(normalTotals) {
+  if (normalTotals.x >= normalTotals.y && normalTotals.x >= normalTotals.z) {
+    return new B.Vector3(1, 0, 0);
+  }
+  if (normalTotals.y >= normalTotals.z) {
+    return new B.Vector3(0, 1, 0);
+  }
+  return new B.Vector3(0, 0, 1);
+}
+
+function expandGlassSurface(mesh, options) {
+  const scale = options.glassSurfaceScale ?? 1;
+  if (!Number.isFinite(scale) || Math.abs(scale - 1) < 0.0001) return;
+
+  mesh.scaling = mesh.scaling.multiplyByFloats(scale, scale, scale);
+  mesh.computeWorldMatrix(true);
 }
 
 export function isSpaceshipGlassMaterial(material) {
@@ -134,6 +226,57 @@ function configureClearCoat(material, options) {
   material.clearCoat.isEnabled = options.glassClearCoat !== false;
   material.clearCoat.intensity = options.glassClearCoatIntensity ?? 0.92;
   material.clearCoat.roughness = options.glassClearCoatRoughness ?? 0.025;
+}
+
+function configureGlassSheen(material, scene, options) {
+  if (options.glassSheen === false) return;
+
+  const texture = new B.DynamicTexture(
+    "spaceship-glass-sheen-texture",
+    { width: 512, height: 512 },
+    scene,
+    false,
+  );
+  const context = texture.getContext();
+  context.clearRect(0, 0, 512, 512);
+
+  const gradient = context.createLinearGradient(40, 0, 512, 420);
+  gradient.addColorStop(0, "rgba(255,255,255,0)");
+  gradient.addColorStop(0.34, "rgba(185,231,255,0.12)");
+  gradient.addColorStop(0.4, "rgba(255,255,255,0.28)");
+  gradient.addColorStop(0.48, "rgba(185,231,255,0.08)");
+  gradient.addColorStop(1, "rgba(255,255,255,0)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 512, 512);
+
+  context.strokeStyle = "rgba(210,244,255,0.16)";
+  context.lineWidth = 2;
+  for (const offset of [-260, -80, 120, 310]) {
+    context.beginPath();
+    context.moveTo(offset, 512);
+    context.lineTo(offset + 420, 0);
+    context.stroke();
+  }
+
+  context.fillStyle = "rgba(255,255,255,0.12)";
+  for (let index = 0; index < 34; index += 1) {
+    const x = (index * 83) % 512;
+    const y = (index * 137) % 512;
+    context.fillRect(x, y, 1, 1);
+  }
+
+  texture.update(false);
+  texture.wrapU = B.Texture.WRAP_ADDRESSMODE;
+  texture.wrapV = B.Texture.WRAP_ADDRESSMODE;
+  texture.uScale = options.glassSheenUScale ?? 1.2;
+  texture.vScale = options.glassSheenVScale ?? 1.2;
+  material.emissiveTexture = texture;
+
+  if (material.anisotropy) {
+    material.anisotropy.isEnabled = true;
+    material.anisotropy.intensity = options.glassAnisotropyIntensity ?? 0.55;
+    material.anisotropy.angle = options.glassAnisotropyAngle ?? Math.PI * 0.18;
+  }
 }
 
 function configureSubSurface(material, glassColor, options) {

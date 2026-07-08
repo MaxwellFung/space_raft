@@ -6,6 +6,13 @@ Run a save with:
 http://127.0.0.1:5500/index.html?save=./saves/brown-dwarf-default.json
 ```
 
+To let the in-game `Save world` button write the active JSON file, serve the
+project with:
+
+```sh
+python3 dev-server.py --port 8001
+```
+
 If no `save` query parameter is provided, the app loads
 `./saves/brown-dwarf-default.json`.
 
@@ -23,6 +30,12 @@ Useful spatial controls:
   edge of the render ball.
 - `platform.modelRotationDegrees`: rotation of the imported ship model inside the
   platform frame.
+- `world.player`: current player position, look rotation, hotbar selection, and
+  movement toggles saved by the in-game `Save world` button.
+- `world.inventory` / `world.hotbar`: current item stacks.
+- `world.pickups.collectedIds`: original scene pickups that should stay gone.
+- `world.placedItems`: objects placed by the player.
+- `world.helmet` / `world.tether`: helmet hook/equipment and tether state.
 - `platform.physicsBounds`: optional explicit local collision bounds, with
   `{ "min": [x, y, z], "max": [x, y, z] }`.
 - `platform.physicsProbePosition`: optional local point used to raycast toward

@@ -1,5 +1,4 @@
 import brownDwarfLevel from "../levels/brown_dwarf/level.js";
-import { replaceGlassWithClearMaterial } from "./spaceship-glass.js";
 
 const B = window.BABYLON;
 const MODEL_FILE = "assets/ship.glb";
@@ -250,15 +249,7 @@ async function loadModel() {
     }
 
     makeMaterialsDoubleSided(result);
-    replaceGlassWithClearMaterial(result, scene, {
-      ...brownDwarfLevel.platform,
-      glassColor: [0.82, 0.96, 1],
-      glassRimColor: [0.6, 0.86, 1],
-      glassAlpha: 0.27,
-      glassDirectIntensity: 0.48,
-      glassEnvironmentIntensity: 1.15,
-      glassThicknessAlpha: 0.16,
-    });
+
     enableMeshCollisions(result);
     normalizeModel(modelRoot);
     configurePlayerPhysics();

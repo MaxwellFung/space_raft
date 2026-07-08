@@ -98,7 +98,7 @@ export function createOrbitalPlatform(scene, platform, primary) {
   const camera = scene.activeCamera;
   camera.parent = root;
   camera.position.set(0, physics.eyeHeight, 0);
-  camera.rotation.set(0, platform.initialCameraYawRadians ?? 0, 0);
+  applyPlatformInitialCameraRotation(camera, platform);
 
   loadShipModel(
     scene,
@@ -267,6 +267,7 @@ async function loadShipModel(
       if (!node.parent) node.parent = shipRoot;
     }
 
+    installShipDoorInteraction(result.meshes, interactions, platform);
     makeMaterialsDoubleSided(result);
     forceOpaqueShipMaterials(result, platform);
     if (platform.transparentGlass) {
@@ -277,6 +278,7 @@ async function loadShipModel(
     updatePhysicsFromShip(shipRoot, physics, platform);
     shipRoot.parent = root;
     createControlPanel(scene, root, platform.controlPanel, physics);
+    createHelmetHook(scene, root, platform.helmetHook, physics, interactions);
     await loadFloorProps(scene, root, platform, physics, interactions);
     shipRoot.metadata = {
       ...(shipRoot.metadata ?? {}),
@@ -289,10 +291,39 @@ async function loadShipModel(
     };
 
     camera.position.set(0, physics.eyeHeight, 0);
-    camera.rotation.set(0, platform.initialCameraYawRadians ?? 0, 0);
+    applyPlatformInitialCameraRotation(camera, platform);
   } catch (error) {
     console.error("Failed to load ship platform model.", error);
   }
+}
+
+function installShipDoorInteraction(meshes, interactions, platform) {
+  const doorMesh = meshes.find((mesh) =>
+    /(^|[_-])door([_-]|$)/i.test(mesh.name ?? ""),
+  );
+  if (!doorMesh) return;
+
+  const interaction = {
+    type: "ship-door",
+    range: platform.doorRange ?? 1.8,
+    prompt: "Press E to open door",
+    activate: () => false,
+  };
+  doorMesh.isPickable = true;
+  doorMesh.metadata = {
+    ...(doorMesh.metadata ?? {}),
+    interaction,
+  };
+  interactions?.push(interaction);
+}
+
+function applyPlatformInitialCameraRotation(camera, platform) {
+  const rotation = platform.initialCameraRotation;
+  if (Array.isArray(rotation)) {
+    camera.rotation = B.Vector3.FromArray(rotation);
+    return;
+  }
+  camera.rotation.set(0, platform.initialCameraYawRadians ?? 0, 0);
 }
 
 function applyModelRotation(root, platform) {
@@ -383,6 +414,476 @@ function createControlPanel(scene, platformRoot, panel, physics) {
   return display;
 }
 
+function createHelmetHook(
+  scene,
+  platformRoot,
+  hookConfig = {},
+  physics,
+  interactions,
+) {
+  const hook = {
+    wall: "frontWall",
+    center: [0, 0.86, 0],
+    wallOffset: 0.035,
+    ...(hookConfig ?? {}),
+  };
+  if (hook.enabled === false) return null;
+
+  const root = new B.TransformNode(hook.id ?? "helmet-hook", scene);
+  root.parent = platformRoot;
+
+  const wallOffset = hook.wallOffset ?? 0.035;
+  const center = hook.center ?? [0, 0.86, 0];
+  const position = resolveWallPoint(physics, hook.wall, center, wallOffset);
+  const outward = wallOutwardDirection(hook.wall);
+  const inward = outward.scale(-1);
+  root.position.copyFrom(position);
+  root.rotation.y = wallYaw(hook.wall);
+
+  const material = createHelmetHookMaterial(scene, root.name, hook);
+
+  const hookLength = hook.length ?? 0.2;
+  const pegRadius = hook.pegRadius ?? 0.017;
+  const lipHeight = hook.lipHeight ?? 0.105;
+  const hookPath = createHookTubePath(hookLength, lipHeight);
+  const hookTip = hookPath[hookPath.length - 1];
+
+  const base = B.MeshBuilder.CreateCylinder(
+    `${root.name}-base`,
+    { diameter: 0.14, height: 0.018, tessellation: 28 },
+    scene,
+  );
+  base.rotation.x = Math.PI / 2;
+
+  const tube = B.MeshBuilder.CreateTube(
+    `${root.name}-tube`,
+    {
+      path: hookPath,
+      radius: pegRadius,
+      tessellation: 18,
+      cap: B.Mesh.CAP_ALL,
+    },
+    scene,
+  );
+
+  const knob = B.MeshBuilder.CreateSphere(
+    `${root.name}-knob`,
+    { diameter: pegRadius * 2.55, segments: 16 },
+    scene,
+  );
+  knob.position.copyFrom(hookTip);
+
+  const hookMesh = mergeHookParts(scene, root, [base, tube, knob], material);
+  createHookRopeBundle(scene, root, hook, hookLength, pegRadius);
+
+  const mountPoint = new B.TransformNode(`${root.name}-mount-point`, scene);
+  mountPoint.parent = platformRoot;
+  mountPoint.position.copyFrom(position.add(inward.scale(hookLength + 0.04)));
+  mountPoint.position.y += hook.mountYOffset ?? -0.015;
+  mountPoint.rotation.y = wallYaw(hook.wall);
+
+  const tetherAnchor = new B.TransformNode(`${root.name}-tether-anchor`, scene);
+  tetherAnchor.parent = platformRoot;
+  tetherAnchor.position.copyFrom(
+    position.add(inward.scale(Math.max(pegRadius * 2.2, 0.04))),
+  );
+  tetherAnchor.position.y += 0.012;
+
+  const interaction = {
+    type: "helmet-hook",
+    range: hook.range ?? 1.75,
+    hookRoot: root,
+    mountPoint,
+    tetherAnchor,
+    tetherLength: hook.tetherLength ?? 2.35,
+    mountedRoot: null,
+    mountedItem: null,
+    initialMountedItem: hook.initialMountedItem
+      ? {
+          ...hook.initialMountedItem,
+          name:
+            hook.initialMountedItem.name ??
+            hook.initialMountedItem.label ??
+            "Helmet",
+        }
+      : null,
+    getPrompt: () => "Press E to mount helmet",
+  };
+
+  hookMesh.isPickable = true;
+  hookMesh.metadata = {
+    ...(hookMesh.metadata ?? {}),
+    interaction,
+  };
+  interactions?.push(interaction);
+  return root;
+}
+
+function createHookTubePath(length, lipHeight) {
+  const bendDepth = Math.min(length * 0.28, 0.055);
+  const straightDepth = Math.max(length - bendDepth, length * 0.55);
+  return [
+    new B.Vector3(0, 0, 0),
+    new B.Vector3(0, 0, -straightDepth * 0.45),
+    new B.Vector3(0, 0, -straightDepth),
+    new B.Vector3(0, lipHeight * 0.16, -straightDepth - bendDepth * 0.56),
+    new B.Vector3(0, lipHeight * 0.46, -length),
+    new B.Vector3(0, lipHeight, -length),
+  ];
+}
+
+function createHookRopeBundle(scene, root, hook, hookLength, pegRadius) {
+  const rope = {
+    enabled: true,
+    loops: 3,
+    loopRadiusX: 0.102,
+    loopRadiusY: 0.145,
+    tubeRadius: 0.0105,
+    strandCount: 2,
+    strandRadius: 0.00125,
+    ...(hook.rope ?? {}),
+  };
+  if (rope.enabled === false) return null;
+
+  const rootNode = new B.TransformNode(`${root.name}-rope-bundle`, scene);
+  rootNode.parent = root;
+
+  const material = createRopeMaterial(scene, root.name, rope);
+  const strandMaterial = createRopeStrandMaterial(scene, root.name, rope);
+  const loopCount = Math.max(1, Math.round(rope.loops));
+  const ropeDepth = -(rope.depth ?? Math.min(hookLength * 0.58, 0.135));
+  const centerY = rope.centerY ?? -0.05;
+  const baseRadiusX = rope.loopRadiusX;
+  const baseRadiusY = rope.loopRadiusY;
+
+  for (let loop = 0; loop < loopCount; loop += 1) {
+    const loopT = loopCount === 1 ? 0 : loop / (loopCount - 1);
+    const xOffset = (loopT - 0.5) * (rope.bundleWidth ?? 0.034);
+    const zOffset = (loopT - 0.5) * (rope.bundleDepth ?? 0.036);
+    const path = createRopeLoopPath({
+      centerX: xOffset,
+      centerY: centerY - loop * 0.004,
+      centerZ: ropeDepth + zOffset,
+      radiusX: baseRadiusX * (1 - loop * 0.035),
+      radiusY: baseRadiusY * (1 - loop * 0.025),
+      points: 72,
+      wobble: 0.004 + loop * 0.001,
+      seed: loop * 1.73,
+    });
+
+    const core = B.MeshBuilder.CreateTube(
+      `${root.name}-rope-loop-${loop + 1}`,
+      {
+        path,
+        radius: rope.tubeRadius,
+        tessellation: 12,
+        cap: B.Mesh.CAP_ALL,
+      },
+      scene,
+    );
+    core.parent = rootNode;
+    core.material = material;
+    core.receiveShadows = true;
+    core.isPickable = false;
+
+    for (let strand = 0; strand < rope.strandCount; strand += 1) {
+      const strandPath = createRopeStrandPath(
+        path,
+        new B.Vector3(xOffset, centerY - loop * 0.004, ropeDepth + zOffset),
+        rope.tubeRadius * 1.06,
+        strand,
+        rope,
+      );
+      const strandMesh = B.MeshBuilder.CreateTube(
+        `${root.name}-rope-strand-${loop + 1}-${strand + 1}`,
+        {
+          path: strandPath,
+          radius: rope.strandRadius,
+          tessellation: 5,
+          cap: B.Mesh.CAP_ALL,
+        },
+        scene,
+      );
+      strandMesh.parent = rootNode;
+      strandMesh.material = strandMaterial;
+      strandMesh.receiveShadows = true;
+      strandMesh.isPickable = false;
+    }
+  }
+
+  const neckPath = [
+    new B.Vector3(0, 0.012, -Math.max(pegRadius * 2.2, 0.038)),
+    new B.Vector3(0, -0.006, ropeDepth + 0.02),
+    new B.Vector3(0, centerY + baseRadiusY * 0.84, ropeDepth),
+  ];
+  const neck = B.MeshBuilder.CreateTube(
+    `${root.name}-rope-over-hook`,
+    {
+      path: neckPath,
+      radius: rope.tubeRadius * 0.96,
+      tessellation: 12,
+      cap: B.Mesh.CAP_ALL,
+    },
+    scene,
+  );
+  neck.parent = rootNode;
+  neck.material = material;
+  neck.receiveShadows = true;
+  neck.isPickable = false;
+
+  return rootNode;
+}
+
+function createRopeLoopPath({
+  centerX,
+  centerY,
+  centerZ,
+  radiusX,
+  radiusY,
+  points,
+  wobble,
+  seed,
+}) {
+  const path = [];
+  for (let index = 0; index <= points; index += 1) {
+    const t = (index / points) * Math.PI * 2;
+    const fiberWobble =
+      Math.sin(t * 5 + seed) * wobble +
+      Math.sin(t * 11 + seed * 0.7) * wobble * 0.45;
+    path.push(
+      new B.Vector3(
+        centerX + Math.cos(t) * (radiusX + fiberWobble),
+        centerY + Math.sin(t) * (radiusY + fiberWobble * 0.65),
+        centerZ + Math.sin(t * 2 + seed) * wobble * 0.6,
+      ),
+    );
+  }
+  return path;
+}
+
+function createRopeStrandPath(path, center, radius, strandIndex, rope) {
+  const strandPath = [];
+  const strandCount = Math.max(1, rope.strandCount ?? 2);
+  const twistCount = rope.twistCount ?? 0;
+  const phase = (strandIndex / strandCount) * Math.PI * 2;
+  const zAxis = new B.Vector3(0, 0, 1);
+
+  for (let index = 0; index < path.length; index += 1) {
+    const point = path[index];
+    const radial = point.subtract(center);
+    radial.z = 0;
+    if (radial.lengthSquared() < 0.000001) {
+      radial.set(1, 0, 0);
+    } else {
+      radial.normalize();
+    }
+
+    const t = index / Math.max(path.length - 1, 1);
+    const twist = t * Math.PI * 2 * twistCount + phase;
+    strandPath.push(
+      point
+        .add(radial.scale(Math.cos(twist) * radius))
+        .add(zAxis.scale(Math.sin(twist) * radius)),
+    );
+  }
+
+  return strandPath;
+}
+
+function createRopeMaterial(scene, name, rope) {
+  const material = new B.PBRMaterial(`${name}-tether-fabric-material`, scene);
+  material.albedoColor = B.Color3.FromArray(rope.color ?? [1.0, 0.74, 0.12]);
+  material.albedoTexture = createTetherFabricTexture(
+    scene,
+    `${name}-yellow-tether-weave`,
+  );
+  material.metallic = 0;
+  material.roughness = rope.roughness ?? 0.88;
+  material.environmentIntensity = rope.environmentIntensity ?? 0.5;
+  material.directIntensity = rope.directIntensity ?? 0.82;
+  material.backFaceCulling = true;
+  return material;
+}
+
+function createRopeStrandMaterial(scene, name, rope) {
+  const material = new B.StandardMaterial(
+    `${name}-tether-seam-material`,
+    scene,
+  );
+  material.diffuseColor = B.Color3.FromArray(
+    rope.strandColor ?? [0.28, 0.2, 0.06],
+  );
+  material.specularColor = new B.Color3(0.04, 0.035, 0.025);
+  material.specularPower = 5;
+  return material;
+}
+
+function createTetherFabricTexture(scene, name) {
+  const texture = new B.DynamicTexture(
+    name,
+    { width: 192, height: 48 },
+    scene,
+    false,
+  );
+  const context = texture.getContext();
+  context.fillStyle = "#f3b51c";
+  context.fillRect(0, 0, 192, 48);
+
+  for (let y = 0; y < 48; y += 2) {
+    const light = 18 + Math.sin(y * 0.55) * 8;
+    context.fillStyle = `rgba(${255}, ${196 + light}, ${48 + light * 0.32}, 0.32)`;
+    context.fillRect(0, y, 192, 1);
+  }
+
+  for (let x = 0; x < 192; x += 6) {
+    context.fillStyle = "rgba(255, 238, 152, 0.18)";
+    context.fillRect(x, 0, 2, 48);
+  }
+
+  for (let x = -48; x < 240; x += 12) {
+    context.strokeStyle = "rgba(255, 238, 150, 0.38)";
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(x, 48);
+    context.lineTo(x + 58, 0);
+    context.stroke();
+  }
+
+  context.fillStyle = "rgba(64, 44, 12, 0.78)";
+  context.fillRect(0, 5, 192, 2);
+  context.fillRect(0, 41, 192, 2);
+  context.strokeStyle = "rgba(255, 232, 130, 0.6)";
+  context.setLineDash([4, 5]);
+  for (const y of [9, 37]) {
+    context.beginPath();
+    context.moveTo(0, y);
+    context.lineTo(192, y);
+    context.stroke();
+  }
+  context.setLineDash([]);
+
+  texture.update(false);
+  texture.uScale = 5.5;
+  texture.vScale = 1.0;
+  texture.wrapU = B.Texture.WRAP_ADDRESSMODE;
+  texture.wrapV = B.Texture.WRAP_ADDRESSMODE;
+  texture.anisotropicFilteringLevel = 4;
+  return texture;
+}
+
+function mergeHookParts(scene, root, parts, material) {
+  for (const part of parts) {
+    part.bakeCurrentTransformIntoVertices();
+    part.position.set(0, 0, 0);
+    part.rotation.set(0, 0, 0);
+    part.scaling.setAll(1);
+  }
+
+  const merged = B.Mesh.MergeMeshes(parts, true, true, undefined, false, true);
+  merged.name = `${root.name}-mesh`;
+  merged.parent = root;
+  merged.material = material;
+  merged.receiveShadows = true;
+  return merged;
+}
+
+function createHelmetHookMaterial(scene, name, hook) {
+  if (hook.textureBasePath) {
+    return createTexturedHelmetHookMaterial(scene, name, hook);
+  }
+
+  const preferredNames = [
+    hook.materialName,
+    "ship_hull_2",
+    "ship_hull_1",
+  ].filter(Boolean);
+  const source =
+    preferredNames
+      .map((materialName) => scene.getMaterialByName?.(materialName))
+      .find(Boolean) ??
+    scene.materials?.find((material) =>
+      /ship[_-]?hull/i.test(material.name ?? ""),
+    );
+
+  if (source?.clone) {
+    const material = source.clone(`${name}-ship-metal-material`);
+    if ("alpha" in material) material.alpha = 1;
+    if ("transparencyMode" in material) {
+      material.transparencyMode = B.Material.MATERIAL_OPAQUE;
+    }
+    if ("forceDepthWrite" in material) material.forceDepthWrite = true;
+    return material;
+  }
+
+  const material = new B.StandardMaterial(`${name}-material`, scene);
+  material.diffuseColor = new B.Color3(0.18, 0.15, 0.12);
+  material.specularColor = new B.Color3(0.55, 0.48, 0.36);
+  material.specularPower = 48;
+  return material;
+}
+
+function createTexturedHelmetHookMaterial(scene, name, hook) {
+  const basePath = hook.textureBasePath;
+  const material = new B.PBRMaterial(`${name}-textured-metal-material`, scene);
+  const albedoTexture = new B.Texture(`${basePath}_Color.jpg`, scene);
+  const normalTexture = new B.Texture(`${basePath}_NormalGL.jpg`, scene);
+  const metalnessTexture = new B.Texture(`${basePath}_Metalness.jpg`, scene);
+  const textureScale = hook.textureScale ?? 1;
+
+  for (const texture of [albedoTexture, normalTexture, metalnessTexture]) {
+    texture.uScale = textureScale;
+    texture.vScale = textureScale;
+    texture.wrapU = B.Texture.WRAP_ADDRESSMODE;
+    texture.wrapV = B.Texture.WRAP_ADDRESSMODE;
+  }
+
+  material.albedoTexture = albedoTexture;
+  material.bumpTexture = normalTexture;
+  material.metallicTexture = metalnessTexture;
+  material.useMetallnessFromMetallicTextureBlue = true;
+  material.useRoughnessFromMetallicTextureGreen = false;
+  material.albedoColor = B.Color3.FromArray(hook.tintColor ?? [1, 1, 1]);
+  material.metallic = hook.metallic ?? 0.75;
+  material.roughness = hook.roughness ?? 0.7;
+  material.environmentIntensity = hook.environmentIntensity ?? 0.55;
+  material.directIntensity = hook.directIntensity ?? 0.85;
+  material.forceDepthWrite = true;
+  material.backFaceCulling = true;
+  return material;
+}
+
+function resolveWallPoint(physics, wall, center, wallOffset) {
+  const floorY = physics.floorY ?? 0;
+  const x = center[0] ?? 0;
+  const y = floorY + (center[1] ?? 0.86);
+  const z = center[2] ?? 0;
+
+  if (wall === "backWall") {
+    return new B.Vector3(x, y, (physics.minZ ?? -0.5) + wallOffset);
+  }
+  if (wall === "leftWall") {
+    return new B.Vector3((physics.minX ?? -0.5) + wallOffset, y, z);
+  }
+  if (wall === "rightWall") {
+    return new B.Vector3((physics.maxX ?? 0.5) - wallOffset, y, z);
+  }
+  return new B.Vector3(x, y, (physics.maxZ ?? 0.5) - wallOffset);
+}
+
+function wallOutwardDirection(wall) {
+  if (wall === "backWall") return new B.Vector3(0, 0, -1);
+  if (wall === "leftWall") return new B.Vector3(-1, 0, 0);
+  if (wall === "rightWall") return new B.Vector3(1, 0, 0);
+  return new B.Vector3(0, 0, 1);
+}
+
+function wallYaw(wall) {
+  if (wall === "backWall") return Math.PI;
+  if (wall === "leftWall") return -Math.PI / 2;
+  if (wall === "rightWall") return Math.PI / 2;
+  return 0;
+}
+
 function createControlPanelBevels(
   scene,
   platformRoot,
@@ -394,7 +895,10 @@ function createControlPanelBevels(
 ) {
   const bevelWidth = panel.bevelWidth ?? 0.05;
   const bevelDepth = panel.bevelDepth ?? 0.03;
-  const material = new B.StandardMaterial(`${display.name}-bevel-material`, scene);
+  const material = new B.StandardMaterial(
+    `${display.name}-bevel-material`,
+    scene,
+  );
   material.diffuseColor = new B.Color3(0.035, 0.018, 0.015);
   material.emissiveColor = new B.Color3(0.05, 0.002, 0);
   material.specularColor = new B.Color3(0.18, 0.03, 0.02);
@@ -513,7 +1017,8 @@ async function loadFloorProp(scene, platformRoot, prop, physics) {
     makeMaterialsDoubleSided(result);
     normalizeModel(propRoot, prop.maxSize ?? 0.5);
     propRoot.rotation = B.Vector3.FromArray(
-      prop.rotation ?? degreesToRadians(prop.rotationDegrees ?? [0, 0, 0]),
+      prop.rotation ??
+        vectorDegreesToRadians(prop.rotationDegrees ?? [0, 0, 0]),
     );
     propRoot.position.addInPlace(
       B.Vector3.FromArray(prop.position ?? [0, 0, 0]),
@@ -524,6 +1029,14 @@ async function loadFloorProp(scene, platformRoot, prop, physics) {
       mesh.computeWorldMatrix(true);
       mesh.isPickable = true;
       mesh.receiveShadows = true;
+      mesh.metadata = {
+        ...(mesh.metadata ?? {}),
+        glbPickupLabel: prop.label ?? prop.id ?? "Item",
+        glbPickupRange: prop.pickupRange ?? 1.65,
+        glbPickupRoot: propRoot,
+        glbPickupItem: createPickupItem(propRoot, prop),
+      };
+      mesh.showBoundingBox = Boolean(scene.metadata?.objectBoundsVisible);
     }
 
     const bounds = getMeshBounds(getRenderableMeshes(propRoot));
@@ -558,10 +1071,9 @@ async function loadFloorProps(
   physics,
   interactions,
 ) {
-  const props = [
-    platform.oxygenTank,
-    ...(platform.floorProps ?? []),
-  ].filter(Boolean);
+  const props = [platform.oxygenTank, ...(platform.floorProps ?? [])].filter(
+    (prop) => Boolean(prop) && !isSavedPickupCollected(platform, prop),
+  );
 
   for (const prop of props) {
     const root = await loadFloorProp(scene, platformRoot, prop, physics);
@@ -579,16 +1091,53 @@ async function loadFloorProps(
 
 function createPickupInteraction(root, prop) {
   const name = prop.label ?? prop.id ?? "Item";
-  return {
+  const interaction = {
     type: "pickup",
+    rootId: prop.id ?? root.name,
     range: prop.pickupRange ?? 1.65,
-    item: {
-      id: prop.id ?? root.name,
-      name,
-      swatch: prop.swatch ?? "#8aa0ad",
-    },
+    item: createPickupItem(root, prop),
     getPrompt: () => `Press E to pick up ${name}`,
-    activate: () => root.setEnabled(false),
+    activate: () => deactivatePickupRoot(root, interaction),
+  };
+  return interaction;
+}
+
+function isSavedPickupCollected(platform, prop) {
+  return (platform.collectedPickupIds ?? []).includes(prop.id);
+}
+
+function deactivatePickupRoot(root, interaction) {
+  if (!root || interaction.collected) return;
+
+  interaction.collected = true;
+  for (const mesh of getRenderableMeshes(root)) {
+    mesh.isPickable = false;
+    mesh.checkCollisions = false;
+    mesh.showBoundingBox = false;
+    if (mesh.metadata) {
+      delete mesh.metadata.interaction;
+      delete mesh.metadata.glbPickupLabel;
+      delete mesh.metadata.glbPickupRange;
+      delete mesh.metadata.glbPickupRoot;
+      delete mesh.metadata.glbPickupItem;
+    }
+  }
+
+  root.setEnabled(false);
+  root.dispose(false, false);
+}
+
+function createPickupItem(root, prop) {
+  return {
+    id: prop.id ?? root.name,
+    name: prop.label ?? prop.id ?? "Item",
+    swatch: prop.swatch ?? "#8aa0ad",
+    modelUrl: prop.modelUrl,
+    maxSize: prop.maxSize,
+    floorOffset: prop.floorOffset,
+    rotation:
+      prop.rotation ??
+      vectorDegreesToRadians(prop.rotationDegrees ?? [0, 0, 0]),
   };
 }
 
@@ -984,6 +1533,10 @@ function vectorFromArray(value, fallback) {
 
 function degreesToRadians(degrees) {
   return (degrees * Math.PI) / 180;
+}
+
+function vectorDegreesToRadians(degrees) {
+  return degrees.map(degreesToRadians);
 }
 
 function profile(scene, name, fn) {

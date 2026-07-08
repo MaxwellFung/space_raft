@@ -1,8 +1,18 @@
-import {
-  createPlatformInteriorProps,
-} from "../../src/ship-interior-layout.js";
+import { createPlatformInteriorProps } from "../../src/ship-interior-layout.js";
 
 const interiorProps = createPlatformInteriorProps();
+const initialHelmetProp = interiorProps.floorProps.find(
+  (prop) => prop.id === "astronaut-helmet",
+);
+const floorProps = interiorProps.floorProps.filter(
+  (prop) => prop.id !== "astronaut-helmet",
+);
+const mountedHelmetItem = initialHelmetProp
+  ? {
+      ...initialHelmetProp,
+      name: initialHelmetProp.label ?? "Helmet",
+    }
+  : null;
 
 const brownDwarf = {
   id: "brown_dwarf",
@@ -33,19 +43,39 @@ const brownDwarf = {
     lightIntensity: 0,
     allowLocalLights: false,
     transparentGlass: true,
-    glassColor: [1.0, 0.82, 0.55],
-    glassRimColor: [1.0, 0.68, 0.32],
-    glassAlpha: 0.26,
-    glassThicknessScale: 0.996,
-    glassThicknessAlpha: 0.17,
+    glassColor: [0.76, 0.93, 1.0],
+    glassTintColor: [0.74, 0.92, 1.0],
+    glassAlpha: 0.32,
+    glassRoughness: 0.045,
+    glassMicroSurface: 0.96,
+    glassDirectIntensity: 0.84,
+    glassEnvironmentIntensity: 0.58,
+    glassSheen: true,
+    glassStripRimFaces: true,
+    glassSurfaceScale: 1.025,
+    glassThicknessScale: 1,
     glassEdges: false,
     brownDwarfWindowShadows: true,
     shadowMapSize: 1024,
+    helmetHook: {
+      wall: "rightWall",
+      center: [0, 1.02, -0.86],
+      wallOffset: 0.045,
+      mountYOffset: 0.1,
+      textureBasePath: "./assets/textures/Metal063/Metal063_1K-JPG",
+      textureScale: 2.6,
+      tintColor: [0.72, 0.58, 0.38],
+      metallic: 0.78,
+      roughness: 0.68,
+      initialMountedItem: mountedHelmetItem,
+      tetherLength: 6.8,
+      range: 1.65,
+    },
     metersPerWorldUnit: 8,
     gravity: 30,
     jumpSpeed: 5.4,
     oxygenTank: interiorProps.oxygenTank,
-    floorProps: interiorProps.floorProps,
+    floorProps,
   },
 
   lighting: {
@@ -57,9 +87,9 @@ const brownDwarf = {
     radius: 900,
     background: ["#02040b", "#000000"],
     starLayers: [
-      { count: 1800, pointSize: 1.0, brightness: 0.42 },
-      { count: 260, pointSize: 1.5, brightness: 0.62 },
-      { count: 35, pointSize: 2.2, brightness: 0.8 },
+      { count: 3600, pointSize: 1.0, brightness: 0.46 },
+      { count: 520, pointSize: 1.5, brightness: 0.68 },
+      { count: 70, pointSize: 2.2, brightness: 0.88 },
     ],
   },
 

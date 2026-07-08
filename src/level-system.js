@@ -97,16 +97,20 @@ function createStarfield(scene, sky) {
       const ring = Math.sqrt(1 - y * y);
       const tint = random();
       const base =
-        tint < 0.06
-          ? [0.42, 0.62, 1]
-          : tint < 0.12
-            ? [0.68, 0.84, 1]
-            : tint < 0.18
-              ? [1, 0.42, 0.28]
-              : tint < 0.28
-                ? [1, 0.78, 0.32]
-                : [1, 1, 1];
-      const light = layer.brightness * (0.5 + random() * 0.4);
+        tint < 0.14
+          ? [0.48, 0.66, 1.0]
+          : tint < 0.28
+            ? [0.64, 0.92, 1.0]
+            : tint < 0.4
+              ? [0.64, 1.0, 0.86]
+              : tint < 0.53
+                ? [1.0, 0.72, 0.42]
+                : tint < 0.65
+                  ? [1.0, 0.48, 0.34]
+                  : tint < 0.75
+                    ? [0.88, 0.58, 1.0]
+                    : [1.0, 0.98, 0.9];
+      const light = layer.brightness * (0.58 + random() * 0.46);
 
       star.position.set(
         sky.radius * ring * Math.cos(angle),

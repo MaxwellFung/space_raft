@@ -44,6 +44,14 @@ function applyPlatformPatch(platform, patch) {
   if (patch.modelYawDegrees !== undefined) {
     next.modelYawRadians = degreesToRadians(patch.modelYawDegrees);
   }
+  if (patch.initialCameraYawDegrees !== undefined) {
+    next.initialCameraYawRadians = degreesToRadians(patch.initialCameraYawDegrees);
+  }
+  if (patch.initialCameraRotationDegrees) {
+    next.initialCameraRotation = degreesToRadians(
+      patch.initialCameraRotationDegrees,
+    );
+  }
   if (patch.orbit) {
     next.orbit = merge(platform.orbit ?? {}, patch.orbit);
   }
