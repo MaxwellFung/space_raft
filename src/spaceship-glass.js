@@ -59,7 +59,6 @@ export function applySpaceshipGlassTreatment(
   glassMaterial,
   options = {},
 ) {
-  // stripGlassRimFaces(mesh, options);
   mesh.material = glassMaterial;
   mesh.visibility = 1;
   mesh.hasVertexAlpha = false;
@@ -83,72 +82,6 @@ export function applySpaceshipGlassTreatment(
   }
 
   createGlassThicknessShell(mesh, glassMaterial, options);
-}
-
-function stripGlassRimFaces(mesh, options) {
-  if (options.glassStripRimFaces !== true) return;
-
-  const positions = mesh.getVerticesData(B.VertexBuffer.PositionKind);
-  const indices = mesh.getIndices();
-  if (!positions?.length || !indices?.length) return;
-
-  const triangles = [];
-  const normalTotals = new B.Vector3(0, 0, 0);
-  for (let index = 0; index < indices.length; index += 3) {
-    const a = vertexFromPositions(positions, indices[index]);
-    const b = vertexFromPositions(positions, indices[index + 1]);
-    const c = vertexFromPositions(positions, indices[index + 2]);
-    const ab = b.subtract(a);
-    const ac = c.subtract(a);
-    const normal = B.Vector3.Cross(ab, ac);
-    const area = normal.length();
-    if (area <= 0.000001) continue;
-    normal.scaleInPlace(1 / area);
-    triangles.push({
-      indices: [indices[index], indices[index + 1], indices[index + 2]],
-      normal,
-      area,
-    });
-    normalTotals.x += Math.abs(normal.x) * area;
-    normalTotals.y += Math.abs(normal.y) * area;
-    normalTotals.z += Math.abs(normal.z) * area;
-  }
-  if (!triangles.length) return;
-
-  const dominant = dominantNormalAxis(normalTotals);
-  const threshold = options.glassRimNormalThreshold ?? 0.72;
-  const kept = [];
-  for (const triangle of triangles) {
-    if (Math.abs(B.Vector3.Dot(triangle.normal, dominant)) >= threshold) {
-      kept.push(...triangle.indices);
-    }
-  }
-  if (!kept.length || kept.length === indices.length) return;
-
-  mesh.setIndices(kept);
-  const normals = [];
-  B.VertexData.ComputeNormals(positions, kept, normals);
-  mesh.setVerticesData(B.VertexBuffer.NormalKind, normals);
-  mesh.refreshBoundingInfo?.();
-}
-
-function vertexFromPositions(positions, index) {
-  const offset = index * 3;
-  return new B.Vector3(
-    positions[offset] ?? 0,
-    positions[offset + 1] ?? 0,
-    positions[offset + 2] ?? 0,
-  );
-}
-
-function dominantNormalAxis(normalTotals) {
-  if (normalTotals.x >= normalTotals.y && normalTotals.x >= normalTotals.z) {
-    return new B.Vector3(1, 0, 0);
-  }
-  if (normalTotals.y >= normalTotals.z) {
-    return new B.Vector3(0, 1, 0);
-  }
-  return new B.Vector3(0, 0, 1);
 }
 
 function expandGlassSurface(mesh, options) {
@@ -214,6 +147,7 @@ function createGlassThicknessShell(mesh, glassMaterial, options) {
   shell.disableEdgesRendering?.();
   shell.metadata = {
     ...(shell.metadata ?? {}),
+    excludeFromCollision: true,
     glassThicknessShell: true,
   };
 

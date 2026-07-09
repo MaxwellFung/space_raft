@@ -1,7 +1,7 @@
 import brownDwarfLevel from "../levels/brown_dwarf/level.js";
 
 const B = window.BABYLON;
-const MODEL_FILE = "assets/ship.glb";
+const MODEL_FILE = "assets/teo_ship.glb";
 const MODEL_URL = `./${MODEL_FILE.split("/").map(encodeURIComponent).join("/")}`;
 const PLAYER_HEIGHT_SCALE = 0.8;
 
@@ -45,7 +45,7 @@ const engine = new B.Engine(canvas, true, {
 engine.setHardwareScalingLevel(1 / Math.min(devicePixelRatio, 1.5));
 
 const scene = new B.Scene(engine);
-scene.collisionsEnabled = true;
+scene.collisionsEnabled = false;
 scene.clearColor = color4FromHex(brownDwarfLevel.sky.background[0], 1);
 scene.environmentIntensity = 0.86;
 scene.imageProcessingConfiguration.toneMappingEnabled = true;
@@ -85,7 +85,7 @@ interiorCamera.fov = Math.PI * 0.48;
 interiorCamera.speed = 0;
 interiorCamera.angularSensibility = 600;
 interiorCamera.inertia = 0.32;
-interiorCamera.checkCollisions = true;
+interiorCamera.checkCollisions = false;
 interiorCamera.keysUp = [];
 interiorCamera.keysDown = [];
 interiorCamera.keysLeft = [];
@@ -131,7 +131,7 @@ const playerCollider = B.MeshBuilder.CreateSphere(
 );
 playerCollider.isVisible = false;
 playerCollider.isPickable = false;
-playerCollider.checkCollisions = true;
+playerCollider.checkCollisions = false;
 
 let insideMode = false;
 const keys = new Set();
@@ -250,7 +250,7 @@ async function loadModel() {
 
     makeMaterialsDoubleSided(result);
 
-    enableMeshCollisions(result);
+    disableMeshCollisions(result);
     normalizeModel(modelRoot);
     configurePlayerPhysics();
     frameScene();
@@ -410,9 +410,7 @@ function updatePlatformGravity(platform, seconds) {
   }
 
   playerPhysics.verticalVelocity -= platform.gravity * seconds;
-  movePlayerWithCollisions(
-    new B.Vector3(0, playerPhysics.verticalVelocity * seconds, 0),
-  );
+  interiorCamera.position.y += playerPhysics.verticalVelocity * seconds;
   clampPlayerToCapsule(platform);
 
   if (
@@ -458,17 +456,6 @@ function clampPlayerToCapsule(platform) {
   syncPlayerColliderToCamera();
 }
 
-function movePlayerWithCollisions(displacement) {
-  if (typeof playerCollider.moveWithCollisions === "function") {
-    syncPlayerColliderToCamera();
-    playerCollider.moveWithCollisions(displacement);
-    interiorCamera.position.copyFrom(playerCollider.position);
-  } else {
-    interiorCamera.position.addInPlace(displacement);
-    syncPlayerColliderToCamera();
-  }
-}
-
 function syncPlayerColliderToCamera() {
   playerCollider.position.copyFrom(interiorCamera.position);
 }
@@ -476,52 +463,8 @@ function syncPlayerColliderToCamera() {
 function movePlayerHorizontally(displacement, platform) {
   if (!platform || displacement.lengthSquared() <= 0) return;
 
-  if (canMoveHorizontally(displacement, platform)) {
-    movePlayerWithCollisions(displacement);
-    return;
-  }
-
-  const xOnly = new B.Vector3(displacement.x, 0, 0);
-  if (xOnly.lengthSquared() > 0 && canMoveHorizontally(xOnly, platform)) {
-    movePlayerWithCollisions(xOnly);
-  }
-
-  const zOnly = new B.Vector3(0, 0, displacement.z);
-  if (zOnly.lengthSquared() > 0 && canMoveHorizontally(zOnly, platform)) {
-    movePlayerWithCollisions(zOnly);
-  }
-}
-
-function canMoveHorizontally(displacement, platform) {
-  const distance = displacement.length();
-  if (distance <= 0) return true;
-
-  const direction = displacement.scale(1 / distance);
-  const side = new B.Vector3(-direction.z, 0, direction.x);
-  const eye = interiorCamera.position;
-  const castDistance = distance + platform.radius * 1.35;
-  const sampleHeights = [
-    0,
-    -platform.playerHeight * 0.35,
-    Math.min(
-      platform.playerHeight * 0.35,
-      platform.ceilingY - eye.y - platform.radius,
-    ),
-  ];
-  const sideOffsets = [0, -platform.radius * 0.85, platform.radius * 0.85];
-
-  for (const height of sampleHeights) {
-    for (const sideOffset of sideOffsets) {
-      const origin = eye
-        .add(new B.Vector3(0, height, 0))
-        .add(side.scale(sideOffset));
-      const ray = new B.Ray(origin, direction, castDistance);
-      const hit = scene.pickWithRay(ray, isModelMesh);
-      if (hit?.hit && hit.distance <= castDistance) return false;
-    }
-  }
-
-  return true;
+  interiorCamera.position.addInPlace(displacement);
+  syncPlayerColliderToCamera();
 }
 
 function findFloorY(bounds) {
@@ -656,10 +599,10 @@ function makeMaterialsDoubleSided(result) {
   }
 }
 
-function enableMeshCollisions(result) {
+function disableMeshCollisions(result) {
   for (const mesh of result.meshes) {
     if (mesh.getTotalVertices() > 0) {
-      mesh.checkCollisions = true;
+      mesh.checkCollisions = false;
       mesh.isPickable = true;
     }
   }

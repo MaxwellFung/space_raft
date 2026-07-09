@@ -36,8 +36,10 @@ Useful spatial controls:
 - `world.pickups.collectedIds`: original scene pickups that should stay gone.
 - `world.placedItems`: objects placed by the player.
 - `world.helmet` / `world.tether`: helmet hook/equipment and tether state.
-- `platform.physicsBounds`: optional explicit local collision bounds, with
+- `platform.physicsBounds`: optional explicit local interior bounds, with
   `{ "min": [x, y, z], "max": [x, y, z] }`.
+- `platform.physicsFloorY`: optional explicit walkable floor height. When absent,
+  the ship renderer derives it from broad, near-horizontal model geometry.
 - `platform.physicsProbePosition`: optional local point used to raycast toward
   the actual model walls/floor/ceiling for player bounds.
 - `platform.orbit.fixed`: `true` for geostationary/station-kept, `false` to move.

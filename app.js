@@ -3,6 +3,11 @@ import { createItemPortrait } from "./src/item-portraits.js";
 import { createGlbModelPortrait } from "./src/model-preview.js";
 import { buildLevel } from "./src/level-system.js";
 import { applySaveToLevel, loadSaveFile } from "./src/save-system.js";
+import {
+  addPolySurfaceHologram,
+  addPolySurfaceHolograms,
+  isPolySurfaceHologram,
+} from "./src/poly-surface-hologram.js";
 
 const B = window.BABYLON;
 const DEFAULT_SAVE_PATH = "./saves/brown-dwarf-default.json";
@@ -83,11 +88,6 @@ const movementKeys = new Set([
 ]);
 
 addEventListener("keydown", (event) => {
-  if (event.code === "F3") {
-    event.preventDefault();
-    if (gameStarted) toggleToolTips();
-    return;
-  }
   if (!gameStarted) return;
   if (event.code === "F6") {
     event.preventDefault();
@@ -931,6 +931,12 @@ function createPlayerTetherMesh(path, material) {
   mesh.material = material;
   mesh.isPickable = false;
   mesh.receiveShadows = true;
+  mesh.checkCollisions = false;
+  mesh.metadata = {
+    ...(mesh.metadata ?? {}),
+    excludeFromBounds: true,
+    excludeFromCollision: true,
+  };
   return mesh;
 }
 
@@ -1661,12 +1667,20 @@ async function loadItemModelRoot(item, options = {}) {
   );
   root.computeWorldMatrix(true);
 
+  const excludeFromBounds = options.hologram || options.parent === camera;
   for (const mesh of getRootRenderableMeshes(root)) {
     mesh.isPickable = Boolean(options.pickable);
     mesh.checkCollisions = false;
     mesh.receiveShadows = !options.hologram;
-    mesh.showBoundingBox = false;
+    mesh.metadata = {
+      ...(mesh.metadata ?? {}),
+      excludeFromBounds,
+      excludeFromCollision: true,
+    };
+    mesh.showBoundingBox =
+      !excludeFromBounds && Boolean(scene.metadata?.objectBoundsVisible);
   }
+  addPolySurfaceHolograms(root, scene);
 
   return root;
 }
@@ -1697,8 +1711,11 @@ function installPlacedItemMetadata(root, item) {
   };
   for (const mesh of getRootRenderableMeshes(root)) {
     mesh.isPickable = true;
+    mesh.checkCollisions = false;
     mesh.metadata = {
       ...(mesh.metadata ?? {}),
+      excludeFromBounds: false,
+      excludeFromCollision: true,
       glbPickupLabel: item.name ?? item.label ?? item.id ?? "Item",
       glbPickupRange: GLB_PICKUP_PROMPT_RANGE,
       glbPickupRoot: root,
@@ -1746,11 +1763,10 @@ function getPlacementState(item, root) {
   if (!bounds) return null;
 
   const inside = isPlacementInsidePlatform(bounds, platform);
-  const blocked = inside && doesPlacementOverlap(bounds, root);
   return {
     localPosition: root.position.clone(),
     bounds,
-    valid: inside && !blocked,
+    valid: inside,
   };
 }
 
@@ -1787,40 +1803,6 @@ function isPlacementInsidePlatform(bounds, platform) {
     bounds.max.x <= maxX - PLACEMENT_PADDING &&
     bounds.min.z >= minZ + PLACEMENT_PADDING &&
     bounds.max.z <= maxZ - PLACEMENT_PADDING
-  );
-}
-
-function doesPlacementOverlap(bounds, previewRoot) {
-  for (const root of getActivePlaceableRoots()) {
-    if (root === previewRoot) continue;
-    const otherBounds = getRootBoundsInPlatform(root);
-    if (
-      otherBounds &&
-      boundsOverlapXZ(bounds, otherBounds, PLACEMENT_PADDING)
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function getActivePlaceableRoots() {
-  const roots = new Set();
-  for (const mesh of scene.meshes) {
-    const root = mesh.metadata?.glbPickupRoot;
-    if (!root || root === placementPreview?.root) continue;
-    if (root.isDisposed?.() || root.isEnabled?.() === false) continue;
-    roots.add(root);
-  }
-  return roots;
-}
-
-function boundsOverlapXZ(a, b, padding = 0) {
-  return !(
-    a.max.x + padding <= b.min.x ||
-    a.min.x - padding >= b.max.x ||
-    a.max.z + padding <= b.min.z ||
-    a.min.z - padding >= b.max.z
   );
 }
 
@@ -1886,7 +1868,10 @@ function recenterChildrenAroundAnchor(root, center) {
 function getRootRenderableMeshes(root) {
   return root
     .getChildMeshes(false)
-    .filter((mesh) => mesh.getTotalVertices?.() > 0);
+    .filter(
+      (mesh) =>
+        mesh.getTotalVertices?.() > 0 && !isPolySurfaceHologram(mesh),
+    );
 }
 
 function getRootLocalBounds(root) {
@@ -2023,6 +2008,7 @@ function startGame(saveFile) {
   camera.inertia = 0.18;
   camera.setTarget(B.Vector3.FromArray(brownDwarfLevel.spawn.target));
   camera.attachControl(canvas, true);
+  createPlayerPlaceholderRig(scene, camera);
 
   canvas.addEventListener("pointerdown", handleCanvasPointerDown);
   installBackgroundMusicUnlock(backgroundMusic);
@@ -2037,6 +2023,7 @@ function startGame(saveFile) {
   };
   installHudControls();
   restoreSavedWorldState(saveFile.world);
+  toolTipsVisible = true;
   updateToolTipsVisibility();
   refreshPlacementPreview();
   installPlayerLoop();
@@ -2063,6 +2050,185 @@ function createThirdPersonCamera(scene, playerCamera) {
   updateThirdPersonCamera();
   scene.activeCamera = playerCamera;
   return followCamera;
+}
+
+function createPlayerPlaceholderRig(scene, parentCamera) {
+  const root = new B.TransformNode("player-placeholder-limbs", scene);
+  root.parent = parentCamera;
+  root.position.set(0, 0, 0);
+
+  const suitMaterial = new B.StandardMaterial(
+    "player-placeholder-suit-material",
+    scene,
+  );
+  suitMaterial.diffuseColor = new B.Color3(0.48, 0.56, 0.62);
+  suitMaterial.emissiveColor = new B.Color3(0.055, 0.065, 0.075);
+  suitMaterial.specularColor = new B.Color3(0.18, 0.2, 0.22);
+  suitMaterial.specularPower = 58;
+
+  const gloveMaterial = new B.StandardMaterial(
+    "player-placeholder-glove-material",
+    scene,
+  );
+  gloveMaterial.diffuseColor = new B.Color3(0.16, 0.18, 0.2);
+  gloveMaterial.emissiveColor = new B.Color3(0.025, 0.03, 0.035);
+  gloveMaterial.specularColor = new B.Color3(0.1, 0.11, 0.12);
+
+  const bootMaterial = new B.StandardMaterial(
+    "player-placeholder-boot-material",
+    scene,
+  );
+  bootMaterial.diffuseColor = new B.Color3(0.12, 0.13, 0.15);
+  bootMaterial.emissiveColor = new B.Color3(0.02, 0.022, 0.026);
+  bootMaterial.specularColor = new B.Color3(0.08, 0.08, 0.09);
+
+  const limbs = [
+    {
+      name: "left-arm",
+      start: [-0.34, -0.24, 0.26],
+      end: [-0.16, -0.58, 0.7],
+      radius: 0.036,
+      material: suitMaterial,
+    },
+    {
+      name: "right-arm",
+      start: [0.34, -0.24, 0.26],
+      end: [0.16, -0.58, 0.7],
+      radius: 0.036,
+      material: suitMaterial,
+    },
+    {
+      name: "left-leg",
+      start: [-0.13, -0.72, 0.26],
+      end: [-0.19, -1.08, 0.66],
+      radius: 0.045,
+      material: suitMaterial,
+    },
+    {
+      name: "right-leg",
+      start: [0.13, -0.72, 0.26],
+      end: [0.19, -1.08, 0.66],
+      radius: 0.045,
+      material: suitMaterial,
+    },
+  ];
+
+  for (const limb of limbs) {
+    createPlayerPlaceholderLimb(scene, root, limb);
+  }
+
+  for (const hand of [
+    ["left-hand", [-0.16, -0.58, 0.7]],
+    ["right-hand", [0.16, -0.58, 0.7]],
+  ]) {
+    createPlayerPlaceholderJoint(
+      scene,
+      root,
+      hand[0],
+      hand[1],
+      0.052,
+      gloveMaterial,
+    );
+  }
+
+  for (const boot of [
+    ["left-boot", [-0.2, -1.1, 0.73]],
+    ["right-boot", [0.2, -1.1, 0.73]],
+  ]) {
+    const mesh = B.MeshBuilder.CreateBox(
+      `player-placeholder-${boot[0]}`,
+      { width: 0.11, height: 0.06, depth: 0.18 },
+      scene,
+    );
+    mesh.parent = root;
+    mesh.position.copyFrom(B.Vector3.FromArray(boot[1]));
+    mesh.rotation.x = -0.18;
+    mesh.material = bootMaterial;
+    configurePlayerPlaceholderMesh(mesh);
+  }
+
+  return root;
+}
+
+function createPlayerPlaceholderLimb(scene, root, limb) {
+  const start = B.Vector3.FromArray(limb.start);
+  const end = B.Vector3.FromArray(limb.end);
+  const delta = end.subtract(start);
+  const length = delta.length();
+  if (length <= 0.0001) return null;
+
+  const mesh = B.MeshBuilder.CreateCylinder(
+    `player-placeholder-${limb.name}`,
+    {
+      height: length,
+      diameterTop: limb.radius * 1.85,
+      diameterBottom: limb.radius * 2.2,
+      tessellation: 10,
+    },
+    scene,
+  );
+  mesh.parent = root;
+  mesh.position.copyFrom(start.add(end).scale(0.5));
+  mesh.rotationQuaternion = quaternionFromUnitVectors(
+    B.Axis.Y,
+    delta.scale(1 / length),
+  );
+  mesh.material = limb.material;
+  configurePlayerPlaceholderMesh(mesh);
+  return mesh;
+}
+
+function createPlayerPlaceholderJoint(
+  scene,
+  root,
+  name,
+  position,
+  radius,
+  material,
+) {
+  const mesh = B.MeshBuilder.CreateSphere(
+    `player-placeholder-${name}`,
+    { diameter: radius * 2, segments: 10 },
+    scene,
+  );
+  mesh.parent = root;
+  mesh.position.copyFrom(B.Vector3.FromArray(position));
+  mesh.material = material;
+  configurePlayerPlaceholderMesh(mesh);
+  return mesh;
+}
+
+function configurePlayerPlaceholderMesh(mesh) {
+  mesh.isPickable = false;
+  mesh.checkCollisions = false;
+  mesh.alwaysSelectAsActiveMesh = true;
+  mesh.metadata = {
+    ...(mesh.metadata ?? {}),
+    excludeFromBounds: true,
+    excludeFromCollision: true,
+    playerPlaceholderLimb: true,
+  };
+}
+
+function quaternionFromUnitVectors(from, to) {
+  const start = from.clone().normalize();
+  const end = to.clone().normalize();
+  const dot = B.Vector3.Dot(start, end);
+  if (dot > 0.999999) return B.Quaternion.Identity();
+
+  if (dot < -0.999999) {
+    let axis = B.Vector3.Cross(B.Axis.X, start);
+    if (axis.lengthSquared() < 0.000001) {
+      axis = B.Vector3.Cross(B.Axis.Z, start);
+    }
+    axis.normalize();
+    return B.Quaternion.RotationAxis(axis, Math.PI);
+  }
+
+  const cross = B.Vector3.Cross(start, end);
+  const quaternion = new B.Quaternion(cross.x, cross.y, cross.z, 1 + dot);
+  quaternion.normalize();
+  return quaternion;
 }
 
 function toggleThirdPersonCamera() {
@@ -2797,7 +2963,12 @@ function updateActiveInteraction() {
     return;
   }
   if (heldAsteroid) {
-    updateInteractionPrompt({ prompt: "Asteroid held · Press E to drop" });
+    updateInteractionPrompt({
+      prompt: createAsteroidPrompt(
+        heldAsteroid.mesh?.metadata?.asteroidComposition,
+        "Asteroid held · Press E to drop",
+      ),
+    });
     return;
   }
 
@@ -2884,7 +3055,10 @@ function createAsteroidPickupInteraction() {
   return {
     type: "asteroid",
     range: ASTEROID_PICKUP_RANGE,
-    prompt: "Press E to pick up asteroid",
+    prompt: createAsteroidPrompt(
+      candidate.composition ?? candidate.rock?.composition,
+      "Press E to pick up asteroid",
+    ),
     activate: () => pickUpAsteroidFromField(candidate),
   };
 }
@@ -2899,7 +3073,12 @@ function pickUpAsteroidFromField(candidate) {
     mesh: createHeldAsteroidMesh(asteroid),
     radius: asteroid.radius,
   };
-  updateInteractionPrompt({ prompt: "Asteroid held · Press E to drop" });
+  updateInteractionPrompt({
+    prompt: createAsteroidPrompt(
+      asteroid.composition,
+      "Asteroid held · Press E to drop",
+    ),
+  });
   return true;
 }
 
@@ -2907,6 +3086,7 @@ function createHeldAsteroidMesh(asteroid) {
   const mesh = createAsteroidMeshFromSource(
     asteroid.sourceMesh,
     "held-asteroid",
+    asteroid,
   );
   mesh.parent = camera;
   mesh.position.copyFrom(HELD_ASTEROID_OFFSET);
@@ -2919,11 +3099,14 @@ function createHeldAsteroidMesh(asteroid) {
   mesh.metadata = {
     ...(mesh.metadata ?? {}),
     heldAsteroid: true,
+    asteroidComposition: asteroid.composition ?? null,
+    asteroidColor: asteroid.color ?? null,
   };
+  addPolySurfaceHologram(mesh, scene);
   return mesh;
 }
 
-function createAsteroidMeshFromSource(sourceMesh, name) {
+function createAsteroidMeshFromSource(sourceMesh, name, asteroid = {}) {
   const positions = sourceMesh.getVerticesData(B.VertexBuffer.PositionKind);
   const mesh = positions
     ? new B.Mesh(name, scene)
@@ -2946,8 +3129,78 @@ function createAsteroidMeshFromSource(sourceMesh, name) {
     vertexData.applyToMesh(mesh);
   }
 
-  mesh.material = sourceMesh.material;
+  mesh.useVertexColors = false;
+  mesh.hasVertexAlpha = false;
+  mesh.material = createShipLitAsteroidMaterial(
+    sourceMesh.material,
+    name,
+    asteroid.color,
+  );
   return mesh;
+}
+
+function createShipLitAsteroidMaterial(sourceMaterial, name, tint) {
+  const material = new B.StandardMaterial(`${name}-ship-lit-material`, scene);
+  const baseDiffuse =
+    sourceMaterial?.diffuseColor?.clone?.() ?? new B.Color3(0.28, 0.26, 0.22);
+  material.diffuseColor = Array.isArray(tint)
+    ? new B.Color3(
+        baseDiffuse.r * tint[0],
+        baseDiffuse.g * tint[1],
+        baseDiffuse.b * tint[2],
+      )
+    : baseDiffuse;
+  material.diffuseTexture = sourceMaterial?.diffuseTexture ?? null;
+  material.bumpTexture = sourceMaterial?.bumpTexture ?? null;
+  if (material.bumpTexture && sourceMaterial?.bumpTexture?.level !== undefined) {
+    material.bumpTexture.level = sourceMaterial.bumpTexture.level;
+  }
+  material.invertNormalMapY = Boolean(sourceMaterial?.invertNormalMapY);
+  material.useParallax = Boolean(sourceMaterial?.useParallax);
+  material.useParallaxOcclusion = Boolean(sourceMaterial?.useParallaxOcclusion);
+  material.parallaxScaleBias = sourceMaterial?.parallaxScaleBias ?? 0;
+  material.specularColor =
+    sourceMaterial?.specularColor?.clone?.() ?? new B.Color3(0.04, 0.035, 0.03);
+  material.specularPower = sourceMaterial?.specularPower ?? 42;
+  material.ambientColor =
+    sourceMaterial?.ambientColor?.clone?.() ?? new B.Color3(0.028, 0.026, 0.022);
+
+  material.alpha = 1;
+  material.backFaceCulling = false;
+  material.twoSidedLighting = true;
+  material.maxSimultaneousLights = Math.max(
+    material.maxSimultaneousLights ?? 4,
+    4,
+  );
+
+  if ("transparencyMode" in material) {
+    material.transparencyMode = B.Material.MATERIAL_OPAQUE;
+  }
+  if ("alphaMode" in material) {
+    material.alphaMode = B.Engine.ALPHA_DISABLE;
+  }
+  if ("needDepthPrePass" in material) {
+    material.needDepthPrePass = false;
+  }
+  if ("disableDepthWrite" in material) {
+    material.disableDepthWrite = false;
+  }
+  if ("forceDepthWrite" in material) {
+    material.forceDepthWrite = true;
+  }
+  if ("disableLighting" in material) {
+    material.disableLighting = false;
+  }
+  if ("unlit" in material) {
+    material.unlit = false;
+  }
+  if ("useAlphaFromAlbedoTexture" in material) {
+    material.useAlphaFromAlbedoTexture = false;
+  }
+  if ("useAlphaFromDiffuseTexture" in material) {
+    material.useAlphaFromDiffuseTexture = false;
+  }
+  return material;
 }
 
 function dropHeldAsteroid() {
@@ -2964,6 +3217,8 @@ function dropHeldAsteroid() {
   mesh.checkCollisions = false;
   mesh.metadata = {
     ...(mesh.metadata ?? {}),
+    excludeFromBounds: false,
+    excludeFromCollision: true,
     heldAsteroid: false,
   };
   installDroppedAsteroidInteraction(mesh);
@@ -2978,7 +3233,11 @@ function installDroppedAsteroidInteraction(mesh) {
     interaction: {
       type: "asteroid",
       range: ASTEROID_PICKUP_RANGE,
-      getPrompt: () => "Press E to pick up asteroid",
+      getPrompt: () =>
+        createAsteroidPrompt(
+          mesh.metadata?.asteroidComposition,
+          "Press E to pick up asteroid",
+        ),
       activate: () => pickUpDroppedAsteroid(mesh),
     },
   };
@@ -2989,6 +3248,8 @@ function pickUpDroppedAsteroid(mesh) {
 
   mesh.metadata = {
     ...(mesh.metadata ?? {}),
+    excludeFromBounds: true,
+    excludeFromCollision: true,
     interaction: null,
     heldAsteroid: true,
   };
@@ -3001,8 +3262,40 @@ function pickUpDroppedAsteroid(mesh) {
     mesh,
     radius: mesh.getBoundingInfo?.().boundingSphere.radiusWorld,
   };
-  updateInteractionPrompt({ prompt: "Asteroid held · Press E to drop" });
+  updateInteractionPrompt({
+    prompt: createAsteroidPrompt(
+      mesh.metadata?.asteroidComposition,
+      "Asteroid held · Press E to drop",
+    ),
+  });
   return true;
+}
+
+function createAsteroidPrompt(composition, actionText) {
+  const compositionText = formatAsteroidComposition(composition);
+  return compositionText
+    ? `${actionText} · ${compositionText}`
+    : actionText;
+}
+
+function formatAsteroidComposition(composition) {
+  if (!composition) return "";
+
+  const iron = Number(composition.iron);
+  const copper = Number(composition.copper);
+  const water = Number(composition.water);
+  const total = iron + copper + water;
+  if (!Number.isFinite(total) || total <= 0) return "";
+
+  return [
+    ["Iron", iron],
+    ["Copper", copper],
+    ["Water", water],
+  ]
+    .map(([label, value]) =>
+      `${label} ${Math.round((Number(value) / total) * 100)}%`
+    )
+    .join(" · ");
 }
 
 function updateInteractionPrompt(interaction) {
@@ -3049,27 +3342,32 @@ function toggleObjectBounds() {
 function applyObjectBoundsVisibility() {
   if (!scene) return;
   for (const mesh of scene.meshes) {
-    if (isPickupDebugMesh(mesh)) {
-      mesh.showBoundingBox = objectBoundsVisible;
+    const showBounds = isObjectBoundsMesh(mesh);
+    if (showBounds || mesh.metadata?.objectBoundsManaged) {
+      mesh.showBoundingBox = objectBoundsVisible && showBounds;
+      mesh.metadata = {
+        ...(mesh.metadata ?? {}),
+        objectBoundsManaged: showBounds,
+      };
     }
   }
 }
 
-function isPickupDebugMesh(mesh) {
+function isObjectBoundsMesh(mesh) {
   return (
     mesh?.getTotalVertices?.() > 0 &&
-    Boolean(
-      mesh.metadata?.glbPickupLabel ||
-      mesh.metadata?.interaction?.type === "pickup",
-    )
+    !mesh.metadata?.excludeFromBounds &&
+    (Boolean(mesh.metadata?.glbPickupLabel) ||
+      mesh.metadata?.interaction?.type === "pickup" ||
+      mesh.metadata?.interaction?.type === "asteroid")
   );
 }
 
 function configureObjectBoundsRenderer(targetScene) {
   const renderer = targetScene.getBoundingBoxRenderer?.();
   if (!renderer) return;
-  renderer.frontColor = new B.Color3(0.2, 1, 0.38);
-  renderer.backColor = new B.Color3(0.08, 0.5, 0.16);
+  renderer.frontColor = new B.Color3(1, 1, 1);
+  renderer.backColor = new B.Color3(1, 1, 1);
   renderer.showBackLines = true;
 }
 
@@ -3204,11 +3502,6 @@ function updateHudButtons() {
   }
 }
 
-function toggleToolTips() {
-  toolTipsVisible = !toolTipsVisible;
-  updateToolTipsVisibility();
-}
-
 function updateToolTipsVisibility() {
   document.body.classList.toggle("tooltips-hidden", !toolTipsVisible);
 }
@@ -3269,9 +3562,9 @@ function updatePlatformGravity(platform, seconds) {
 
   if (
     platform.ceilingY !== undefined &&
-    camera.position.y > platform.ceilingY - platform.radius
+    camera.position.y > platform.ceilingY - (platform.radius ?? 0)
   ) {
-    camera.position.y = platform.ceilingY - platform.radius;
+    camera.position.y = platform.ceilingY - (platform.radius ?? 0);
     playerPhysics.verticalVelocity = Math.min(
       playerPhysics.verticalVelocity,
       0,
@@ -3298,41 +3591,8 @@ function updateZeroGravityThrusters(thrustInput, platform, seconds) {
     clampVectorLengthInPlace(zeroGravityVelocity, ZERO_G_MAX_SPEED);
   }
 
-  if (!isPositionInsidePlatformPhysicsVolume(camera.position, platform)) {
-    camera.position.addInPlace(zeroGravityVelocity.scale(seconds));
-    playerPhysics.grounded = false;
-    playerPhysics.verticalVelocity = zeroGravityVelocity.y;
-    return;
-  }
-
-  const requestedHorizontal = new B.Vector3(
-    zeroGravityVelocity.x * seconds,
-    0,
-    zeroGravityVelocity.z * seconds,
-  );
-  const beforeX = camera.position.x;
-  const beforeZ = camera.position.z;
-  movePlayerHorizontally(requestedHorizontal, platform);
-  constrainPlayerToPlatform(platform, { constrainVertical: false });
-  const actualHorizontal = new B.Vector3(
-    camera.position.x - beforeX,
-    0,
-    camera.position.z - beforeZ,
-  );
-  if (Math.abs(actualHorizontal.x - requestedHorizontal.x) > 0.0001) {
-    zeroGravityVelocity.x = 0;
-  }
-  if (Math.abs(actualHorizontal.z - requestedHorizontal.z) > 0.0001) {
-    zeroGravityVelocity.z = 0;
-  }
-
-  const requestedY = zeroGravityVelocity.y * seconds;
-  const beforeY = camera.position.y;
-  camera.position.y += requestedY;
-  constrainZeroGravityVerticallyToPlatform(platform);
-  if (Math.abs(camera.position.y - beforeY - requestedY) > 0.0001) {
-    zeroGravityVelocity.y = 0;
-  }
+  camera.position.addInPlace(zeroGravityVelocity.scale(seconds));
+  playerPhysics.grounded = false;
   playerPhysics.verticalVelocity = zeroGravityVelocity.y;
 }
 
@@ -3451,136 +3711,18 @@ function isPositionInsidePlatformPhysicsVolume(position, platform) {
   );
 }
 
-function constrainZeroGravityVerticallyToPlatform(platform) {
-  if (getOpenPlatformPassageAt(camera.position, platform)) {
-    playerPhysics.grounded = false;
-    return;
-  }
-
-  const radius = platform.radius ?? 0;
-  if (platform.floorY !== undefined) {
-    camera.position.y = Math.max(
-      camera.position.y,
-      platform.floorY + getZeroGravityFloorEyeClearance(platform),
-    );
-  }
-  if (platform.ceilingY !== undefined) {
-    camera.position.y = Math.min(camera.position.y, platform.ceilingY - radius);
-  }
-  playerPhysics.grounded = false;
-}
-
-function getZeroGravityFloorEyeClearance(platform) {
-  const floorY = platform.floorY ?? 0;
-  const standingEyeHeight =
-    platform.eyeHeight ?? playerPhysics?.platformEyeHeight ?? floorY;
-  const standingHeight = Math.max(standingEyeHeight - floorY, 0);
-  return Math.max(
-    (platform.radius ?? 0) * 2,
-    standingHeight * CROUCH_EYE_HEIGHT_SCALE,
-  );
-}
-
-function constrainPlayerVerticallyToPlatform(platform) {
-  if (getOpenPlatformPassageAt(camera.position, platform)) {
-    playerPhysics.grounded = false;
-    return;
-  }
-
-  const minY = playerPhysics.eyeHeight ?? platform.eyeHeight;
-  let grounded = false;
-  if (platform.floorY !== undefined && camera.position.y <= minY) {
-    camera.position.y = minY;
-    grounded = true;
-  }
-
-  if (
-    platform.ceilingY !== undefined &&
-    camera.position.y > platform.ceilingY - (platform.radius ?? 0)
-  ) {
-    camera.position.y = platform.ceilingY - (platform.radius ?? 0);
-  }
-  playerPhysics.grounded = grounded;
-}
-
 function movePlayerHorizontally(displacement, platform) {
   const startX = camera.position.x;
   const startZ = camera.position.z;
   if (!platform || displacement.lengthSquared() <= 0) return B.Vector3.Zero();
 
-  if (canMoveHorizontally(displacement, platform)) {
-    camera.position.addInPlace(displacement);
-  } else {
-    const xOnly = new B.Vector3(displacement.x, 0, 0);
-    if (xOnly.lengthSquared() > 0 && canMoveHorizontally(xOnly, platform)) {
-      camera.position.addInPlace(xOnly);
-    }
-
-    const zOnly = new B.Vector3(0, 0, displacement.z);
-    if (zOnly.lengthSquared() > 0 && canMoveHorizontally(zOnly, platform)) {
-      camera.position.addInPlace(zOnly);
-    }
-  }
+  camera.position.addInPlace(displacement);
 
   return new B.Vector3(
     camera.position.x - startX,
     0,
     camera.position.z - startZ,
   );
-}
-
-function canMoveHorizontally(displacement, platform) {
-  const collisionMeshes = platform.collisionMeshes ?? [];
-  if (!collisionMeshes.length) return true;
-
-  const distance = displacement.length();
-  if (distance <= 0) return true;
-
-  const direction = displacement.scale(1 / distance);
-  const side = new B.Vector3(-direction.z, 0, direction.x);
-  const eye = camera.position;
-  const radius = platform.radius ?? 0;
-  const castDistance = distance + radius * 1.35;
-  const ceilingY = platform.ceilingY ?? eye.y + platform.playerHeight;
-  const playerHeight = playerPhysics.eyeHeight - (platform.floorY ?? 0);
-  const destination = eye.add(displacement);
-  if (getOpenPlatformPassageAt(destination, platform)) return true;
-
-  const sampleHeights = [
-    0,
-    -playerHeight * 0.35,
-    Math.min(playerHeight * 0.25, ceilingY - eye.y - radius),
-  ];
-  const sideOffsets = [0, -radius * 0.85, radius * 0.85];
-
-  for (const height of sampleHeights) {
-    for (const sideOffset of sideOffsets) {
-      const origin = eye
-        .add(new B.Vector3(0, height, 0))
-        .add(side.scale(sideOffset));
-      const ray = createWorldRay(origin, direction, castDistance);
-      const hit = scene.pickWithRay(ray, (mesh) =>
-        isActivePlatformCollisionMesh(mesh, collisionMeshes),
-      );
-      if (hit?.hit && hit.distance <= castDistance) return false;
-    }
-  }
-
-  return true;
-}
-
-function createWorldRay(localOrigin, localDirection, distance) {
-  if (!camera.parent) {
-    return new B.Ray(localOrigin, localDirection, distance);
-  }
-
-  const parentWorld = camera.parent.getWorldMatrix();
-  const worldOrigin = B.Vector3.TransformCoordinates(localOrigin, parentWorld);
-  const worldDirection = B.Vector3.TransformNormal(
-    localDirection,
-    parentWorld,
-  ).normalize();
-  return new B.Ray(worldOrigin, worldDirection, distance);
 }
 
 function constrainPlayerToPlatform(platform, options = {}) {
@@ -3615,12 +3757,6 @@ function constrainPlayerToPlatform(platform, options = {}) {
       playerPhysics.eyeHeight ?? platform.eyeHeight,
     );
   }
-}
-
-function isActivePlatformCollisionMesh(mesh, collisionMeshes) {
-  if (!collisionMeshes.includes(mesh)) return false;
-  const doorInteraction = mesh.metadata?.platformDoorCollision;
-  return !doorInteraction?.isOpen;
 }
 
 function getOpenPlatformPassageAt(position, platform) {

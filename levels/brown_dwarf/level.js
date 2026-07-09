@@ -1,19 +1,3 @@
-import { createPlatformInteriorProps } from "../../src/ship-interior-layout.js";
-
-const interiorProps = createPlatformInteriorProps();
-const initialHelmetProp = interiorProps.floorProps.find(
-  (prop) => prop.id === "astronaut-helmet",
-);
-const floorProps = interiorProps.floorProps.filter(
-  (prop) => prop.id !== "astronaut-helmet",
-);
-const mountedHelmetItem = initialHelmetProp
-  ? {
-      ...initialHelmetProp,
-      name: initialHelmetProp.label ?? "Helmet",
-    }
-  : null;
-
 const brownDwarf = {
   id: "brown_dwarf",
   name: "Debris Field",
@@ -32,7 +16,13 @@ const brownDwarf = {
 
   platform: {
     id: "interceptor_platform",
-    modelUrl: "./assets/ship.glb",
+    modelUrl: "./assets/teo_ship.glb",
+    modelMaxSize: 2.145,
+    physicsBounds: {
+      min: [-1.0297, -0.3962, -1.0365],
+      max: [1.0297, 1.0725, 1.0365],
+    },
+    modelRotationDegrees: [0, 180, 0],
     widthMeters: 24,
     depthMeters: 24,
     thicknessMeters: 0.35,
@@ -42,40 +32,19 @@ const brownDwarf = {
     lightRangeMeters: 0,
     lightIntensity: 0,
     allowLocalLights: false,
-    transparentGlass: true,
-    glassColor: [0.76, 0.93, 1.0],
-    glassTintColor: [0.74, 0.92, 1.0],
-    glassAlpha: 0.32,
-    glassRoughness: 0.045,
-    glassMicroSurface: 0.96,
-    glassDirectIntensity: 0.84,
-    glassEnvironmentIntensity: 0.58,
-    glassSheen: true,
-    glassStripRimFaces: true,
-    glassSurfaceScale: 1.025,
-    glassThicknessScale: 1,
-    glassEdges: false,
+    transparentGlass: false,
+    doorGlass: false,
+    doorHingeAxis: "x",
+    doorHingeEdge: "minZ",
+    doorOpenAngleDegrees: -105,
+    doorInteractionProxyScale: 2.9,
+    doorInteractionProxyDepth: 0.28,
     brownDwarfWindowShadows: true,
     shadowMapSize: 1024,
-    helmetHook: {
-      wall: "rightWall",
-      center: [0, 1.02, -0.86],
-      wallOffset: 0.045,
-      mountYOffset: 0.1,
-      textureBasePath: "./assets/textures/Metal063/Metal063_1K-JPG",
-      textureScale: 2.6,
-      tintColor: [0.72, 0.58, 0.38],
-      metallic: 0.78,
-      roughness: 0.68,
-      initialMountedItem: mountedHelmetItem,
-      tetherLength: 6.8,
-      range: 1.65,
-    },
     metersPerWorldUnit: 8,
     gravity: 30,
     jumpSpeed: 5.4,
-    oxygenTank: interiorProps.oxygenTank,
-    floorProps,
+    floorProps: [],
   },
 
   lighting: {

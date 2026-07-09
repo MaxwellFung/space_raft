@@ -1,4 +1,5 @@
 import { createNebula, sampleNebulaDensity } from "./nebula-renderer.js";
+import { addPolySurfaceHologram } from "./poly-surface-hologram.js";
 
 const B = window.BABYLON;
 const ROCK_TEXTURE_SIZE = 512;
@@ -63,22 +64,8 @@ function createRockField(scene, field) {
   const orbitNormal = B.Vector3.Up();
   const scratchRockPosition = B.Vector3.Zero();
   const scratchWorldPosition = B.Vector3.Zero();
-  const scratchPlayerPosition = B.Vector3.Zero();
-  const scratchPlayerVelocity = B.Vector3.Zero();
-  const scratchPreviousPlayerPosition = B.Vector3.Zero();
-  const playerCollisionRadius = field.playerCollisionRadius ?? 0.34;
-  const playerCollisionCenterOffset =
-    field.playerCollisionCenterOffset ?? [0, -0.48, 0];
-  const playerCollisionOffset = B.Vector3.FromArray(playerCollisionCenterOffset);
-  const playerCollisionPush = field.playerCollisionPush ?? 0.72;
-  const playerCollisionVelocityTransfer =
-    field.playerCollisionVelocityTransfer ?? 0.86;
-  const playerCollisionMaxImpulse = field.playerCollisionMaxImpulse ?? 2.8;
-  const playerCollisionGraceSeconds = field.playerCollisionGraceSeconds ?? 1.2;
   let centerProvider = () => scene.activeCamera.globalPosition;
   let flowProvider = () => B.Axis.Z;
-  let playerProvider = () => getScenePlayerCollisionSource(scene);
-  let hasPreviousPlayerPosition = false;
   let lastCell = "";
   let simulationTime = 0;
   let asteroidFrame = 0;
@@ -140,10 +127,7 @@ function createRockField(scene, field) {
   root.setFlowDirection = (provider) => {
     flowProvider = provider;
   };
-  root.setPlayerCollisionSource = (provider) => {
-    playerProvider = provider;
-    hasPreviousPlayerPosition = false;
-  };
+  root.setPlayerCollisionSource = () => {};
   root.findAsteroidAlongRay = (ray, range = 2.8) =>
     findAsteroidAlongRay(ray, range);
   root.takeAsteroid = (candidate) => takeAsteroid(candidate);
@@ -225,8 +209,12 @@ function createRockField(scene, field) {
 
   function pushRock(local, sizeMeters, random, options = {}) {
     const rockRadius = baseRockRadius(sizeMeters);
+    const composition = createAsteroidComposition(random);
+    const color = createAsteroidCompositionColor(composition, random);
     rocks.push({
       material: options.material ?? groups.pick(random),
+      composition,
+      color,
       base: local,
       relativeVelocity:
         options.relativeVelocity ?? createRelativeOrbitalVelocity(random),
@@ -296,6 +284,8 @@ function createRockField(scene, field) {
       }
       retiringRocks.push({
         material: rock.material,
+        composition: rock.composition,
+        color: rock.color,
         position: position.clone(),
         age: 0,
         spinAxis: rock.spinAxis,
@@ -312,27 +302,19 @@ function createRockField(scene, field) {
     for (const matrixSet of matrices) matrixSet.length = 0;
     for (const colorSet of colors) colorSet.length = 0;
     const densityThreshold = field.rockDensityThreshold ?? 0.08;
-    updatePlayerCollisionSample(seconds);
     for (let index = rocks.length - 1; index >= 0; index -= 1) {
       const rock = rocks[index];
       rock.age += seconds;
-      rock.playerCollisionGrace = Math.max(
-        0,
-        (rock.playerCollisionGrace ?? 0) - seconds,
-      );
       const position = getRockPositionToRef(rock, scratchRockPosition);
-      resolvePlayerRockCollision(rock, position, seconds);
       if (isInsideShipGraceBubble(position, rock.radius)) {
-        if (rock.playerCollisionGrace > 0) {
-          pushRockOutsideShipGraceBubble(rock, position);
-        } else {
-          rocks.splice(index, 1);
-          continue;
-        }
+        rocks.splice(index, 1);
+        continue;
       }
       if (position.lengthSquared() > renderDistance * renderDistance) {
         retiringRocks.push({
           material: rock.material,
+          composition: rock.composition,
+          color: rock.color,
           position: position.clone(),
           age: 0,
           spinAxis: rock.spinAxis,
@@ -377,6 +359,7 @@ function createRockField(scene, field) {
         position,
         fadedScale,
         rotation,
+        rock.color,
         opaqueRockFade ? 1 : fade,
       );
     }
@@ -405,6 +388,7 @@ function createRockField(scene, field) {
         position,
         fadedScale,
         rotation,
+        rock.color,
         opaqueRockFade ? 1 : fade,
       );
     }
@@ -417,77 +401,6 @@ function createRockField(scene, field) {
     );
   }
 
-  function updatePlayerCollisionSample(seconds) {
-    const playerSource = playerProvider?.();
-    if (!playerSource) {
-      hasPreviousPlayerPosition = false;
-      scratchPlayerVelocity.copyFromFloats(0, 0, 0);
-      return;
-    }
-
-    const playerWorld =
-      playerSource instanceof B.Vector3
-        ? playerSource
-        : playerSource.position;
-    if (!playerWorld) {
-      hasPreviousPlayerPosition = false;
-      scratchPlayerVelocity.copyFromFloats(0, 0, 0);
-      return;
-    }
-
-    scratchPlayerPosition
-      .copyFrom(playerWorld)
-      .subtractInPlace(renderCenter)
-      .addInPlace(getPlayerCollisionOffset(playerSource, playerCollisionOffset));
-    if (hasPreviousPlayerPosition && seconds > 0) {
-      scratchPlayerVelocity
-        .copyFrom(scratchPlayerPosition)
-        .subtractInPlace(scratchPreviousPlayerPosition)
-        .scaleInPlace(1 / seconds);
-    } else {
-      scratchPlayerVelocity.copyFromFloats(0, 0, 0);
-      hasPreviousPlayerPosition = true;
-    }
-    scratchPreviousPlayerPosition.copyFrom(scratchPlayerPosition);
-  }
-
-  function resolvePlayerRockCollision(rock, position, seconds) {
-    if (!hasPreviousPlayerPosition || seconds <= 0) return;
-
-    const collisionRadius = rock.radius + playerCollisionRadius;
-    const delta = position.subtract(scratchPlayerPosition);
-    const distanceSquared = delta.lengthSquared();
-    if (
-      distanceSquared >= collisionRadius * collisionRadius ||
-      distanceSquared <= 0.0000001
-    ) {
-      return;
-    }
-
-    const distance = Math.sqrt(distanceSquared);
-    const normal = delta.scale(1 / distance);
-    const penetration = collisionRadius - distance;
-    const separation = normal.scale(penetration + 0.004);
-    position.addInPlace(separation);
-    rock.playerCollisionGrace = playerCollisionGraceSeconds;
-
-    const playerSpeedIntoRock = Math.max(
-      0,
-      B.Vector3.Dot(scratchPlayerVelocity, normal),
-    );
-    const shoveSpeed = Math.min(
-      playerCollisionMaxImpulse,
-      playerSpeedIntoRock * playerCollisionVelocityTransfer +
-        penetration * playerCollisionPush / seconds,
-    );
-    if (shoveSpeed > 0.0001) {
-      const currentOutwardSpeed = B.Vector3.Dot(rock.relativeVelocity, normal);
-      const addedSpeed = Math.max(0, shoveSpeed - currentOutwardSpeed);
-      rock.relativeVelocity.addInPlace(normal.scale(addedSpeed));
-    }
-    setRockBaseFromCurrentPosition(rock, position);
-  }
-
   function pushRockOutsideShipGraceBubble(rock, position) {
     if (shipGraceRadius <= 0) return;
 
@@ -498,8 +411,6 @@ function createRockField(scene, field) {
     let direction;
     if (distance > 0.0001) {
       direction = position.scale(1 / distance);
-    } else if (scratchPlayerPosition.lengthSquared() > 0.0001) {
-      direction = scratchPlayerPosition.clone().normalize();
     } else if (flowDirection.lengthSquared() > 0.0001) {
       direction = flowDirection.clone().normalize();
     } else {
@@ -575,6 +486,8 @@ function createRockField(scene, field) {
     rocks.splice(index, 1);
     return {
       sourceMesh: groups[rock.material],
+      composition: rock.composition,
+      color: rock.color,
       position: renderCenter.add(position),
       scale: rock.scale.clone(),
       rotation: displayRotation,
@@ -630,41 +543,6 @@ function createClumps(
     clumps.push(randomPointInSphere(random, radius));
   }
   return clumps;
-}
-
-function getScenePlayerCollisionSource(scene) {
-  const camera = scene.getCameraByName?.("player-camera") ?? scene.activeCamera;
-  if (!camera) return null;
-
-  camera.computeWorldMatrix?.(true);
-  const up = camera.getDirection?.(B.Axis.Y) ?? B.Axis.Y.clone();
-  if (up.lengthSquared() > 0.0001) up.normalize();
-  return {
-    position: camera.globalPosition?.clone?.() ?? camera.position?.clone?.(),
-    up,
-  };
-}
-
-function getPlayerCollisionOffset(source, playerCollisionOffset) {
-  if (source instanceof B.Vector3) return playerCollisionOffset.clone();
-
-  const offset = B.Vector3.Zero();
-  if (source.right && playerCollisionOffset.x) {
-    offset.addInPlace(source.right.scale(playerCollisionOffset.x));
-  } else {
-    offset.x += playerCollisionOffset.x;
-  }
-  if (source.up && playerCollisionOffset.y) {
-    offset.addInPlace(source.up.scale(playerCollisionOffset.y));
-  } else {
-    offset.y += playerCollisionOffset.y;
-  }
-  if (source.forward && playerCollisionOffset.z) {
-    offset.addInPlace(source.forward.scale(playerCollisionOffset.z));
-  } else {
-    offset.z += playerCollisionOffset.z;
-  }
-  return offset;
 }
 
 function intersectRaySphereDistance(
@@ -760,7 +638,6 @@ function createRockGroup(scene, field, name, family, seed) {
   const textures = createRockTextures(
     scene,
     `${field.id}-${name}`,
-    family,
     seed,
     field,
   );
@@ -776,12 +653,7 @@ function createRockGroup(scene, field, name, family, seed) {
     `${field.id}-${name}-material`,
     scene,
   );
-  const colorLift = field.rockColorLift ?? 0.045;
-  material.diffuseColor = new B.Color3(
-    Math.min(1, family.color[0] + colorLift * 0.5),
-    Math.min(1, family.color[1] + colorLift * 0.5),
-    Math.min(1, family.color[2] + colorLift * 0.45),
-  );
+  material.diffuseColor = B.Color3.White();
   material.diffuseTexture = textures.albedo;
   material.bumpTexture = textures.normal;
   material.bumpTexture.level = field.rockNormalStrength ?? 1.35;
@@ -817,6 +689,7 @@ function createRockGroup(scene, field, name, family, seed) {
     material.needDepthPrePass = true;
   }
   mesh.material = material;
+  addPolySurfaceHologram(mesh, scene);
   return mesh;
 }
 
@@ -903,7 +776,7 @@ function smoothAsteroidNormals(positions, normals, seed) {
   }
 }
 
-function createRockTextures(scene, name, family, seed, field = {}) {
+function createRockTextures(scene, name, seed, field = {}) {
   const size = ROCK_TEXTURE_SIZE;
   const albedo = new B.DynamicTexture(
     `${name}-albedo`,
@@ -1006,17 +879,8 @@ function createRockTextures(scene, name, family, seed, field = {}) {
           shadowPits -
           fractureDark,
       );
-      const warmShift = valueNoise3D(nx * 1.6 + 88.0, ny * 1.6, seed * 0.041);
-      const base = family.color;
-      const highlight = family.highlight;
-      const color = [
-        lerp(base[0], highlight[0], amount) * lerp(0.82, 1.12, warmShift) +
-          colorLift,
-        lerp(base[1], highlight[1], amount) * lerp(0.84, 1.08, warmShift) +
-          colorLift * 0.92,
-        lerp(base[2], highlight[2], amount) * lerp(0.88, 1.04, warmShift) +
-          colorLift * 0.76,
-      ];
+      const tone = lerp(0.42, 0.92, amount) + colorLift;
+      const color = [tone, tone * 0.98, tone * 0.94];
       const offset = (y * size + x) * 4;
       albedoImage.data[offset] = Math.round(clamp01(color[0]) * 255);
       albedoImage.data[offset + 1] = Math.round(clamp01(color[1]) * 255);
@@ -1093,10 +957,57 @@ function createFragmentLight(scene, field, occluder, rocks) {
   return light;
 }
 
-function pushInstance(matrixTarget, colorTarget, position, scale, rotation, alpha) {
+function createAsteroidComposition(random) {
+  const iron = random() ** 1.08 + 0.04;
+  const copper = random() ** 1.18 + 0.04;
+  const water = random() ** 1.12 + 0.04;
+  const total = iron + copper + water;
+  return {
+    iron: iron / total,
+    copper: copper / total,
+    water: water / total,
+  };
+}
+
+function createAsteroidCompositionColor(composition, random) {
+  const darkBasalt = [0.36, 0.34, 0.3];
+  const brightOrange = [1.32, 0.58, 0.2];
+  const moonRegolith = [0.84, 0.82, 0.76];
+  const shade = lerp(0.94, 1.06, random());
+  return [
+    (darkBasalt[0] * composition.iron +
+      brightOrange[0] * composition.copper +
+      moonRegolith[0] * composition.water) * shade,
+    (darkBasalt[1] * composition.iron +
+      brightOrange[1] * composition.copper +
+      moonRegolith[1] * composition.water) * shade,
+    (darkBasalt[2] * composition.iron +
+      brightOrange[2] * composition.copper +
+      moonRegolith[2] * composition.water) * shade,
+  ];
+}
+
+function pushInstance(
+  matrixTarget,
+  colorTarget,
+  position,
+  scale,
+  rotation,
+  color,
+  alpha,
+) {
   const matrix = B.Matrix.Compose(scale, rotation, position);
   matrix.copyToArray(matrixTarget, matrixTarget.length);
-  colorTarget.push(1, 1, 1, clamp01(alpha));
+  colorTarget.push(
+    finiteColorComponent(color?.[0], 1),
+    finiteColorComponent(color?.[1], 1),
+    finiteColorComponent(color?.[2], 1),
+    clamp01(alpha),
+  );
+}
+
+function finiteColorComponent(value, fallback) {
+  return Number.isFinite(value) ? Math.max(0, value) : fallback;
 }
 
 function applyMatrices(mesh, matrices) {
@@ -1125,6 +1036,13 @@ function applyInstanceBuffers(mesh, matrices, colors) {
     true,
   );
   mesh.thinInstanceRefreshBoundingInfo(true);
+
+  const hologram = mesh.metadata?.polySurfaceHologram;
+  if (hologram) {
+    hologram.thinInstanceSetBuffer("matrix", matrixBuffer, 16, true);
+    hologram.thinInstanceSetBuffer("color", colorBuffer, 4, true);
+    hologram.thinInstanceRefreshBoundingInfo(true);
+  }
 }
 
 function createHiddenInstanceMatrix() {

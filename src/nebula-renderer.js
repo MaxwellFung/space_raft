@@ -42,6 +42,9 @@ export function createNebula(scene, nebula, occluder) {
   let marchSteps = nebula.marchSteps ?? 20;
   let lastQualityUpdate = 0;
   let scaledTime = 0;
+  let previousRootRotationY = root.rotation.y;
+  const maxHistoryVolumeAngularDelta =
+    nebula.maxHistoryVolumeAngularDelta ?? 0.000001;
 
   for (const target of targets) {
     target.setTexture("volumeSampler", volume.detail);
@@ -95,6 +98,9 @@ export function createNebula(scene, nebula, occluder) {
 
       const target = targets[writeIndex];
       const history = latest;
+      const volumeAngularDelta = Math.abs(root.rotation.y - previousRootRotationY);
+      const historyUsable =
+        historyValid && volumeAngularDelta <= maxHistoryVolumeAngularDelta;
       target.setTexture("historySampler", history);
       target.setMatrix("invWorld", inverseWorld);
       target.setVector3("cameraPosition", camera.globalPosition);
@@ -118,7 +124,7 @@ export function createNebula(scene, nebula, occluder) {
       target.setFloat("marchSteps", marchSteps);
       target.setFloat(
         "historyWeight",
-        historyValid ? (nebula.temporalBlend ?? 0.82) : 0,
+        historyUsable ? (nebula.temporalBlend ?? 0.82) : 0,
       );
       if (!target.isReady()) {
         const compilationError = target.getEffect()?.getCompilationError();
@@ -132,6 +138,7 @@ export function createNebula(scene, nebula, occluder) {
       previousForward.copyFrom(cameraForward);
       previousRight.copyFrom(cameraRight);
       previousUp.copyFrom(cameraUp);
+      previousRootRotationY = root.rotation.y;
       historyValid = true;
     });
   });

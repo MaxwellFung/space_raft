@@ -3,6 +3,10 @@ import {
   isSpaceshipGlassMesh as isGlassMesh,
   replaceGlassWithClearMaterial,
 } from "./spaceship-glass.js";
+import {
+  addPolySurfaceHolograms,
+  isPolySurfaceHologram,
+} from "./poly-surface-hologram.js";
 
 const B = window.BABYLON;
 const GRAVITATIONAL_CONSTANT = 6.6743e-11;
@@ -300,7 +304,7 @@ async function loadShipModel(
   interactions,
 ) {
   try {
-    const modelUrl = platform.modelUrl ?? "./assets/ship.glb";
+    const modelUrl = platform.modelUrl ?? "./assets/teo_ship.glb";
     const result = await B.SceneLoader.ImportMeshAsync("", "", modelUrl, scene);
     const importedNodes = [...result.meshes, ...result.transformNodes];
     for (const node of importedNodes) {
@@ -314,7 +318,7 @@ async function loadShipModel(
       platform,
     );
     makeMaterialsDoubleSided(result);
-    forceOpaqueShipMaterials(result, platform);
+    forceOpaqueShipMaterials(result);
     if (platform.transparentGlass) {
       replaceGlassWithClearMaterial(result, scene, platform);
     }
@@ -324,7 +328,6 @@ async function loadShipModel(
     configureShipDoorPassage(scene, doorInteraction, physics, platform);
     shipRoot.parent = root;
     createControlPanel(scene, root, platform.controlPanel, physics);
-    createHelmetHook(scene, root, platform.helmetHook, physics, interactions);
     await loadFloorProps(scene, root, platform, physics, interactions);
     shipRoot.metadata = {
       ...(shipRoot.metadata ?? {}),
@@ -335,6 +338,7 @@ async function loadShipModel(
         primary,
       ),
     };
+    addPolySurfaceHolograms(shipRoot, scene);
 
     camera.position.set(0, physics.eyeHeight, 0);
     applyPlatformInitialCameraRotation(camera, platform);
@@ -350,6 +354,7 @@ function installShipDoorInteraction(scene, meshes, interactions, platform) {
   if (!doorMesh) return;
 
   const hinge = configureShipDoorHinge(scene, doorMesh, platform);
+  attachShipDoorCompanionMeshes(meshes, hinge);
 
   const interaction = {
     type: "ship-door",
@@ -362,26 +367,37 @@ function installShipDoorInteraction(scene, meshes, interactions, platform) {
       interaction.isOpen ? "Press E to close hatch" : "Press E to open hatch",
     activate: () => toggleShipDoor(scene, hinge, interaction, platform),
   };
-  doorMesh.isPickable = true;
+  doorMesh.isPickable = false;
   doorMesh.metadata = {
     ...(doorMesh.metadata ?? {}),
-    interaction,
-    platformDoorCollision: interaction,
+    platformDoorInteraction: interaction,
   };
   interactions?.push(interaction);
   return interaction;
 }
 
+function attachShipDoorCompanionMeshes(meshes, hinge) {
+  for (const mesh of meshes) {
+    const name = mesh.name?.toLowerCase() ?? "";
+    if (!/(door|hatch)/.test(name) || !/(glass|handle)/.test(name)) continue;
+    mesh.setParent(hinge);
+  }
+}
+
 function configureShipDoorHinge(scene, doorMesh, platform) {
   const parent = doorMesh.parent;
   doorMesh.computeWorldMatrix(true);
+  const hingeEdge = platform.doorHingeEdge ?? "maxY";
+  const hingeAxis = platform.doorHingeAxis ?? "z";
+  const hingeFrame = getDoorHingeFrame(doorMesh, hingeEdge, hingeAxis);
+  const doorAxes = getDoorHingeWorldAxes(doorMesh, hingeFrame);
   const bounds = doorMesh.getBoundingInfo().boundingBox;
   const min = bounds.minimum;
   const max = bounds.maximum;
-  const localPivot = B.Vector3.FromArray(
-    platform.doorHingePivot ??
-      getDefaultDoorHingePivot(min, max, platform.doorHingeEdge ?? "maxY"),
-  );
+  const localPivot = platform.doorHingePivot
+    ? B.Vector3.FromArray(platform.doorHingePivot)
+    : (hingeFrame?.localPivot?.clone() ??
+      B.Vector3.FromArray(getDefaultDoorHingePivot(min, max, hingeEdge)));
   const worldPivot = B.Vector3.TransformCoordinates(
     localPivot,
     doorMesh.getWorldMatrix(),
@@ -394,13 +410,24 @@ function configureShipDoorHinge(scene, doorMesh, platform) {
     hinge.position.copyFrom(
       B.Vector3.TransformCoordinates(worldPivot, inverseParent),
     );
+    hinge.rotationQuaternion = quaternionFromAxes(
+      B.Vector3.TransformNormal(doorAxes.x, inverseParent).normalize(),
+      B.Vector3.TransformNormal(doorAxes.y, inverseParent).normalize(),
+      B.Vector3.TransformNormal(doorAxes.z, inverseParent).normalize(),
+    );
   } else {
     hinge.position.copyFrom(worldPivot);
+    hinge.rotationQuaternion = quaternionFromAxes(
+      doorAxes.x,
+      doorAxes.y,
+      doorAxes.z,
+    );
   }
   doorMesh.setParent(hinge);
   hinge.metadata = {
     ...(hinge.metadata ?? {}),
     closedRotation: hinge.rotation.clone(),
+    closedRotationQuaternion: hinge.rotationQuaternion?.clone?.(),
   };
   return hinge;
 }
@@ -420,6 +447,149 @@ function getDefaultDoorHingePivot(min, max, edge) {
   return pivots[edge] ?? pivots.maxY;
 }
 
+function getDoorHingeFrame(doorMesh, edge, hingeAxis) {
+  const positions = doorMesh.getVerticesData(B.VertexBuffer.PositionKind);
+  if (!positions) return null;
+
+  doorMesh.computeWorldMatrix(true);
+  const bounds = doorMesh.getBoundingInfo().boundingBox;
+  const edgeConfig = getHingeEdgeConfig(edge);
+  if (!edgeConfig) return null;
+
+  const vertices = getMeshLocalVertices(positions);
+  const min = bounds.minimum;
+  const max = bounds.maximum;
+  const spans = [
+    max.x - min.x,
+    max.y - min.y,
+    max.z - min.z,
+  ];
+  const maxSpan = Math.max(...spans);
+  const boundary =
+    edgeConfig.side === "max" ? max[edgeConfig.key] : min[edgeConfig.key];
+  let edgeVertices = getVerticesNearEdge(
+    vertices,
+    edgeConfig.key,
+    boundary,
+    Math.max(maxSpan * 0.01, 0.02),
+  );
+  if (edgeVertices.length < 2) {
+    edgeVertices = getVerticesNearEdge(
+      vertices,
+      edgeConfig.key,
+      boundary,
+      Math.max(maxSpan * 0.05, 0.05),
+    );
+  }
+
+  const pair = getFarthestPointPair(edgeVertices);
+  if (!pair) return null;
+
+  const edgeAxis = pair.end.subtract(pair.start);
+  if (edgeAxis.lengthSquared() < 1e-6) return null;
+  edgeAxis.normalize();
+
+  const localPivot = pair.start.add(pair.end).scale(0.5);
+  const localCenter = new B.Vector3(
+    (min.x + max.x) * 0.5,
+    (min.y + max.y) * 0.5,
+    (min.z + max.z) * 0.5,
+  );
+  const swingAxis = getProjectedSwingAxis(
+    localCenter.subtract(localPivot),
+    edgeAxis,
+  );
+  if (!swingAxis) return null;
+
+  return {
+    localPivot,
+    localAxes: getLocalHingeAxes(hingeAxis, edgeAxis, swingAxis),
+  };
+}
+
+function getHingeEdgeConfig(edge) {
+  const match = /^(min|max)([XYZ])$/.exec(edge ?? "");
+  if (!match) return null;
+  return {
+    side: match[1],
+    key: match[2].toLowerCase(),
+  };
+}
+
+function getMeshLocalVertices(positions) {
+  const vertices = [];
+  for (let index = 0; index < positions.length; index += 3) {
+    vertices.push(new B.Vector3(
+      positions[index],
+      positions[index + 1],
+      positions[index + 2],
+    ));
+  }
+  return vertices;
+}
+
+function getVerticesNearEdge(vertices, key, boundary, tolerance) {
+  return vertices.filter(
+    (vertex) => Math.abs(vertex[key] - boundary) <= tolerance,
+  );
+}
+
+function getFarthestPointPair(vertices) {
+  let best = null;
+  let bestDistance = 0;
+  for (let startIndex = 0; startIndex < vertices.length; startIndex += 1) {
+    for (
+      let endIndex = startIndex + 1;
+      endIndex < vertices.length;
+      endIndex += 1
+    ) {
+      const distance = B.Vector3.DistanceSquared(
+        vertices[startIndex],
+        vertices[endIndex],
+      );
+      if (distance > bestDistance) {
+        bestDistance = distance;
+        best = {
+          start: vertices[startIndex],
+          end: vertices[endIndex],
+        };
+      }
+    }
+  }
+  return best;
+}
+
+function getProjectedSwingAxis(vector, hingeAxis) {
+  const swingAxis = vector.subtract(
+    hingeAxis.scale(B.Vector3.Dot(vector, hingeAxis)),
+  );
+  if (swingAxis.lengthSquared() < 1e-6) return null;
+  return swingAxis.normalize();
+}
+
+function getLocalHingeAxes(axis, edgeAxis, swingAxis) {
+  const hingeAxis = edgeAxis.clone().normalize();
+  const swing = swingAxis.clone().normalize();
+  const axisName = (axis ?? "z").toLowerCase();
+  if (axisName === "x") {
+    const x = hingeAxis;
+    const z = B.Vector3.Cross(x, swing).normalize();
+    const y = B.Vector3.Cross(z, x).normalize();
+    return { x, y, z };
+  }
+  if (axisName === "y") {
+    const y = hingeAxis;
+    const x = B.Vector3.Cross(y, swing).normalize();
+    const z = B.Vector3.Cross(x, y).normalize();
+    return { x, y, z };
+  }
+
+  const z = hingeAxis;
+  const y = B.Vector3.Cross(z, swing).normalize();
+  const x = B.Vector3.Cross(y, z).normalize();
+  return { x, y, z };
+}
+
 function configureShipDoorPassage(scene, interaction, physics, platform) {
   const doorMesh = interaction?.doorMesh;
   if (!doorMesh) return;
@@ -431,7 +601,9 @@ function configureShipDoorPassage(scene, interaction, physics, platform) {
   const padding = platform.doorPassagePadding ?? radius * 2.2;
   const verticalPadding =
     platform.doorPassageVerticalPadding ?? Math.max(radius * 4, 0.6);
-  const exteriorDepth = platform.doorExteriorDepth ?? Infinity;
+  const exteriorDepth =
+    platform.doorExteriorDepth ??
+    Math.max(radius * 6, physics.thickness ?? 0.35);
   const interiorDepth =
     platform.doorInteriorDepth ?? Math.max(radius * 4, 0.55);
   const passage = {
@@ -454,7 +626,7 @@ function configureShipDoorPassage(scene, interaction, physics, platform) {
   interaction.passage = passage;
   physics.doorPassages = [...(physics.doorPassages ?? []), passage];
   createShipDoorGlassPane(scene, interaction, frame, platform);
-  createShipDoorInteractionProxy(scene, interaction, passage);
+  createShipDoorInteractionProxy(scene, interaction, passage, platform);
 }
 
 function createShipDoorGlassPane(scene, interaction, frame, platform) {
@@ -544,16 +716,45 @@ function color3FromOption(value, fallback) {
   return B.Color3.FromArray(fallback);
 }
 
-function createShipDoorInteractionProxy(scene, interaction, passage) {
-  const parent =
-    interaction.doorMesh?.parent?.parent ?? interaction.doorMesh?.parent;
+function createShipDoorInteractionProxy(scene, interaction, passage, platform) {
+  const proxyScale = platform.doorInteractionProxyScale ?? 1;
+  const proxyWidthPadding = platform.doorInteractionProxyWidthPadding ?? 0;
+  const proxyHeightPadding = platform.doorInteractionProxyHeightPadding ?? 0;
+  const options = {
+    width: passage.halfWidth * 2 * proxyScale + proxyWidthPadding,
+    height: passage.halfHeight * 2 * proxyScale + proxyHeightPadding,
+    depth: platform.doorInteractionProxyDepth ?? 0.08,
+  };
+  interaction.closedPromptProxy = createShipDoorPromptProxy(
+    scene,
+    interaction,
+    passage,
+    interaction.doorMesh?.parent?.parent,
+    "closed",
+    options,
+  );
+  interaction.openPromptProxy = createShipDoorPromptProxy(
+    scene,
+    interaction,
+    passage,
+    interaction.doorMesh?.parent,
+    "open",
+    options,
+  );
+  updateShipDoorPromptProxies(interaction);
+}
+
+function createShipDoorPromptProxy(
+  scene,
+  interaction,
+  passage,
+  parent,
+  state,
+  options,
+) {
   const proxy = B.MeshBuilder.CreateBox(
-    `${interaction.doorMesh?.name ?? "ship-door"}-interaction-proxy`,
-    {
-      width: passage.halfWidth * 2,
-      height: passage.halfHeight * 2,
-      depth: 0.08,
-    },
+    `${interaction.doorMesh?.name ?? "ship-door"}-${state}-interaction-proxy`,
+    options,
     scene,
   );
   const material = new B.StandardMaterial(`${proxy.name}-material`, scene);
@@ -563,12 +764,13 @@ function createShipDoorInteractionProxy(scene, interaction, passage) {
   proxy.material = material;
   proxy.isPickable = true;
   proxy.checkCollisions = false;
-  proxy.visibility = 0;
   proxy.excludeFromDepthRenderer = true;
   proxy.metadata = {
     ...(proxy.metadata ?? {}),
     interaction,
+    excludeFromCollision: true,
     platformDoorInteractionProxy: true,
+    platformDoorInteractionState: state,
   };
 
   if (!parent) {
@@ -578,7 +780,7 @@ function createShipDoorInteractionProxy(scene, interaction, passage) {
       passage.up,
       passage.normal,
     );
-    return;
+    return proxy;
   }
 
   parent.computeWorldMatrix(true);
@@ -592,12 +794,49 @@ function createShipDoorInteractionProxy(scene, interaction, passage) {
     B.Vector3.TransformNormal(passage.up, inverseParent).normalize(),
     B.Vector3.TransformNormal(passage.normal, inverseParent).normalize(),
   );
+  return proxy;
+}
+
+function updateShipDoorPromptProxies(interaction) {
+  setShipDoorPromptProxyEnabled(
+    interaction.closedPromptProxy,
+    !interaction.isOpen,
+  );
+  setShipDoorPromptProxyEnabled(interaction.openPromptProxy, interaction.isOpen);
+}
+
+function setShipDoorPromptProxyEnabled(proxy, enabled) {
+  if (!proxy) return;
+  proxy.setEnabled(enabled);
+  proxy.isPickable = enabled;
 }
 
 function quaternionFromAxes(right, up, normal) {
   const matrix = B.Matrix.Identity();
   B.Matrix.FromXYZAxesToRef(right, up, normal, matrix);
   return B.Quaternion.FromRotationMatrix(matrix);
+}
+
+function getMeshWorldAxes(mesh) {
+  mesh.computeWorldMatrix(true);
+  const world = mesh.getWorldMatrix();
+  return {
+    x: B.Vector3.TransformNormal(B.Axis.X, world).normalize(),
+    y: B.Vector3.TransformNormal(B.Axis.Y, world).normalize(),
+    z: B.Vector3.TransformNormal(B.Axis.Z, world).normalize(),
+  };
+}
+
+function getDoorHingeWorldAxes(mesh, hingeFrame) {
+  if (!hingeFrame?.localAxes) return getMeshWorldAxes(mesh);
+
+  mesh.computeWorldMatrix(true);
+  const world = mesh.getWorldMatrix();
+  return {
+    x: B.Vector3.TransformNormal(hingeFrame.localAxes.x, world).normalize(),
+    y: B.Vector3.TransformNormal(hingeFrame.localAxes.y, world).normalize(),
+    z: B.Vector3.TransformNormal(hingeFrame.localAxes.z, world).normalize(),
+  };
 }
 
 function getDoorPassageFrame(doorMesh, physics) {
@@ -679,15 +918,48 @@ function getProjectionRange(points, axis) {
 function toggleShipDoor(scene, hinge, interaction, platform) {
   if (interaction.isAnimating) return false;
 
-  const closedRotation =
-    hinge.metadata?.closedRotation?.clone?.() ?? hinge.rotation.clone();
   const opening = !interaction.isOpen;
   const axis = platform.doorHingeAxis ?? "z";
   const openAngle = degreesToRadians(platform.doorOpenAngleDegrees ?? 105);
+  const closedQuaternion =
+    hinge.metadata?.closedRotationQuaternion?.clone?.() ??
+    hinge.rotationQuaternion?.clone?.();
+  if (closedQuaternion) {
+    const openQuaternion = closedQuaternion.multiply(
+      B.Quaternion.RotationAxis(getHingeAxisVector(axis), openAngle),
+    );
+    const targetQuaternion = opening ? openQuaternion : closedQuaternion;
+    if (opening) {
+      interaction.isOpen = true;
+      updateShipDoorPromptProxies(interaction);
+    }
+
+    animateShipDoorQuaternion(
+      scene,
+      hinge,
+      targetQuaternion,
+      platform.doorAnimationSeconds ?? 0.75,
+      () => {
+        if (!opening) {
+          interaction.isOpen = false;
+          updateShipDoorPromptProxies(interaction);
+        }
+        interaction.isAnimating = false;
+      },
+    );
+    interaction.isAnimating = true;
+    return true;
+  }
+
+  const closedRotation =
+    hinge.metadata?.closedRotation?.clone?.() ?? hinge.rotation.clone();
   const openRotation = closedRotation.clone();
   openRotation[axis] += openAngle;
   const targetRotation = opening ? openRotation : closedRotation;
-  if (opening) interaction.isOpen = true;
+  if (opening) {
+    interaction.isOpen = true;
+    updateShipDoorPromptProxies(interaction);
+  }
 
   animateShipDoorRotation(
     scene,
@@ -695,12 +967,60 @@ function toggleShipDoor(scene, hinge, interaction, platform) {
     targetRotation,
     platform.doorAnimationSeconds ?? 0.75,
     () => {
-      if (!opening) interaction.isOpen = false;
+      if (!opening) {
+        interaction.isOpen = false;
+        updateShipDoorPromptProxies(interaction);
+      }
       interaction.isAnimating = false;
     },
   );
   interaction.isAnimating = true;
   return true;
+}
+
+function getHingeAxisVector(axis) {
+  const axes = {
+    x: B.Axis.X,
+    y: B.Axis.Y,
+    z: B.Axis.Z,
+  };
+  return axes[axis] ?? B.Axis.Z;
+}
+
+function animateShipDoorQuaternion(
+  scene,
+  hinge,
+  targetQuaternion,
+  duration,
+  onDone,
+) {
+  if (!hinge.rotationQuaternion) {
+    hinge.rotationQuaternion = B.Quaternion.FromEulerVector(hinge.rotation);
+  }
+
+  const startQuaternion = hinge.rotationQuaternion.clone();
+  const secondsTotal = Math.max(duration, 0.01);
+  let elapsed = 0;
+
+  const observer = scene.onBeforeRenderObservable.add(() => {
+    const seconds = Math.min(scene.getEngine().getDeltaTime() / 1000, 0.05);
+    elapsed += seconds;
+    const amount = easeInOutCubic(Math.min(elapsed / secondsTotal, 1));
+    B.Quaternion.SlerpToRef(
+      startQuaternion,
+      targetQuaternion,
+      amount,
+      hinge.rotationQuaternion,
+    );
+    hinge.computeWorldMatrix(true);
+
+    if (elapsed >= secondsTotal) {
+      hinge.rotationQuaternion.copyFrom(targetQuaternion);
+      hinge.computeWorldMatrix(true);
+      scene.onBeforeRenderObservable.remove(observer);
+      onDone?.();
+    }
+  });
 }
 
 function animateShipDoorRotation(scene, hinge, targetRotation, duration, onDone) {
@@ -887,7 +1207,6 @@ function createHelmetHook(
   knob.position.copyFrom(hookTip);
 
   const hookMesh = mergeHookParts(scene, root, [base, tube, knob], material);
-  createHookRopeBundle(scene, root, hook, hookLength, pegRadius);
 
   const mountPoint = new B.TransformNode(`${root.name}-mount-point`, scene);
   mountPoint.parent = platformRoot;
@@ -943,245 +1262,6 @@ function createHookTubePath(length, lipHeight) {
     new B.Vector3(0, lipHeight * 0.46, -length),
     new B.Vector3(0, lipHeight, -length),
   ];
-}
-
-function createHookRopeBundle(scene, root, hook, hookLength, pegRadius) {
-  const rope = {
-    enabled: true,
-    loops: 3,
-    loopRadiusX: 0.102,
-    loopRadiusY: 0.145,
-    tubeRadius: 0.0105,
-    strandCount: 2,
-    strandRadius: 0.00125,
-    ...(hook.rope ?? {}),
-  };
-  if (rope.enabled === false) return null;
-
-  const rootNode = new B.TransformNode(`${root.name}-rope-bundle`, scene);
-  rootNode.parent = root;
-
-  const material = createRopeMaterial(scene, root.name, rope);
-  const strandMaterial = createRopeStrandMaterial(scene, root.name, rope);
-  const loopCount = Math.max(1, Math.round(rope.loops));
-  const ropeDepth = -(rope.depth ?? Math.min(hookLength * 0.58, 0.135));
-  const centerY = rope.centerY ?? -0.05;
-  const baseRadiusX = rope.loopRadiusX;
-  const baseRadiusY = rope.loopRadiusY;
-
-  for (let loop = 0; loop < loopCount; loop += 1) {
-    const loopT = loopCount === 1 ? 0 : loop / (loopCount - 1);
-    const xOffset = (loopT - 0.5) * (rope.bundleWidth ?? 0.034);
-    const zOffset = (loopT - 0.5) * (rope.bundleDepth ?? 0.036);
-    const path = createRopeLoopPath({
-      centerX: xOffset,
-      centerY: centerY - loop * 0.004,
-      centerZ: ropeDepth + zOffset,
-      radiusX: baseRadiusX * (1 - loop * 0.035),
-      radiusY: baseRadiusY * (1 - loop * 0.025),
-      points: 72,
-      wobble: 0.004 + loop * 0.001,
-      seed: loop * 1.73,
-    });
-
-    const core = B.MeshBuilder.CreateTube(
-      `${root.name}-rope-loop-${loop + 1}`,
-      {
-        path,
-        radius: rope.tubeRadius,
-        tessellation: 12,
-        cap: B.Mesh.CAP_ALL,
-      },
-      scene,
-    );
-    core.parent = rootNode;
-    core.material = material;
-    core.receiveShadows = true;
-    core.isPickable = false;
-
-    for (let strand = 0; strand < rope.strandCount; strand += 1) {
-      const strandPath = createRopeStrandPath(
-        path,
-        new B.Vector3(xOffset, centerY - loop * 0.004, ropeDepth + zOffset),
-        rope.tubeRadius * 1.06,
-        strand,
-        rope,
-      );
-      const strandMesh = B.MeshBuilder.CreateTube(
-        `${root.name}-rope-strand-${loop + 1}-${strand + 1}`,
-        {
-          path: strandPath,
-          radius: rope.strandRadius,
-          tessellation: 5,
-          cap: B.Mesh.CAP_ALL,
-        },
-        scene,
-      );
-      strandMesh.parent = rootNode;
-      strandMesh.material = strandMaterial;
-      strandMesh.receiveShadows = true;
-      strandMesh.isPickable = false;
-    }
-  }
-
-  const neckPath = [
-    new B.Vector3(0, 0.012, -Math.max(pegRadius * 2.2, 0.038)),
-    new B.Vector3(0, -0.006, ropeDepth + 0.02),
-    new B.Vector3(0, centerY + baseRadiusY * 0.84, ropeDepth),
-  ];
-  const neck = B.MeshBuilder.CreateTube(
-    `${root.name}-rope-over-hook`,
-    {
-      path: neckPath,
-      radius: rope.tubeRadius * 0.96,
-      tessellation: 12,
-      cap: B.Mesh.CAP_ALL,
-    },
-    scene,
-  );
-  neck.parent = rootNode;
-  neck.material = material;
-  neck.receiveShadows = true;
-  neck.isPickable = false;
-
-  return rootNode;
-}
-
-function createRopeLoopPath({
-  centerX,
-  centerY,
-  centerZ,
-  radiusX,
-  radiusY,
-  points,
-  wobble,
-  seed,
-}) {
-  const path = [];
-  for (let index = 0; index <= points; index += 1) {
-    const t = (index / points) * Math.PI * 2;
-    const fiberWobble =
-      Math.sin(t * 5 + seed) * wobble +
-      Math.sin(t * 11 + seed * 0.7) * wobble * 0.45;
-    path.push(
-      new B.Vector3(
-        centerX + Math.cos(t) * (radiusX + fiberWobble),
-        centerY + Math.sin(t) * (radiusY + fiberWobble * 0.65),
-        centerZ + Math.sin(t * 2 + seed) * wobble * 0.6,
-      ),
-    );
-  }
-  return path;
-}
-
-function createRopeStrandPath(path, center, radius, strandIndex, rope) {
-  const strandPath = [];
-  const strandCount = Math.max(1, rope.strandCount ?? 2);
-  const twistCount = rope.twistCount ?? 0;
-  const phase = (strandIndex / strandCount) * Math.PI * 2;
-  const zAxis = new B.Vector3(0, 0, 1);
-
-  for (let index = 0; index < path.length; index += 1) {
-    const point = path[index];
-    const radial = point.subtract(center);
-    radial.z = 0;
-    if (radial.lengthSquared() < 0.000001) {
-      radial.set(1, 0, 0);
-    } else {
-      radial.normalize();
-    }
-
-    const t = index / Math.max(path.length - 1, 1);
-    const twist = t * Math.PI * 2 * twistCount + phase;
-    strandPath.push(
-      point
-        .add(radial.scale(Math.cos(twist) * radius))
-        .add(zAxis.scale(Math.sin(twist) * radius)),
-    );
-  }
-
-  return strandPath;
-}
-
-function createRopeMaterial(scene, name, rope) {
-  const material = new B.PBRMaterial(`${name}-tether-fabric-material`, scene);
-  material.albedoColor = B.Color3.FromArray(rope.color ?? [1.0, 0.74, 0.12]);
-  material.albedoTexture = createTetherFabricTexture(
-    scene,
-    `${name}-yellow-tether-weave`,
-  );
-  material.metallic = 0;
-  material.roughness = rope.roughness ?? 0.88;
-  material.environmentIntensity = rope.environmentIntensity ?? 0.5;
-  material.directIntensity = rope.directIntensity ?? 0.82;
-  material.backFaceCulling = true;
-  return material;
-}
-
-function createRopeStrandMaterial(scene, name, rope) {
-  const material = new B.StandardMaterial(
-    `${name}-tether-seam-material`,
-    scene,
-  );
-  material.diffuseColor = B.Color3.FromArray(
-    rope.strandColor ?? [0.28, 0.2, 0.06],
-  );
-  material.specularColor = new B.Color3(0.04, 0.035, 0.025);
-  material.specularPower = 5;
-  return material;
-}
-
-function createTetherFabricTexture(scene, name) {
-  const texture = new B.DynamicTexture(
-    name,
-    { width: 192, height: 48 },
-    scene,
-    false,
-  );
-  const context = texture.getContext();
-  context.fillStyle = "#f3b51c";
-  context.fillRect(0, 0, 192, 48);
-
-  for (let y = 0; y < 48; y += 2) {
-    const light = 18 + Math.sin(y * 0.55) * 8;
-    context.fillStyle = `rgba(${255}, ${196 + light}, ${48 + light * 0.32}, 0.32)`;
-    context.fillRect(0, y, 192, 1);
-  }
-
-  for (let x = 0; x < 192; x += 6) {
-    context.fillStyle = "rgba(255, 238, 152, 0.18)";
-    context.fillRect(x, 0, 2, 48);
-  }
-
-  for (let x = -48; x < 240; x += 12) {
-    context.strokeStyle = "rgba(255, 238, 150, 0.38)";
-    context.lineWidth = 1;
-    context.beginPath();
-    context.moveTo(x, 48);
-    context.lineTo(x + 58, 0);
-    context.stroke();
-  }
-
-  context.fillStyle = "rgba(64, 44, 12, 0.78)";
-  context.fillRect(0, 5, 192, 2);
-  context.fillRect(0, 41, 192, 2);
-  context.strokeStyle = "rgba(255, 232, 130, 0.6)";
-  context.setLineDash([4, 5]);
-  for (const y of [9, 37]) {
-    context.beginPath();
-    context.moveTo(0, y);
-    context.lineTo(192, y);
-    context.stroke();
-  }
-  context.setLineDash([]);
-
-  texture.update(false);
-  texture.uScale = 5.5;
-  texture.vScale = 1.0;
-  texture.wrapU = B.Texture.WRAP_ADDRESSMODE;
-  texture.wrapV = B.Texture.WRAP_ADDRESSMODE;
-  texture.anisotropicFilteringLevel = 4;
-  return texture;
 }
 
 function mergeHookParts(scene, root, parts, material) {
@@ -1441,9 +1521,12 @@ async function loadFloorProp(scene, platformRoot, prop, physics) {
     for (const mesh of meshes) {
       mesh.computeWorldMatrix(true);
       mesh.isPickable = true;
+      mesh.checkCollisions = false;
       mesh.receiveShadows = true;
       mesh.metadata = {
         ...(mesh.metadata ?? {}),
+        excludeFromBounds: false,
+        excludeFromCollision: true,
         glbPickupLabel: prop.label ?? prop.id ?? "Item",
         glbPickupRange: prop.pickupRange ?? 1.65,
         glbPickupRoot: propRoot,
@@ -1451,6 +1534,7 @@ async function loadFloorProp(scene, platformRoot, prop, physics) {
       };
       mesh.showBoundingBox = Boolean(scene.metadata?.objectBoundsVisible);
     }
+    addPolySurfaceHolograms(propRoot, scene);
 
     const bounds = getMeshBounds(getRenderableMeshes(propRoot));
     propRoot.position.y +=
@@ -1606,6 +1690,7 @@ function normalizeModel(root, maxDimension) {
   for (const mesh of meshes) {
     mesh.computeWorldMatrix(true);
     mesh.isPickable = !mesh.metadata?.glassThicknessShell;
+    mesh.checkCollisions = false;
   }
 }
 
@@ -1623,12 +1708,19 @@ function updatePhysicsFromShip(root, physics, platform) {
   const min = interior?.min ?? bounds.min;
   const max = interior?.max ?? bounds.max;
   const interiorSize = max.subtract(min);
-  const floorY = min.y;
+  const floorY = resolveWalkableFloorY(meshes, { min, max }, platform) ?? min.y;
   const ceilingY = max.y;
-  const playerHeight = 1.0;
+  const headroom = Math.max(ceilingY - floorY, 0.001);
   const radius = Math.max(
     Math.min(interiorSize.x, interiorSize.z) * 0.08,
     0.05,
+  );
+  const playerHeight = Math.max(
+    radius * 2,
+    Math.min(
+      platform.playerHeight ?? 1.0,
+      headroom * (platform.playerHeightScale ?? 0.82),
+    ),
   );
 
   physics.width = interiorSize.x;
@@ -1642,9 +1734,8 @@ function updatePhysicsFromShip(root, physics, platform) {
   physics.playerHeight = playerHeight;
   physics.eyeHeight = floorY + playerHeight;
   physics.radius = radius;
-  physics.collisionMeshes = meshes.filter(
-    (mesh) => !mesh.metadata?.glassThicknessShell,
-  );
+  physics.bounds = bounds;
+  physics.interiorBounds = { min: min.clone(), max: max.clone() };
 }
 
 function getSavedPhysicsBounds(platform) {
@@ -1654,6 +1745,112 @@ function getSavedPhysicsBounds(platform) {
     min: B.Vector3.FromArray(saved.min),
     max: B.Vector3.FromArray(saved.max),
   };
+}
+
+function getSavedPhysicsFloorY(platform) {
+  const value = platform.physicsFloorY ?? platform.floorY;
+  return Number.isFinite(value) ? value : null;
+}
+
+function resolveWalkableFloorY(meshes, interior, platform) {
+  const saved = getSavedPhysicsFloorY(platform);
+  if (saved !== null) return saved;
+
+  return findWalkableFloorSurfaceY(meshes, interior, platform);
+}
+
+function findWalkableFloorSurfaceY(meshes, interior, platform) {
+  const spanY = interior.max.y - interior.min.y;
+  if (spanY <= 0) return null;
+
+  const minX = interior.min.x;
+  const maxX = interior.max.x;
+  const minZ = interior.min.z;
+  const maxZ = interior.max.z;
+  const footprintArea = Math.max((maxX - minX) * (maxZ - minZ), 0.0001);
+  const binSize = platform.floorSurfaceBinSize ?? 0.025;
+  const normalThreshold = platform.floorSurfaceNormalThreshold ?? 0.82;
+  const maxFloorY =
+    platform.floorSurfaceMaxY ??
+    interior.min.y + spanY * (platform.floorSurfaceMaxHeightFraction ?? 0.96);
+  const bins = new Map();
+
+  for (const mesh of meshes) {
+    if (mesh.metadata?.glassThicknessShell) continue;
+
+    const positions = mesh.getVerticesData(B.VertexBuffer.PositionKind);
+    if (!positions) continue;
+
+    const indices = mesh.getIndices();
+    mesh.computeWorldMatrix(true);
+    const world = mesh.getWorldMatrix();
+    const triangleCount = indices ? indices.length / 3 : positions.length / 9;
+
+    for (let triangle = 0; triangle < triangleCount; triangle += 1) {
+      const vertexIndexes = indices
+        ? [
+            indices[triangle * 3],
+            indices[triangle * 3 + 1],
+            indices[triangle * 3 + 2],
+          ]
+        : [triangle * 3, triangle * 3 + 1, triangle * 3 + 2];
+      const a = transformedVertex(positions, vertexIndexes[0], world);
+      const b = transformedVertex(positions, vertexIndexes[1], world);
+      const c = transformedVertex(positions, vertexIndexes[2], world);
+      const centroid = a.add(b).addInPlace(c).scaleInPlace(1 / 3);
+      if (
+        centroid.x < minX ||
+        centroid.x > maxX ||
+        centroid.z < minZ ||
+        centroid.z > maxZ ||
+        centroid.y < interior.min.y ||
+        centroid.y > maxFloorY
+      ) {
+        continue;
+      }
+
+      const normal = B.Vector3.Cross(b.subtract(a), c.subtract(a));
+      const area = normal.length() * 0.5;
+      if (area <= 0.000001) continue;
+      normal.scaleInPlace(1 / (area * 2));
+      if (Math.abs(normal.y) < normalThreshold) continue;
+
+      const key = Math.round(centroid.y / binSize);
+      const bin = bins.get(key) ?? {
+        weightedY: 0,
+        area: 0,
+        minY: Infinity,
+        maxY: -Infinity,
+      };
+      bin.weightedY += centroid.y * area;
+      bin.area += area;
+      bin.minY = Math.min(bin.minY, centroid.y);
+      bin.maxY = Math.max(bin.maxY, centroid.y);
+      bins.set(key, bin);
+    }
+  }
+
+  if (!bins.size) return null;
+
+  const candidates = [...bins.values()]
+    .map((bin) => ({
+      y: bin.weightedY / bin.area,
+      area: bin.area,
+    }))
+    .filter((candidate) => Number.isFinite(candidate.y));
+  if (!candidates.length) return null;
+
+  const largestArea = Math.max(...candidates.map((candidate) => candidate.area));
+  const minimumArea = Math.max(
+    footprintArea * (platform.floorSurfaceMinFootprintFraction ?? 0.002),
+    largestArea * (platform.floorSurfaceMinAreaFraction ?? 0.18),
+  );
+  const viable = candidates
+    .filter((candidate) => candidate.area >= minimumArea)
+    .sort((a, b) => a.y - b.y);
+  if (!viable.length) return null;
+
+  return viable[viable.length - 1].y;
 }
 
 function createBrownDwarfWindowShadows(scene, result, platform, primary) {
@@ -1696,13 +1893,13 @@ function getPrimaryLight(scene, primary) {
   );
 }
 
-function forceOpaqueShipMaterials(result, platform) {
+function forceOpaqueShipMaterials(result) {
   const materials = [
     ...new Set(result.meshes.map((mesh) => mesh.material).filter(Boolean)),
   ];
 
   for (const material of materials) {
-    if (platform.transparentGlass && isGlassMaterial(material)) {
+    if (isGlassMaterial(material)) {
       continue;
     }
 
@@ -1763,7 +1960,11 @@ function getRenderableMeshes(root) {
 }
 
 function isRenderableMesh(mesh) {
-  return mesh.isEnabled() && mesh.getTotalVertices() > 0;
+  return (
+    mesh.isEnabled() &&
+    mesh.getTotalVertices() > 0 &&
+    !isPolySurfaceHologram(mesh)
+  );
 }
 
 function getMeshBounds(meshes) {
