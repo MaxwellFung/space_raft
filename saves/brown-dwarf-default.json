@@ -2,21 +2,51 @@
   "id": "brown-dwarf-default",
   "level": "brown_dwarf",
   "spawn": {
-    "position": [0, 0, -240],
-    "target": [78, 14, 12]
+    "position": [
+      0,
+      0,
+      -240
+    ],
+    "target": [
+      78,
+      14,
+      12
+    ]
   },
   "objects": {
     "central_brown_dwarf": {
-      "position": [0, 0, 0],
-      "rotationDegrees": [0, 0, 0],
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotationDegrees": [
+        0,
+        0,
+        0
+      ],
       "scale": 70
     }
   },
   "debrisField": {
-    "position": [0, 0, 0],
-    "rotationDegrees": [4.58, -20.05, 6.88],
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotationDegrees": [
+      4.58,
+      -20.05,
+      6.88
+    ],
     "nearFragmentCount": 720,
     "maxActiveRocks": 520,
+    "fabricatorSizedFragmentFraction": 0.5,
+    "fabricatorSizedFragmentSizeMeters": [
+      0.55,
+      1.85
+    ],
+    "fabricatorMaxAsteroidRadius": 0.11,
     "rockRenderDistance": 240,
     "rockStableDistance": 132,
     "rockFadeStart": 172,
@@ -25,7 +55,10 @@
     "rockClumpRadius": 14,
     "rockClumpDistance": 108,
     "interceptClumpCount": 7,
-    "interceptClumpDistance": [6, 94],
+    "interceptClumpDistance": [
+      6,
+      94
+    ],
     "shipGraceRadius": 2.2,
     "protectedSpawnRadius": 2.2,
     "initialRockGraceRadius": 2.2,
@@ -36,13 +69,25 @@
     "modelUrl": "./assets/ship_col.glb",
     "modelMaxSize": 2.145,
     "physicsBoundsMode": "model",
-    "playerSpawnMode": "underShip",
-    "playerSpawnClearance": 0.55,
-    "modelRotationDegrees": [0, 180, 0],
+    "playerSpawnMode": "inside",
+    "initialCameraPosition": [
+      0,
+      0.75,
+      0
+    ],
+    "modelRotationDegrees": [
+      0,
+      0,
+      0
+    ],
     "eyeHeightOffset": 0.12,
     "doorCompanionMeshNames": [],
-    "doorCollisionMeshNames": ["COL_door"],
-    "ignoredCollisionMeshNames": ["COL_front"],
+    "doorCollisionMeshNames": [
+      "COL_door"
+    ],
+    "ignoredCollisionMeshNames": [
+      "COL_front"
+    ],
     "windowShadowMapSize": 2048,
     "windowShadowBias": 0.00025,
     "windowShadowNormalBias": 0.006,
@@ -53,18 +98,34 @@
       "fixed": false,
       "radiusKm": 1200000,
       "renderRadius": 360,
-      "radialDirection": [1, 0, 0],
-      "normalDirection": [0, 1, 0],
+      "radialDirection": [
+        1,
+        0,
+        0
+      ],
+      "normalDirection": [
+        0,
+        1,
+        0
+      ],
       "phaseDegrees": 0,
       "rollDegrees": 90,
       "lockOrientation": true,
       "floorUp": "radial",
       "forward": "prograde",
       "showGuide": false,
-      "guideColor": [1, 0.88, 0.05],
+      "guideColor": [
+        1,
+        0.88,
+        0.05
+      ],
       "guideAlpha": 0.95
     },
-    "initialCameraRotationDegrees": [32.566, 183.247, 0]
+    "initialCameraRotationDegrees": [
+      32.566,
+      183.247,
+      0
+    ]
   },
   "path": "./saves/brown-dwarf-default.json",
   "world": {
@@ -73,12 +134,29 @@
       "timeScale": 1
     },
     "player": {
-      "rotationDegrees": [17.613, 191.543, 0],
+      "position": [
+        -0.272,
+        0.1454,
+        0.077
+      ],
+      "rotationDegrees": [
+        41.781,
+        92.607,
+        0
+      ],
       "flyMode": false,
       "zeroGravityMode": true,
-      "zeroGravityVelocity": [0, 0, 0],
+      "zeroGravityVelocity": [
+        0.0114,
+        0,
+        0.0103
+      ],
       "thirdPersonMode": false,
-      "selectedHotbarIndex": 7
+      "selectedHotbarIndex": 0
+    },
+    "lifeSupport": {
+      "cabinPressureAtm": 0.3,
+      "helmetOxygenSeconds": 300
     },
     "inventory": [
       null,
@@ -102,17 +180,113 @@
       null,
       null
     ],
-    "hotbar": [null, null, null, null, null, null, null, null, null, null],
+    "hotbar": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
     "pickups": {
       "collectedIds": []
     },
-    "placedItems": [],
+    "placedItems": [
+      {
+        "item": {
+          "id": "battery",
+          "name": "Battery",
+          "count": 1,
+          "icon": "B",
+          "swatch": "#f0c65a",
+          "modelUrl": "./assets/battery.glb",
+          "maxSize": 0.22
+        },
+        "position": [
+          0.3208,
+          -0.42,
+          0.5
+        ],
+        "rotationDegrees": [
+          0,
+          180,
+          0
+        ]
+      },
+      {
+        "item": {
+          "id": "fabricator",
+          "name": "Fabricator",
+          "count": 1,
+          "icon": "F",
+          "swatch": "#7ea0a8",
+          "modelUrl": "./assets/fabricator.glb",
+          "maxSize": 0.44,
+          "placementSurface": "wall",
+          "wallGap": 0.004,
+          "wallRotationDegrees": [
+            0,
+            90,
+            0
+          ]
+        },
+        "position": [
+          0.3208,
+          -0.1735,
+          0.3226
+        ],
+        "rotationDegrees": [
+          0,
+          180,
+          0
+        ]
+      },
+      {
+        "item": {
+          "id": "fab_bucket",
+          "name": "Fabricator Bucket",
+          "count": 1,
+          "icon": "U",
+          "swatch": "#9aa7a4",
+          "modelUrl": "./assets/fab_bucket.glb",
+          "maxSize": 0.2
+        },
+        "position": [
+          0.3681,
+          -0.4666,
+          0.0535
+        ],
+        "rotationDegrees": [
+          0,
+          0,
+          0
+        ]
+      }
+    ],
+    "asteroids": {
+      "dropped": []
+    },
     "helmet": {
       "equipped": null,
-      "mountedItem": null
+      "mountedItem": {
+        "id": "astronaut_helmet",
+        "name": "Astronaut Helmet",
+        "icon": "H",
+        "swatch": "#d8e4ea",
+        "modelUrl": "./assets/astronaut_helmet.glb",
+        "maxSize": 0.34
+      }
     },
     "tether": {
-      "attached": false
+      "attached": false,
+      "activeLength": null,
+      "deployedLength": null,
+      "maxLength": null,
+      "particles": null
     }
   }
 }

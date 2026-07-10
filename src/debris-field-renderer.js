@@ -22,6 +22,18 @@ function createRockField(scene, field) {
 
   const fragmentSizes = field.fragmentSizeMeters ?? [0.5, 3];
   const metersPerWorldUnit = field.metersPerWorldUnit ?? 8;
+  const fabricatorSizedFragmentFraction = clamp01(
+    field.fabricatorSizedFragmentFraction ?? 0,
+  );
+  const fabricatorMaxAsteroidRadius = field.fabricatorMaxAsteroidRadius ?? 0.11;
+  const fabricatorMaxSizeMeters =
+    (fabricatorMaxAsteroidRadius * metersPerWorldUnit * 3.5) / 1.55;
+  const fabricatorFragmentSizes =
+    field.fabricatorSizedFragmentSizeMeters ??
+    [
+      Math.max(0.35, fabricatorMaxSizeMeters * 0.28),
+      Math.max(0.36, fabricatorMaxSizeMeters * 0.92),
+    ];
   const runtimeSeed = field.randomizeRocks === false
     ? "fixed"
     : createRuntimeSeed();
@@ -197,7 +209,7 @@ function createRockField(scene, field) {
         }
       }
 
-      const size = lerp(fragmentSizes[0], fragmentSizes[1], random() ** 2);
+      const size = selectRockSize(random);
       const rockRadius = size / metersPerWorldUnit / 3.5;
       if (isInsideProtectedSpawn(local, rockRadius)) {
         continue;
@@ -209,7 +221,7 @@ function createRockField(scene, field) {
 
   function pushRock(local, sizeMeters, random, options = {}) {
     const rockRadius = baseRockRadius(sizeMeters);
-    const composition = createAsteroidComposition(random);
+    const composition = createAsteroidComposition(random, sizeMeters, fragmentSizes);
     const color = createAsteroidCompositionColor(composition, random);
     rocks.push({
       material: options.material ?? groups.pick(random),
@@ -240,6 +252,26 @@ function createRockField(scene, field) {
       densityPhase: Math.floor(random() * densityUpdateInterval),
       cachedDensity: options.ignoreDensity ? 1 : undefined,
     });
+  }
+
+  function selectRockSize(random) {
+    if (random() < fabricatorSizedFragmentFraction) {
+      const minSize = Math.min(
+        fabricatorFragmentSizes[0] ?? 0.35,
+        fabricatorMaxSizeMeters * 0.92,
+      );
+      const maxSize = Math.min(
+        fabricatorFragmentSizes[1] ?? fabricatorMaxSizeMeters * 0.92,
+        fabricatorMaxSizeMeters * 0.98,
+      );
+      return lerp(
+        Math.max(0.1, minSize),
+        Math.max(0.11, maxSize),
+        random() ** 1.2,
+      );
+    }
+
+    return lerp(fragmentSizes[0], fragmentSizes[1], random() ** 2);
   }
 
   function baseRockRadius(sizeMeters) {
@@ -957,34 +989,75 @@ function createFragmentLight(scene, field, occluder, rocks) {
   return light;
 }
 
-function createAsteroidComposition(random) {
-  const iron = random() ** 1.08 + 0.04;
-  const copper = random() ** 1.18 + 0.04;
-  const water = random() ** 1.12 + 0.04;
-  const total = iron + copper + water;
+function createAsteroidComposition(random, sizeMeters, fragmentSizes) {
+  const [minSize = 0.5, maxSize = 3] = fragmentSizes ?? [];
+  const sizeRange = Math.max(maxSize - minSize, 0.0001);
+  const sizeT = clamp01((sizeMeters - minSize) / sizeRange);
+  const targetTotal = Math.max(1, Math.min(30, Math.round(lerp(2, 30, sizeT))));
+  const weights = [
+    random() ** 1.08 + 0.04,
+    random() ** 1.18 + 0.04,
+    random() ** 1.12 + 0.04,
+  ];
+  const values = [0, 0, 0];
+
+  for (let unit = 0; unit < targetTotal; unit += 1) {
+    const availableWeight = weights.reduce(
+      (sum, weight, index) => sum + (values[index] < 10 ? weight : 0),
+      0,
+    );
+    if (availableWeight <= 0) break;
+
+    let cursor = random() * availableWeight;
+    for (let index = 0; index < values.length; index += 1) {
+      if (values[index] >= 10) continue;
+      cursor -= weights[index];
+      if (cursor <= 0) {
+        values[index] += 1;
+        break;
+      }
+    }
+  }
+
   return {
-    iron: iron / total,
-    copper: copper / total,
-    water: water / total,
+    iron: values[0],
+    copper: values[1],
+    water: values[2],
   };
 }
 
 function createAsteroidCompositionColor(composition, random) {
+  const normalized = normalizeAsteroidComposition(composition);
   const darkBasalt = [0.36, 0.34, 0.3];
   const brightOrange = [1.32, 0.58, 0.2];
   const moonRegolith = [0.84, 0.82, 0.76];
   const shade = lerp(0.94, 1.06, random());
   return [
-    (darkBasalt[0] * composition.iron +
-      brightOrange[0] * composition.copper +
-      moonRegolith[0] * composition.water) * shade,
-    (darkBasalt[1] * composition.iron +
-      brightOrange[1] * composition.copper +
-      moonRegolith[1] * composition.water) * shade,
-    (darkBasalt[2] * composition.iron +
-      brightOrange[2] * composition.copper +
-      moonRegolith[2] * composition.water) * shade,
+    (darkBasalt[0] * normalized.iron +
+      brightOrange[0] * normalized.copper +
+      moonRegolith[0] * normalized.water) * shade,
+    (darkBasalt[1] * normalized.iron +
+      brightOrange[1] * normalized.copper +
+      moonRegolith[1] * normalized.water) * shade,
+    (darkBasalt[2] * normalized.iron +
+      brightOrange[2] * normalized.copper +
+      moonRegolith[2] * normalized.water) * shade,
   ];
+}
+
+function normalizeAsteroidComposition(composition) {
+  const iron = Math.max(0, Number(composition?.iron) || 0);
+  const copper = Math.max(0, Number(composition?.copper) || 0);
+  const water = Math.max(0, Number(composition?.water) || 0);
+  const total = iron + copper + water;
+  if (total <= 0) {
+    return { iron: 1 / 3, copper: 1 / 3, water: 1 / 3 };
+  }
+  return {
+    iron: iron / total,
+    copper: copper / total,
+    water: water / total,
+  };
 }
 
 function pushInstance(

@@ -76,6 +76,7 @@
       }
 
       body.menu-open .hud,
+      body.menu-open .vitals,
       body.menu-open .metrics,
       body.menu-open .crosshair,
       body.menu-open .quick-access {
@@ -260,6 +261,60 @@
         accent-color: #ffe04f;
       }
 
+      .hud-meter {
+        display: inline-grid;
+        grid-template-columns: auto 62px;
+        gap: 7px;
+        align-items: center;
+        min-width: 134px;
+      }
+
+      .hud-meter-track {
+        --meter-value: 100%;
+        position: relative;
+        width: 62px;
+        height: 7px;
+        overflow: hidden;
+        border: 1px solid rgba(170, 205, 255, 0.2);
+        border-radius: 999px;
+        background: rgba(1, 4, 11, 0.86);
+      }
+
+      .hud-meter-track::before,
+      .hud-meter-fill {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: var(--meter-value);
+        border-radius: inherit;
+        background: linear-gradient(90deg, #5ed7ff, #f6e36c);
+        content: "";
+      }
+
+      .hud-meter-fill {
+        width: 100%;
+      }
+
+      .hud-meter.oxygen .hud-meter-fill {
+        background: linear-gradient(90deg, #58f7a1, #f6e36c);
+      }
+
+      .hud-meter.oxygen .hud-meter-track::before {
+        display: none;
+      }
+
+      .hud-meter.air-pressure .hud-meter-fill {
+        display: none;
+      }
+
+      .hud-meter-track.empty .hud-meter-fill {
+        background: #cc3434;
+      }
+
+      .hud-meter-text {
+        min-width: 58px;
+        white-space: nowrap;
+      }
+
       .hud-slider-value {
         color: #ffe1a8;
         font-variant-numeric: tabular-nums;
@@ -269,6 +324,37 @@
       .hud button[aria-pressed="true"] {
         border-color: rgba(255, 184, 84, 0.6);
         color: #ffe1a8;
+      }
+
+      .vitals {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        display: grid;
+        gap: 8px;
+        color: rgba(238, 245, 255, 0.82);
+        font-size: 13px;
+        pointer-events: none;
+        user-select: none;
+        z-index: 4;
+      }
+
+      .vitals::before {
+        color: rgba(255, 225, 168, 0.72);
+        content: "VITALS";
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+      }
+
+      .hud-meter {
+        border: 1px solid rgba(170, 205, 255, 0.18);
+        border-radius: 6px;
+        background: rgba(2, 7, 18, 0.64);
+        color: inherit;
+        font: inherit;
+        padding: 7px 8px;
+        backdrop-filter: blur(12px);
       }
 
       .metrics {
@@ -559,11 +645,268 @@
         padding: 4px;
       }
 
+      .fabricator-modal {
+        width: min(430px, calc(100vw - 32px));
+      }
+
+      .fabricator-panel {
+        display: grid;
+        gap: 6px;
+        padding: 6px;
+      }
+
+      .fabricator-title {
+        margin: 0;
+        border: 2px solid var(--metal-edge-dark);
+        border-radius: 3px;
+        background: var(--metal-inset);
+        color: var(--metal-text);
+        box-shadow:
+          inset 2px 2px 0 rgba(4, 6, 10, 0.48),
+          inset -1px -1px 0 rgba(255, 228, 156, 0.18);
+        font-size: 18px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+        line-height: 1;
+        padding: 14px 16px 12px;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      .fabricator-analysis {
+        display: grid;
+        gap: 4px;
+        border: 2px solid var(--metal-edge-dark);
+        border-radius: 3px;
+        background: var(--metal-slot);
+        box-shadow:
+          inset 2px 2px 0 rgba(4, 6, 10, 0.58),
+          inset -1px -1px 0 rgba(255, 228, 156, 0.16);
+        color: var(--metal-text);
+        padding: 10px;
+      }
+
+      .fabricator-status {
+        color: var(--metal-muted);
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .fabricator-yield {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 4px;
+      }
+
+      .fabricator-yield-item {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+        border: 1px solid rgba(216, 180, 92, 0.38);
+        border-radius: 2px;
+        background: rgba(3, 7, 12, 0.38);
+        padding: 8px 6px;
+        text-align: center;
+      }
+
+      .fabricator-yield-item strong {
+        font-size: 10px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .fabricator-yield-item span {
+        color: #fff1bd;
+        font-size: 22px;
+        font-weight: 900;
+        line-height: 1;
+      }
+
+      .fabricator-disassemble {
+        width: 100%;
+        min-height: 138px;
+        border: 2px solid var(--metal-edge);
+        border-radius: 3px;
+        background: var(--metal-active);
+        color: var(--metal-text);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 247, 205, 0.42),
+          inset 0 -3px 0 rgba(19, 17, 15, 0.36),
+          inset 0 0 22px rgba(255, 219, 128, 0.12);
+        cursor: pointer;
+        font: inherit;
+        font-size: 24px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .fabricator-disassemble:hover,
+      .fabricator-disassemble:focus-visible {
+        outline: none;
+        background: var(--metal-hover);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 247, 205, 0.46),
+          inset 0 -3px 0 rgba(19, 17, 15, 0.34),
+          0 0 0 1px rgba(216, 180, 92, 0.38),
+          0 0 18px rgba(255, 190, 93, 0.18);
+      }
+
+      .fabricator-disassemble:disabled {
+        cursor: default;
+        filter: grayscale(0.65) brightness(0.66);
+        opacity: 0.62;
+      }
+
+      .fabricator-disassemble.activated {
+        animation: fabricator-press 220ms ease-out;
+      }
+
+      .hatch-warning-modal {
+        display: grid;
+        gap: 8px;
+        width: min(430px, calc(100vw - 32px));
+        border: 2px solid var(--metal-edge);
+        border-radius: 4px;
+        background: var(--metal-panel);
+        color: #17130b;
+        padding: 8px;
+      }
+
+      .hatch-warning-title,
+      .hatch-warning-copy {
+        margin: 0;
+        border: 2px solid var(--metal-edge-dark);
+        border-radius: 3px;
+        background: var(--metal-inset);
+        box-shadow:
+          inset 2px 2px 0 rgba(4, 6, 10, 0.48),
+          inset -1px -1px 0 rgba(255, 228, 156, 0.18);
+        color: var(--metal-text);
+      }
+
+      .hatch-warning-title {
+        font-size: 18px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+        line-height: 1;
+        padding: 14px 16px 12px;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      .hatch-warning-copy {
+        color: #ffe9b7;
+        font-size: 14px;
+        font-weight: 800;
+        line-height: 1.35;
+        padding: 14px;
+      }
+
+      .hatch-warning-actions {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .hatch-warning-actions button {
+        min-height: 46px;
+        border: 2px solid var(--metal-edge-dark);
+        border-radius: 3px;
+        background: var(--metal-inset);
+        color: var(--metal-text);
+        cursor: pointer;
+        font: inherit;
+        font-weight: 900;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      .hatch-warning-actions .hatch-open-button {
+        border-color: var(--metal-edge);
+        background: var(--metal-active);
+      }
+
+      .hatch-warning-actions button:hover,
+      .hatch-warning-actions button:focus-visible {
+        outline: none;
+        background: var(--metal-hover);
+      }
+
+      @keyframes fabricator-press {
+        0% {
+          transform: scale(1);
+        }
+        45% {
+          transform: scale(0.985);
+          filter: brightness(1.24);
+        }
+        100% {
+          transform: scale(1);
+        }
+      }
+
       .inventory-grid {
         display: grid;
         grid-template-columns: repeat(5, 44px);
         gap: 2px;
         margin-top: 0;
+      }
+
+      .clothing-title {
+        margin: 8px 0 4px;
+        border: 2px solid var(--metal-edge-dark);
+        border-radius: 3px;
+        background: var(--metal-inset);
+        color: var(--metal-text);
+        box-shadow:
+          inset 2px 2px 0 rgba(4, 6, 10, 0.48),
+          inset -1px -1px 0 rgba(255, 228, 156, 0.18);
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+        line-height: 1;
+        padding: 7px 8px 6px;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      .clothing-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 44px);
+        gap: 2px;
+      }
+
+      .clothing-slot {
+        display: grid;
+        gap: 3px;
+        justify-items: center;
+      }
+
+      .clothing-item-slot {
+        border-color: rgba(216, 180, 92, 0.72);
+      }
+
+      .clothing-slot-label {
+        width: 44px;
+        color: #22180a;
+        font-size: 8px;
+        font-weight: 900;
+        letter-spacing: 0;
+        line-height: 1;
+        overflow: hidden;
+        text-align: center;
+        text-overflow: ellipsis;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .slot-placeholder {
+        color: var(--metal-muted);
+        font-size: 12px;
+        font-weight: 900;
       }
 
       .modal-hotbar {
@@ -654,6 +997,10 @@
           grid-template-columns: repeat(5, minmax(0, 44px));
         }
 
+        .clothing-grid {
+          grid-template-columns: repeat(4, minmax(0, 44px));
+        }
+
         .modal-hotbar {
           grid-template-columns: repeat(10, minmax(0, 1fr));
         }
@@ -713,6 +1060,7 @@
       <span>Ctrl sprint</span>
       <span>Click + mouse look</span>
     </div>
+    <div class="vitals" aria-label="Vitals"></div>
     <div id="interaction-prompt" class="interaction-prompt" hidden></div>
     <div class="quick-access" aria-label="Quick access">
       <button
@@ -745,7 +1093,74 @@
           <div class="modal-hotbar" aria-label="Inventory hotbar"></div>
           <h2 id="inventory-title" class="panel-title">Inventory</h2>
           <div class="inventory-grid" aria-label="Inventory grid"></div>
+          <h2 class="clothing-title">Clothing Only</h2>
+          <div class="clothing-grid" aria-label="Clothing equipment slots"></div>
         </section>
+      </section>
+    </div>
+    <div
+      id="fabricator-modal"
+      class="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="fabricator-title"
+      hidden
+    >
+      <section class="space-modal inventory-modal fabricator-modal">
+        <section class="fabricator-panel">
+          <h2 id="fabricator-title" class="fabricator-title">Fabricator</h2>
+          <div class="fabricator-analysis" aria-live="polite">
+            <div
+              id="fabricator-analysis-status"
+              class="fabricator-status"
+            >
+              No asteroid loaded
+            </div>
+            <div class="fabricator-yield" aria-label="Processing yield">
+              <div class="fabricator-yield-item">
+                <strong>Iron</strong>
+                <span id="fabricator-yield-iron">-</span>
+              </div>
+              <div class="fabricator-yield-item">
+                <strong>Copper</strong>
+                <span id="fabricator-yield-copper">-</span>
+              </div>
+              <div class="fabricator-yield-item">
+                <strong>Water</strong>
+                <span id="fabricator-yield-water">-</span>
+              </div>
+            </div>
+          </div>
+          <button
+            id="fabricator-disassemble-button"
+            class="fabricator-disassemble"
+            type="button"
+          >
+            Disassemble
+          </button>
+        </section>
+      </section>
+    </div>
+    <div
+      id="hatch-warning-modal"
+      class="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="hatch-warning-title"
+      hidden
+    >
+      <section class="space-modal hatch-warning-modal">
+        <h2 id="hatch-warning-title" class="hatch-warning-title">
+          Hatch warning
+        </h2>
+        <p class="hatch-warning-copy">
+          Are you sure you want to open the hatch? This will let all the air out
+          of the pod. You should wear a helmet
+        </p>
+        <div
+          id="hatch-warning-actions"
+          class="hatch-warning-actions"
+        ></div>
       </section>
     </div>
     <div

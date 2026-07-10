@@ -13,6 +13,7 @@ const DEFAULT_SAVE_PATH = "./saves/brown-dwarf-default.json";
 const canvas = document.querySelector("#sandbox");
 const metrics = document.querySelector(".metrics");
 const hud = document.querySelector(".hud");
+const vitals = document.querySelector(".vitals");
 const menuError = document.querySelector("#menu-error");
 const savePathInput = document.querySelector("#save-path-input");
 const saveFileInput = document.querySelector("#save-file-input");
@@ -22,8 +23,23 @@ const inventoryKeyButton = document.querySelector("#inventory-key-button");
 const notebookKeyButton = document.querySelector("#notebook-key-button");
 const inventoryModal = document.querySelector("#inventory-modal");
 const notebookModal = document.querySelector("#notebook-modal");
+const fabricatorModal = document.querySelector("#fabricator-modal");
+const hatchWarningModal = document.querySelector("#hatch-warning-modal");
+const hatchWarningActions = document.querySelector("#hatch-warning-actions");
+const fabricatorDisassembleButton = document.querySelector(
+  "#fabricator-disassemble-button",
+);
+const fabricatorAnalysisStatus = document.querySelector(
+  "#fabricator-analysis-status",
+);
+const fabricatorYieldIron = document.querySelector("#fabricator-yield-iron");
+const fabricatorYieldCopper = document.querySelector(
+  "#fabricator-yield-copper",
+);
+const fabricatorYieldWater = document.querySelector("#fabricator-yield-water");
 const inventoryGrid = document.querySelector(".inventory-grid");
 const modalHotbar = document.querySelector(".modal-hotbar");
+const clothingGrid = document.querySelector(".clothing-grid");
 const notebookTabs = document.querySelector(".notebook-tabs");
 const notebookCopy = document.querySelector(".notebook-copy");
 const interactionPrompt = document.querySelector("#interaction-prompt");
@@ -34,6 +50,18 @@ const MENU_STAR_DOME_RADIUS = 900;
 const PLACEMENT_RANGE = 3.2;
 const PLACEMENT_PADDING = 0.035;
 const ASTEROID_PICKUP_RANGE = 2.8;
+const FABRICATOR_ASTEROID_MAX_RADIUS = 0.11;
+const FABRICATOR_ASTEROID_BOTTOM_CLEARANCE = 0.05;
+const FABRICATOR_ASTEROID_FORWARD_OFFSET = 0.06;
+const FABRICATOR_DISASSEMBLE_SECONDS = 10;
+const FABRICATOR_LASER_RADIUS = 0.008;
+const ASTEROID_THROW_SPEED = 0.85;
+const ASTEROID_BOUNCE_RESTITUTION = 0.68;
+const ASTEROID_COLLISION_DAMPING = 0.985;
+const ASTEROID_MAX_SPEED = 5.6;
+const ASTEROID_CONTACT_SKIN = 0.004;
+const ASTEROID_PLAYER_PUSH_FRACTION = 0.42;
+const FABRICATOR_BATTERY_WIRE_RADIUS = 0.008;
 const HELD_ASTEROID_DISTANCE = 1.35;
 const HELD_ASTEROID_OFFSET = new B.Vector3(0, -0.18, HELD_ASTEROID_DISTANCE);
 const TETHER_ATTACH_OFFSET = new B.Vector3(0, -0.36, 0);
@@ -59,6 +87,10 @@ const HATCH_DECOMPRESSION_ACCELERATION = 6.25;
 const HATCH_DECOMPRESSION_DURATION = 1.35;
 const HATCH_DECOMPRESSION_MAX_SPEED = 6.75;
 const HATCH_WIND_PARTICLE_SECONDS = 1.15;
+const CABIN_PRESSURE_INITIAL_ATM = 0.3;
+const CABIN_PRESSURE_VACUUM_ATM = 0;
+const HELMET_OXYGEN_MAX_SECONDS = 300;
+const HELMET_OXYGEN_DRAIN_PER_SECOND = 1;
 const CROUCH_EYE_HEIGHT_SCALE = 0.76;
 const CROUCH_TRANSITION_SPEED = 8;
 const CROUCH_SPEED_SCALE = 0.45;
@@ -116,6 +148,12 @@ addEventListener("keydown", (event) => {
     keys.delete("KeyK");
     return;
   }
+  if (event.code === "KeyF" && activeInteraction?.type === "fabricator") {
+    event.preventDefault();
+    openFabricatorModal(activeInteraction.root);
+    keys.delete("KeyF");
+    return;
+  }
   if (event.code === "Escape" && isUiModalOpen()) {
     event.preventDefault();
     closePlayerModals();
@@ -135,7 +173,12 @@ addEventListener("keydown", (event) => {
   }
   if (event.code === "KeyQ") {
     event.preventDefault();
-    if (!toggleTetherFromActiveHook()) {
+    if (
+      activeInteraction?.type === "helmet-hook" &&
+      activeInteraction.mountedRoot
+    ) {
+      equipHelmet();
+    } else if (!toggleTetherFromActiveHook()) {
       equipHelmet();
     }
     keys.delete("KeyQ");
@@ -149,7 +192,15 @@ addEventListener("keydown", (event) => {
   }
   if (event.code === "KeyE" && heldAsteroid) {
     event.preventDefault();
-    dropHeldAsteroid();
+    if (activeInteraction?.type === "fabricator") {
+      if (activeInteraction.acceptsHeldAsteroid) {
+        placeHeldAsteroidOnFabricator(activeInteraction);
+      } else {
+        updateInteractionPrompt({ prompt: activeInteraction.prompt });
+      }
+    } else {
+      dropHeldAsteroid();
+    }
     keys.delete("KeyE");
     return;
   }
@@ -158,16 +209,20 @@ addEventListener("keydown", (event) => {
     let interactionHandled = true;
     const openingShipDoor =
       activeInteraction.type === "ship-door" && !activeInteraction.isOpen;
+    if (openingShipDoor) {
+      openHatchWarningModal(activeInteraction);
+      keys.delete("KeyE");
+      return;
+    }
     if (activeInteraction.type === "pickup") {
       interactionHandled = collectPickupInteraction(activeInteraction);
     } else if (activeInteraction.type === "helmet-hook") {
       interactionHandled = activateHelmetHook(activeInteraction);
+    } else if (activeInteraction.type === "fabricator") {
+      interactionHandled = false;
     } else {
       const result = activeInteraction.activate?.();
       interactionHandled = result !== false;
-    }
-    if (interactionHandled && openingShipDoor) {
-      triggerHatchDecompression(activeInteraction);
     }
     keys.delete("KeyE");
     if (interactionHandled) updateInteractionPrompt(null);
@@ -209,6 +264,11 @@ let flyButton = null;
 let cameraButton = null;
 let visorButton = null;
 let saveStartButton = null;
+let airPressureMeter = null;
+let airPressureMeterText = null;
+let oxygenMeter = null;
+let oxygenMeterFill = null;
+let oxygenMeterText = null;
 let mouseSensitivitySlider = null;
 let mouseSensitivityValue = null;
 let activeInteraction = null;
@@ -225,6 +285,19 @@ let helmetEquipInProgress = false;
 let playerTether = null;
 let playerPlaceholderRig = null;
 let heldAsteroid = null;
+let activeFabricatorRoot = null;
+let pendingHatchInteraction = null;
+let cabinPressureAtm = CABIN_PRESSURE_INITIAL_ATM;
+let helmetOxygenSeconds = HELMET_OXYGEN_MAX_SECONDS;
+const asteroidBodies = new Set();
+const fabricatorBatteryWires = new Set();
+const fabricatorDisassemblyJobs = new Set();
+
+const fabricatorResourceItems = {
+  iron: { id: "iron", name: "Iron", icon: "Fe", swatch: "#a7adb1" },
+  copper: { id: "copper", name: "Copper", icon: "Cu", swatch: "#c8753e" },
+  water: { id: "water", name: "Water", icon: "H2O", swatch: "#58b9e8" },
+};
 
 const inventoryItems = Array.from({ length: 20 }, () => null);
 const hotbarItems = Array.from({ length: 10 }, () => null);
@@ -314,9 +387,20 @@ function installPlayerUi() {
   notebookModal.addEventListener("click", (event) => {
     if (event.target === notebookModal) closePlayerModals();
   });
+  fabricatorModal?.addEventListener("click", (event) => {
+    if (event.target === fabricatorModal) closePlayerModals();
+  });
+  hatchWarningModal?.addEventListener("click", (event) => {
+    if (event.target === hatchWarningModal) closePlayerModals();
+  });
+  fabricatorDisassembleButton?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    pulseFabricatorDisassembleButton();
+  });
 
   renderHotbars();
   renderInventoryGrid();
+  renderClothingGrid();
   renderNotebook();
   updateQuickAccessButtons();
 }
@@ -359,6 +443,51 @@ function renderInventoryGrid() {
     }),
   );
   inventoryGrid.replaceChildren(...slots);
+  renderClothingGrid();
+}
+
+function renderClothingGrid() {
+  if (!clothingGrid) return;
+
+  const slots = [
+    createClothingSlot({
+      label: "Helmet",
+      entry: equippedHelmet?.item ?? null,
+      accepts: isHelmetItem,
+      onDrop: (slot) => equipHelmetFromInventory(slot),
+    }),
+    createClothingSlot({ label: "Suit" }),
+    createClothingSlot({ label: "Gloves" }),
+    createClothingSlot({ label: "Boots" }),
+  ];
+  clothingGrid.replaceChildren(...slots);
+}
+
+function createClothingSlot({
+  label,
+  entry = null,
+  accepts = null,
+  onDrop = null,
+}) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "clothing-slot";
+
+  const slot = createItemSlot(entry, 0, {
+    locked: true,
+    placeholder: label.slice(0, 1),
+  });
+  slot.classList.add("clothing-item-slot");
+  slot.title = entry?.name ?? `${label} clothing slot`;
+
+  if (accepts && onDrop) {
+    installClothingSlotDropHandlers(slot, accepts, onDrop);
+  }
+
+  const name = document.createElement("span");
+  name.className = "clothing-slot-label";
+  name.textContent = label;
+  wrapper.append(slot, name);
+  return wrapper;
 }
 
 function renderNotebook() {
@@ -395,7 +524,7 @@ function createItemSlot(entry, index, options = {}) {
   slot.className = `item-slot${options.selected ? " selected" : ""}`;
   slot.role = options.onClick ? "button" : "img";
   slot.tabIndex = options.onClick ? 0 : -1;
-  if (options.items) {
+  if (options.items && !options.locked) {
     installSlotDragHandlers(slot, entry, {
       items: options.items,
       index,
@@ -435,9 +564,40 @@ function createItemSlot(entry, index, options = {}) {
       countLabel.textContent = String(count);
       slot.append(countLabel);
     }
+  } else if (options.placeholder) {
+    const placeholder = document.createElement("span");
+    placeholder.className = "slot-placeholder";
+    placeholder.textContent = options.placeholder;
+    slot.append(placeholder);
   }
   slot.append(key);
   return slot;
+}
+
+function installClothingSlotDropHandlers(slot, accepts, onDrop) {
+  slot.addEventListener("dragover", (event) => {
+    const sourceSlot = draggedInventorySlot;
+    const entry = sourceSlot?.items?.[sourceSlot.index];
+    if (!entry || !accepts(entry)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    slot.classList.add("drag-over");
+  });
+  slot.addEventListener("dragleave", () => {
+    slot.classList.remove("drag-over");
+  });
+  slot.addEventListener("drop", (event) => {
+    const sourceSlot = draggedInventorySlot;
+    const entry = sourceSlot?.items?.[sourceSlot.index];
+    event.preventDefault();
+    slot.classList.remove("drag-over");
+    draggedInventorySlot = null;
+    if (!entry || !accepts(entry)) {
+      updateInteractionPrompt({ prompt: "Wrong clothing slot" });
+      return;
+    }
+    onDrop(sourceSlot);
+  });
 }
 
 function installSlotDragHandlers(slot, entry, slotState) {
@@ -545,6 +705,11 @@ function mergeItemMetadata(entry, item) {
     "maxSize",
     "floorOffset",
     "swatch",
+    "placementSurface",
+    "placement",
+    "wallGap",
+    "wallRotation",
+    "wallRotationDegrees",
   ]) {
     if (item[key] !== undefined) entry[key] = item[key];
   }
@@ -660,9 +825,9 @@ async function placeSelectedItem() {
       name: `${item.id ?? "item"}-placed`,
       pickable: true,
     });
-    root.position.copyFrom(state.localPosition);
-    settleItemRootOnFloor(root, item);
+    applyPlacementStateToRoot(root, item, state);
     installPlacedItemMetadata(root, item);
+    refreshFabricatorBatteryWires();
 
     consumeSelectedHotbarItem();
     renderHotbars();
@@ -717,6 +882,7 @@ function triggerHatchDecompression(interaction) {
 
   const direction = getHatchOutflowDirection(interaction);
   interaction.decompressionTriggered = true;
+  cabinPressureAtm = CABIN_PRESSURE_VACUUM_ATM;
   hatchDecompression = {
     direction,
     elapsed: 0,
@@ -733,6 +899,7 @@ function triggerHatchDecompression(interaction) {
   }
   createHatchWindBurst(interaction, direction);
   updateQuickAccessButtons();
+  updateLifeSupportHud();
 }
 
 function updateHatchDecompression(seconds) {
@@ -754,6 +921,49 @@ function updateHatchDecompression(seconds) {
   hatchDecompression.elapsed += seconds;
   if (hatchDecompression.elapsed >= hatchDecompression.duration) {
     hatchDecompression = null;
+  }
+}
+
+function updateLifeSupport(seconds) {
+  if (!equippedHelmet) return;
+
+  helmetOxygenSeconds = Math.max(
+    0,
+    helmetOxygenSeconds - HELMET_OXYGEN_DRAIN_PER_SECOND * seconds,
+  );
+  updateLifeSupportHud();
+}
+
+function updateLifeSupportHud() {
+  if (airPressureMeterText) {
+    airPressureMeterText.textContent = `Cabin ${cabinPressureAtm.toFixed(2)} atm`;
+  }
+  if (airPressureMeter) {
+    const pressurePercent =
+      CABIN_PRESSURE_INITIAL_ATM > 0
+        ? cabinPressureAtm / CABIN_PRESSURE_INITIAL_ATM
+        : 0;
+    airPressureMeter.style.setProperty(
+      "--meter-value",
+      `${Math.max(0, Math.min(pressurePercent, 1)) * 100}%`,
+    );
+  }
+  if (oxygenMeterText) {
+    oxygenMeterText.textContent = equippedHelmet
+      ? `O2 ${Math.ceil(helmetOxygenSeconds)}s`
+      : "O2 no helmet";
+  }
+  if (oxygenMeter) {
+    oxygenMeter.classList.toggle(
+      "empty",
+      !equippedHelmet || helmetOxygenSeconds <= 0,
+    );
+  }
+  if (oxygenMeterFill) {
+    const oxygenPercent = equippedHelmet
+      ? helmetOxygenSeconds / HELMET_OXYGEN_MAX_SECONDS
+      : 0;
+    oxygenMeterFill.style.width = `${Math.max(0, Math.min(oxygenPercent, 1)) * 100}%`;
   }
 }
 
@@ -783,9 +993,7 @@ function createHatchWindBurst(interaction, direction) {
   system.emitter = emitter;
   system.minEmitBox = B.Vector3.Zero();
   system.maxEmitBox = B.Vector3.Zero();
-  system.direction1 = outflow
-    .add(right.scale(-0.42))
-    .add(up.scale(-0.24));
+  system.direction1 = outflow.add(right.scale(-0.42)).add(up.scale(-0.24));
   system.direction2 = outflow.add(right.scale(0.42)).add(up.scale(0.24));
   system.minEmitPower = 2.4;
   system.maxEmitPower = 7.5;
@@ -849,10 +1057,7 @@ function platformLocalPointToWorld(point) {
   const root = level?.platform?.root;
   if (!root) return point.clone();
   root.computeWorldMatrix(true);
-  return B.Vector3.TransformCoordinates(
-    point,
-    root.getWorldMatrix(),
-  );
+  return B.Vector3.TransformCoordinates(point, root.getWorldMatrix());
 }
 
 function platformLocalDirectionToWorld(direction) {
@@ -1434,7 +1639,7 @@ async function equipHelmetItem(item) {
       animationFrame: 0,
       rotation: [0, 0, 0],
     });
-    root.position.set(0, -0.125, 0.075);
+    root.position.set(0, -0.22, 0.075);
     root.scaling.scaleInPlace(1.08);
     root.computeWorldMatrix(true);
 
@@ -1453,8 +1658,10 @@ async function equipHelmetItem(item) {
       animationGroups: root.metadata?.importedAnimationGroups ?? [],
       visor: createHelmetVisorController(root),
     };
+    helmetOxygenSeconds = HELMET_OXYGEN_MAX_SECONDS;
     setHelmetVisorOpen(false, true);
     updateHudButtons();
+    renderClothingGrid();
     updateInteractionPrompt({ prompt: "Helmet equipped" });
     return true;
   } catch (error) {
@@ -1618,10 +1825,17 @@ function takeHelmetFromHook(interaction) {
 }
 
 function addInventoryItem(item) {
+  return addInventoryItemCount(item, 1);
+}
+
+function addInventoryItemCount(item, count = 1) {
+  const amount = Math.max(0, Math.floor(Number(count) || 0));
+  if (amount <= 0) return true;
+
   const id = item.id ?? "item";
   const existingEntry = findInventoryEntry(id);
   if (existingEntry) {
-    existingEntry.count = (existingEntry.count ?? 1) + 1;
+    existingEntry.count = (existingEntry.count ?? 1) + amount;
     mergeItemMetadata(existingEntry, item);
     hydrateInventoryPortrait(existingEntry, item);
     return true;
@@ -1634,12 +1848,27 @@ function addInventoryItem(item) {
     ...item,
     id,
     name: item.name ?? item.label ?? "Item",
-    count: 1,
+    count: amount,
     portrait: item.portrait ?? createItemPortrait(item),
   };
   slot.items[slot.index] = entry;
   hydrateInventoryPortrait(entry, item);
   return true;
+}
+
+function canAddInventoryItemCounts(items) {
+  const existingIds = new Set(
+    [...hotbarItems, ...inventoryItems].filter(Boolean).map((entry) => entry.id),
+  );
+  const neededSlots = new Set();
+  for (const { item, count } of items) {
+    if (!item?.id || count <= 0 || existingIds.has(item.id)) continue;
+    neededSlots.add(item.id);
+  }
+  const emptySlots = [...hotbarItems, ...inventoryItems].filter(
+    (entry) => !entry,
+  ).length;
+  return neededSlots.size <= emptySlots;
 }
 
 function findHelmetInventorySlot() {
@@ -1666,6 +1895,30 @@ function isHelmetItem(entry) {
     id.includes("helmet") ||
     name.includes("helmet") ||
     modelUrl.includes("helmet")
+  );
+}
+
+function isFabricatorItem(entry) {
+  const id = entry?.id?.toLowerCase?.() ?? "";
+  const name = entry?.name?.toLowerCase?.() ?? "";
+  const modelUrl = entry?.modelUrl?.toLowerCase?.() ?? "";
+  if (id.includes("bucket") || name.includes("bucket")) return false;
+  return (
+    id.includes("fabricator") ||
+    name.includes("fabricator") ||
+    modelUrl.includes("fabricator")
+  );
+}
+
+function isBatteryItem(entry) {
+  const id = entry?.id?.toLowerCase?.() ?? "";
+  const name = entry?.name?.toLowerCase?.() ?? "";
+  const modelUrl = entry?.modelUrl?.toLowerCase?.() ?? "";
+  if (id.includes("bucket") || name.includes("bucket")) return false;
+  return (
+    id.includes("battery") ||
+    name.includes("battery") ||
+    modelUrl.includes("battery")
   );
 }
 
@@ -1709,16 +1962,25 @@ async function loadItemModelRoot(item, options = {}) {
 
   const excludeFromBounds = options.hologram || options.parent === camera;
   for (const mesh of getRootRenderableMeshes(root)) {
-    mesh.isPickable = Boolean(options.pickable);
+    const collisionMesh = isItemCollisionMesh(mesh);
+    mesh.isPickable = Boolean(options.pickable) && !collisionMesh;
     mesh.checkCollisions = false;
-    mesh.receiveShadows = !options.hologram;
+    mesh.receiveShadows = !options.hologram && !collisionMesh;
+    if (collisionMesh) {
+      mesh.isVisible = false;
+      mesh.visibility = 0;
+      mesh.showBoundingBox = false;
+    }
     mesh.metadata = {
       ...(mesh.metadata ?? {}),
-      excludeFromBounds,
+      itemCollisionMesh: collisionMesh,
+      excludeFromBounds: excludeFromBounds || collisionMesh,
       excludeFromCollision: true,
     };
     mesh.showBoundingBox =
-      !excludeFromBounds && Boolean(scene.metadata?.objectBoundsVisible);
+      !collisionMesh &&
+      !excludeFromBounds &&
+      Boolean(scene.metadata?.objectBoundsVisible);
   }
   if (!excludeFromBounds) {
     addPolySurfaceHolograms(root, scene);
@@ -1751,20 +2013,106 @@ function installPlacedItemMetadata(root, item) {
     ...(root.metadata ?? {}),
     placedItem: sanitizeItemForSave(item),
   };
+  unregisterPlacedItemCollisionMeshes(root);
   for (const mesh of getRootRenderableMeshes(root)) {
-    mesh.isPickable = true;
+    const collisionMesh = isItemCollisionMesh(mesh);
+    mesh.isPickable = !collisionMesh;
     mesh.checkCollisions = false;
+    if (collisionMesh) {
+      mesh.isVisible = false;
+      mesh.visibility = 0;
+      mesh.showBoundingBox = false;
+    }
     mesh.metadata = {
       ...(mesh.metadata ?? {}),
-      excludeFromBounds: false,
-      excludeFromCollision: true,
-      glbPickupLabel: item.name ?? item.label ?? item.id ?? "Item",
-      glbPickupRange: GLB_PICKUP_PROMPT_RANGE,
-      glbPickupRoot: root,
-      glbPickupItem: { ...item },
+      itemCollisionMesh: collisionMesh,
+      authoredCollisionMesh: collisionMesh,
+      excludeFromBounds: collisionMesh,
+      excludeFromCollision: !collisionMesh,
+      originalMaterial: mesh.material ?? null,
+      renderingGroupId: mesh.renderingGroupId ?? 0,
+      ...(collisionMesh
+        ? {}
+        : {
+            glbPickupLabel: item.name ?? item.label ?? item.id ?? "Item",
+            glbPickupRange: GLB_PICKUP_PROMPT_RANGE,
+            glbPickupRoot: root,
+            glbPickupItem: { ...item },
+          }),
     };
-    mesh.showBoundingBox = Boolean(scene.metadata?.objectBoundsVisible);
+    mesh.showBoundingBox =
+      !collisionMesh && Boolean(scene.metadata?.objectBoundsVisible);
   }
+  registerPlacedItemCollisionMeshes(root);
+}
+
+function isItemCollisionMesh(mesh) {
+  if (!mesh) return false;
+  const names = [];
+  let node = mesh;
+  while (node) {
+    for (const name of [node.name, node.id]) {
+      const normalized = name?.toLowerCase?.();
+      if (normalized) names.push(normalized);
+    }
+    node = node.parent;
+  }
+  return names.some(
+    (name) =>
+      /^(col|ucx|ubx|ucp|usp)[_.-]/i.test(name) ||
+      name === "collision" ||
+      name === "collisions",
+  );
+}
+
+function registerPlacedItemCollisionMeshes(root) {
+  const colliders = getPlacedItemCollisionMeshes(root);
+  if (!colliders.length || !level?.platform) return;
+
+  const authored = new Set(level.platform.authoredCollisionMeshes ?? []);
+  for (const mesh of colliders) {
+    preparePlacedItemCollisionMesh(mesh);
+    authored.add(mesh);
+  }
+  level.platform.authoredCollisionMeshes = [...authored];
+}
+
+function preparePlacedItemCollisionMesh(mesh) {
+  mesh.setEnabled(true);
+  mesh.isVisible = false;
+  mesh.visibility = 0;
+  mesh.isPickable = false;
+  mesh.checkCollisions = false;
+  mesh.showBoundingBox = false;
+  mesh.refreshBoundingInfo?.();
+  mesh.computeWorldMatrix(true);
+  mesh.metadata = {
+    ...(mesh.metadata ?? {}),
+    itemCollisionMesh: true,
+    authoredCollisionMesh: true,
+    excludeFromBounds: true,
+    excludeFromCollision: false,
+    originalMaterial: mesh.metadata?.originalMaterial ?? mesh.material ?? null,
+    renderingGroupId:
+      mesh.metadata?.renderingGroupId ?? mesh.renderingGroupId ?? 0,
+  };
+}
+
+function unregisterPlacedItemCollisionMeshes(root) {
+  if (!level?.platform?.authoredCollisionMeshes?.length) return;
+
+  const colliders = new Set(getPlacedItemCollisionMeshes(root));
+  if (!colliders.size) return;
+  level.platform.authoredCollisionMeshes =
+    level.platform.authoredCollisionMeshes.filter(
+      (mesh) => !colliders.has(mesh),
+    );
+}
+
+function getPlacedItemCollisionMeshes(root) {
+  return getRootRenderableMeshes(root).filter((mesh) =>
+    isItemCollisionMesh(mesh),
+  );
 }
 
 function updatePlacementPreview() {
@@ -1786,19 +2134,40 @@ function updatePlacementPreview() {
     return;
   }
 
-  placementPreview.root.position.copyFrom(state.localPosition);
-  settleItemRootOnFloor(placementPreview.root, item);
+  applyPlacementStateToRoot(placementPreview.root, item, state);
   placementPreview.root.setEnabled(true);
   applyPlacementPreviewMaterial(placementPreview, state.valid);
+}
+
+function applyPlacementStateToRoot(root, item, state) {
+  root.position.copyFrom(state.localPosition);
+  if (state.localRotation) {
+    root.rotation.copyFrom(state.localRotation);
+  } else {
+    root.rotation = B.Vector3.FromArray(resolveItemRotation(item));
+  }
+  root.computeWorldMatrix(true);
 }
 
 function getPlacementState(item, root) {
   const platform = level.platform?.physics;
   if (!platform || !root) return null;
 
+  if (getItemPlacementSurface(item) === "wall") {
+    return getWallPlacementState(item, root, platform);
+  }
+  return getFloorPlacementState(item, root, platform);
+}
+
+function getItemPlacementSurface(item) {
+  return item.placementSurface ?? item.placement ?? "floor";
+}
+
+function getFloorPlacementState(item, root, platform) {
   const localPoint = getFloorPlacementPoint(platform);
   if (!localPoint) return null;
 
+  root.rotation = getFloorPlacementRotation(item);
   root.position.copyFrom(localPoint);
   settleItemRootOnFloor(root, item);
   const bounds = getRootBoundsInPlatform(root);
@@ -1807,8 +2176,44 @@ function getPlacementState(item, root) {
   const inside = isPlacementInsidePlatform(bounds, platform);
   return {
     localPosition: root.position.clone(),
+    localRotation: root.rotation.clone(),
     bounds,
     valid: inside,
+    surface: "floor",
+  };
+}
+
+function getWallPlacementState(item, root, platform) {
+  const hit = getWallPlacementHit(platform);
+  if (!hit) return null;
+
+  root.position.copyFrom(hit.point);
+  root.rotation.copyFrom(getWallPlacementRotation(item, hit.wall));
+  root.computeWorldMatrix(true);
+  centerWallPlacementRootOnHit(root, hit.point, hit.wall);
+  alignWallPlacementRootToSurface(
+    root,
+    hit.point,
+    hit.outward,
+    item.wallGap ?? 0.006,
+  );
+  nudgeWallPlacementInside(
+    root,
+    platform,
+    hit.wall,
+    item.wallInsidePadding ?? PLACEMENT_PADDING,
+  );
+
+  const bounds = getRootBoundsInPlatform(root);
+  if (!bounds) return null;
+
+  return {
+    localPosition: root.position.clone(),
+    localRotation: root.rotation.clone(),
+    bounds,
+    valid: isWallPlacementInsidePlatform(bounds, platform, hit.wall),
+    surface: "wall",
+    wall: hit.wall,
   };
 }
 
@@ -1823,6 +2228,86 @@ function getFloorPlacementPoint(platform) {
   return ray.origin.add(ray.direction.scale(distance));
 }
 
+function getWallPlacementHit(platform) {
+  const meshHit = getWallPlacementMeshHit(platform);
+  if (meshHit) return meshHit;
+
+  const ray = createCameraLookRayInPlatform(PLACEMENT_RANGE);
+  if (!wallFromDirection(ray.direction)) return null;
+
+  const minX = platform.minX ?? -platform.width * 0.5;
+  const maxX = platform.maxX ?? platform.width * 0.5;
+  const minZ = platform.minZ ?? -platform.depth * 0.5;
+  const maxZ = platform.maxZ ?? platform.depth * 0.5;
+  const floorY = platform.floorY ?? 0;
+  const ceilingY = platform.ceilingY ?? floorY + (platform.playerHeight ?? 1);
+  const hits = [];
+
+  addWallPlacementHit(hits, ray, "leftWall", "x", minX, {
+    minY: floorY,
+    maxY: ceilingY,
+    minOther: minZ,
+    maxOther: maxZ,
+  });
+  addWallPlacementHit(hits, ray, "rightWall", "x", maxX, {
+    minY: floorY,
+    maxY: ceilingY,
+    minOther: minZ,
+    maxOther: maxZ,
+  });
+  addWallPlacementHit(hits, ray, "backWall", "z", minZ, {
+    minY: floorY,
+    maxY: ceilingY,
+    minOther: minX,
+    maxOther: maxX,
+  });
+  addWallPlacementHit(hits, ray, "frontWall", "z", maxZ, {
+    minY: floorY,
+    maxY: ceilingY,
+    minOther: minX,
+    maxOther: maxX,
+  });
+
+  hits.sort((a, b) => a.distance - b.distance);
+  return hits[0] ?? null;
+}
+
+function addWallPlacementHit(hits, ray, wall, axis, planeValue, bounds) {
+  const directionComponent = axis === "x" ? ray.direction.x : ray.direction.z;
+  if (Math.abs(directionComponent) < 0.0001) return;
+
+  const originComponent = axis === "x" ? ray.origin.x : ray.origin.z;
+  const distance = (planeValue - originComponent) / directionComponent;
+  if (distance <= 0 || distance > PLACEMENT_RANGE) return;
+
+  const point = ray.origin.add(ray.direction.scale(distance));
+  point.y = clamp(
+    point.y,
+    bounds.minY + PLACEMENT_PADDING,
+    bounds.maxY - PLACEMENT_PADDING,
+  );
+  if (axis === "x") {
+    point.z = clamp(
+      point.z,
+      bounds.minOther + PLACEMENT_PADDING,
+      bounds.maxOther - PLACEMENT_PADDING,
+    );
+  } else {
+    point.x = clamp(
+      point.x,
+      bounds.minOther + PLACEMENT_PADDING,
+      bounds.maxOther - PLACEMENT_PADDING,
+    );
+  }
+
+  hits.push({
+    wall,
+    point,
+    distance,
+    outward: wallOutwardDirection(wall),
+  });
+}
+
 function createCameraLookRayInPlatform(distance) {
   const direction = camera.getDirection(B.Axis.Z).normalize();
   if (!camera.parent) {
@@ -1835,6 +2320,226 @@ function createCameraLookRayInPlatform(distance) {
   return new B.Ray(camera.position.clone(), localDirection, distance);
 }
 
+function getWallPlacementMeshHit(platform) {
+  if (!scene || !level?.platform?.root) return null;
+
+  const ray = createCameraLookRay(PLACEMENT_RANGE);
+  const hits = scene.multiPickWithRay?.(ray, isWallPlacementMesh) ?? [];
+  if (!hits.length) return null;
+
+  const platformRoot = level.platform.root;
+  const inversePlatform = platformRoot.getWorldMatrix().clone().invert();
+  const localRay = createCameraLookRayInPlatform(PLACEMENT_RANGE);
+  const wall = wallFromDirection(localRay.direction);
+  if (!wall) return null;
+  const outward = wallOutwardDirection(wall);
+
+  for (const hit of hits.sort((a, b) => a.distance - b.distance)) {
+    if (!hit?.hit || !hit.pickedPoint || hit.distance > PLACEMENT_RANGE) {
+      continue;
+    }
+
+    const localNormal = getLocalPickNormal(hit, inversePlatform);
+    if (localNormal && Math.abs(localNormal.y) > 0.65) continue;
+
+    const point = B.Vector3.TransformCoordinates(
+      hit.pickedPoint,
+      inversePlatform,
+    );
+    if (!isWallMountPointInPlatform(point, platform, wall)) continue;
+
+    return {
+      wall,
+      point: clampWallMountPoint(point, platform, wall),
+      distance: hit.distance,
+      outward,
+    };
+  }
+
+  return null;
+}
+
+function isWallPlacementMesh(mesh) {
+  if (!mesh || mesh.isEnabled?.() === false || mesh.isVisible === false) {
+    return false;
+  }
+  if (mesh.visibility !== undefined && mesh.visibility <= 0) return false;
+  if (mesh.getTotalVertices?.() <= 0) return false;
+  if (mesh.metadata?.excludeFromBounds) return false;
+  if (mesh.metadata?.glbPickupRoot || mesh.metadata?.glbPickupLabel) {
+    return false;
+  }
+  if (isPolySurfaceHologram(mesh)) return false;
+  return isNodeDescendantOf(mesh, level?.platform?.deck);
+}
+
+function isNodeDescendantOf(node, ancestor) {
+  for (let current = node; current; current = current.parent) {
+    if (current === ancestor) return true;
+  }
+  return false;
+}
+
+function getLocalPickNormal(hit, inversePlatform) {
+  const worldNormal = hit.getNormal?.(true, true);
+  if (!worldNormal || worldNormal.lengthSquared?.() <= 0.000001) return null;
+
+  const localNormal = B.Vector3.TransformNormal(worldNormal, inversePlatform);
+  if (localNormal.lengthSquared() <= 0.000001) return null;
+  return localNormal.normalize();
+}
+
+function wallFromDirection(direction) {
+  const absX = Math.abs(direction.x);
+  const absZ = Math.abs(direction.z);
+  if (Math.max(absX, absZ) <= Math.abs(direction.y)) return null;
+  if (absX >= absZ) return direction.x < 0 ? "leftWall" : "rightWall";
+  return direction.z < 0 ? "backWall" : "frontWall";
+}
+
+function isWallMountPointInPlatform(point, platform, wall) {
+  const minX = platform.minX ?? -platform.width * 0.5;
+  const maxX = platform.maxX ?? platform.width * 0.5;
+  const minZ = platform.minZ ?? -platform.depth * 0.5;
+  const maxZ = platform.maxZ ?? platform.depth * 0.5;
+  const minY = platform.floorY ?? point.y;
+  const maxY = platform.ceilingY ?? point.y;
+  const tolerance = PLACEMENT_PADDING * 2;
+
+  if (point.y < minY - tolerance || point.y > maxY + tolerance) return false;
+  if (wall === "leftWall" || wall === "rightWall") {
+    return point.z >= minZ - tolerance && point.z <= maxZ + tolerance;
+  }
+  return point.x >= minX - tolerance && point.x <= maxX + tolerance;
+}
+
+function clampWallMountPoint(point, platform, wall) {
+  const minX = platform.minX ?? -platform.width * 0.5;
+  const maxX = platform.maxX ?? platform.width * 0.5;
+  const minZ = platform.minZ ?? -platform.depth * 0.5;
+  const maxZ = platform.maxZ ?? platform.depth * 0.5;
+  const minY = platform.floorY ?? point.y;
+  const maxY = platform.ceilingY ?? point.y;
+  const clamped = point.clone();
+  clamped.y = clamp(
+    clamped.y,
+    minY + PLACEMENT_PADDING,
+    maxY - PLACEMENT_PADDING,
+  );
+  if (wall === "leftWall" || wall === "rightWall") {
+    clamped.z = clamp(
+      clamped.z,
+      minZ + PLACEMENT_PADDING,
+      maxZ - PLACEMENT_PADDING,
+    );
+  } else {
+    clamped.x = clamp(
+      clamped.x,
+      minX + PLACEMENT_PADDING,
+      maxX - PLACEMENT_PADDING,
+    );
+  }
+  return clamped;
+}
+
+function getWallPlacementRotation(item, wall) {
+  const rotation = B.Vector3.FromArray(
+    item.wallRotation ??
+      (item.wallRotationDegrees
+        ? vectorDegreesToRadians(item.wallRotationDegrees)
+        : resolveItemRotation(item)),
+  );
+  return new B.Vector3(rotation.x, wallYaw(wall) + rotation.y, rotation.z);
+}
+
+function getFloorPlacementRotation(item) {
+  return B.Vector3.FromArray(resolveItemRotation(item));
+}
+
+function centerWallPlacementRootOnHit(root, hitPoint, wall) {
+  const bounds = getRootBoundsInPlatform(root);
+  if (!bounds) return;
+
+  const center = bounds.min.add(bounds.max).scale(0.5);
+  root.position.y += hitPoint.y - center.y;
+  if (wall === "leftWall" || wall === "rightWall") {
+    root.position.z += hitPoint.z - center.z;
+  } else {
+    root.position.x += hitPoint.x - center.x;
+  }
+  root.computeWorldMatrix(true);
+}
+
+function alignWallPlacementRootToSurface(root, surfacePoint, outward, gap) {
+  const bounds = getRootBoundsInPlatform(root);
+  if (!bounds) return;
+
+  const target = B.Vector3.Dot(surfacePoint, outward) - Math.max(gap, 0);
+  const current = getMaxBoundsProjection(bounds, outward);
+  root.position.addInPlace(outward.scale(target - current));
+  root.computeWorldMatrix(true);
+}
+
+function nudgeWallPlacementInside(root, platform, wall, padding) {
+  const bounds = getRootBoundsInPlatform(root);
+  if (!bounds) return;
+
+  const minY = (platform.floorY ?? bounds.min.y) + padding;
+  const maxY = (platform.ceilingY ?? bounds.max.y) - padding;
+  let offsetX = 0;
+  let offsetY = 0;
+  let offsetZ = 0;
+
+  if (bounds.min.y < minY) offsetY = minY - bounds.min.y;
+  if (bounds.max.y > maxY) offsetY = maxY - bounds.max.y;
+
+  if (wall === "leftWall" || wall === "rightWall") {
+    const minZ = (platform.minZ ?? bounds.min.z) + padding;
+    const maxZ = (platform.maxZ ?? bounds.max.z) - padding;
+    if (bounds.min.z < minZ) offsetZ = minZ - bounds.min.z;
+    if (bounds.max.z > maxZ) offsetZ = maxZ - bounds.max.z;
+  } else {
+    const minX = (platform.minX ?? bounds.min.x) + padding;
+    const maxX = (platform.maxX ?? bounds.max.x) - padding;
+    if (bounds.min.x < minX) offsetX = minX - bounds.min.x;
+    if (bounds.max.x > maxX) offsetX = maxX - bounds.max.x;
+  }
+
+  root.position.addInPlace(new B.Vector3(offsetX, offsetY, offsetZ));
+  root.computeWorldMatrix(true);
+}
+
+function getMaxBoundsProjection(bounds, direction) {
+  const corners = [
+    new B.Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
+    new B.Vector3(bounds.min.x, bounds.min.y, bounds.max.z),
+    new B.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+    new B.Vector3(bounds.min.x, bounds.max.y, bounds.max.z),
+    new B.Vector3(bounds.max.x, bounds.min.y, bounds.min.z),
+    new B.Vector3(bounds.max.x, bounds.min.y, bounds.max.z),
+    new B.Vector3(bounds.max.x, bounds.max.y, bounds.min.z),
+    new B.Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
+  ];
+  return corners.reduce(
+    (max, corner) => Math.max(max, B.Vector3.Dot(corner, direction)),
+    -Infinity,
+  );
+}
+
+function wallOutwardDirection(wall) {
+  if (wall === "backWall") return new B.Vector3(0, 0, -1);
+  if (wall === "leftWall") return new B.Vector3(-1, 0, 0);
+  if (wall === "rightWall") return new B.Vector3(1, 0, 0);
+  return new B.Vector3(0, 0, 1);
+}
+
+function wallYaw(wall) {
+  if (wall === "backWall") return Math.PI;
+  if (wall === "leftWall") return -Math.PI / 2;
+  if (wall === "rightWall") return Math.PI / 2;
+  return 0;
+}
+
 function isPlacementInsidePlatform(bounds, platform) {
   const minX = platform.minX ?? -platform.width * 0.5;
   const maxX = platform.maxX ?? platform.width * 0.5;
@@ -1845,6 +2550,48 @@ function isPlacementInsidePlatform(bounds, platform) {
     bounds.max.x <= maxX - PLACEMENT_PADDING &&
     bounds.min.z >= minZ + PLACEMENT_PADDING &&
     bounds.max.z <= maxZ - PLACEMENT_PADDING
+  );
+}
+
+function isWallPlacementInsidePlatform(bounds, platform, wall) {
+  const minX = platform.minX ?? -platform.width * 0.5;
+  const maxX = platform.maxX ?? platform.width * 0.5;
+  const minZ = platform.minZ ?? -platform.depth * 0.5;
+  const maxZ = platform.maxZ ?? platform.depth * 0.5;
+  const minY = (platform.floorY ?? bounds.min.y) + PLACEMENT_PADDING;
+  const maxY = (platform.ceilingY ?? bounds.max.y) - PLACEMENT_PADDING;
+  const epsilon = 0.002;
+
+  if (bounds.min.y < minY || bounds.max.y > maxY) return false;
+  if (wall === "rightWall") {
+    return (
+      bounds.min.x >= minX + PLACEMENT_PADDING &&
+      bounds.max.x <= maxX + epsilon &&
+      bounds.min.z >= minZ + PLACEMENT_PADDING &&
+      bounds.max.z <= maxZ - PLACEMENT_PADDING
+    );
+  }
+  if (wall === "leftWall") {
+    return (
+      bounds.min.x >= minX - epsilon &&
+      bounds.max.x <= maxX - PLACEMENT_PADDING &&
+      bounds.min.z >= minZ + PLACEMENT_PADDING &&
+      bounds.max.z <= maxZ - PLACEMENT_PADDING
+    );
+  }
+  if (wall === "backWall") {
+    return (
+      bounds.min.z >= minZ - epsilon &&
+      bounds.max.z <= maxZ - PLACEMENT_PADDING &&
+      bounds.min.x >= minX + PLACEMENT_PADDING &&
+      bounds.max.x <= maxX - PLACEMENT_PADDING
+    );
+  }
+  return (
+    bounds.min.z >= minZ + PLACEMENT_PADDING &&
+    bounds.max.z <= maxZ + epsilon &&
+    bounds.min.x >= minX + PLACEMENT_PADDING &&
+    bounds.max.x <= maxX - PLACEMENT_PADDING
   );
 }
 
@@ -1911,8 +2658,7 @@ function getRootRenderableMeshes(root) {
   return root
     .getChildMeshes(false)
     .filter(
-      (mesh) =>
-        mesh.getTotalVertices?.() > 0 && !isPolySurfaceHologram(mesh),
+      (mesh) => mesh.getTotalVertices?.() > 0 && !isPolySurfaceHologram(mesh),
     );
 }
 
@@ -1968,15 +2714,336 @@ function toggleNotebook() {
   if (willOpen) exitPointerLock();
 }
 
+function openFabricatorModal(root = activeInteraction?.root) {
+  if (!fabricatorModal) return;
+
+  closePlayerModals();
+  activeFabricatorRoot = root ?? null;
+  renderFabricatorAnalysis();
+  fabricatorModal.hidden = false;
+  document.body.classList.add("ui-modal-open");
+  exitPointerLock();
+}
+
+function pulseFabricatorDisassembleButton() {
+  startFabricatorDisassembly(activeFabricatorRoot);
+}
+
+function renderFabricatorAnalysis() {
+  const mounted = activeFabricatorRoot?.metadata?.fabricatorMountedAsteroid;
+  const yieldValues = getAsteroidYield(mounted?.composition);
+  const hasYield = Boolean(yieldValues);
+  const disassembly = activeFabricatorRoot?.metadata?.fabricatorDisassembly;
+  const processing = Boolean(disassembly);
+
+  if (fabricatorAnalysisStatus) {
+    let statusText = "No asteroid loaded";
+    if (processing) {
+      statusText = `Disassembling ${Math.ceil(disassembly.remaining)}s`;
+    } else if (hasYield) {
+      statusText = "Asteroid analyzed";
+    }
+    fabricatorAnalysisStatus.textContent = statusText;
+  }
+  if (fabricatorYieldIron) {
+    fabricatorYieldIron.textContent = hasYield ? String(yieldValues.iron) : "-";
+  }
+  if (fabricatorYieldCopper) {
+    fabricatorYieldCopper.textContent = hasYield
+      ? String(yieldValues.copper)
+      : "-";
+  }
+  if (fabricatorYieldWater) {
+    fabricatorYieldWater.textContent = hasYield
+      ? String(yieldValues.water)
+      : "-";
+  }
+  if (fabricatorDisassembleButton) {
+    fabricatorDisassembleButton.disabled = !hasYield || processing;
+    fabricatorDisassembleButton.textContent = processing
+      ? "Disassembling"
+      : "Disassemble";
+  }
+}
+
+function startFabricatorDisassembly(root) {
+  if (!root || root.metadata?.fabricatorDisassembly) return false;
+
+  const mounted = root.metadata?.fabricatorMountedAsteroid;
+  const yieldValues = getAsteroidYield(mounted?.composition);
+  if (!mounted?.mesh || !yieldValues) {
+    updateInteractionPrompt({ prompt: "No asteroid loaded" });
+    renderFabricatorAnalysis();
+    return false;
+  }
+
+  const rewards = createFabricatorRewards(yieldValues);
+  if (!canAddInventoryItemCounts(rewards)) {
+    updateInteractionPrompt({ prompt: "Inventory full" });
+    return false;
+  }
+
+  const job = {
+    root,
+    mounted,
+    mesh: mounted.mesh,
+    rewards,
+    elapsed: 0,
+    remaining: FABRICATOR_DISASSEMBLE_SECONDS,
+    duration: FABRICATOR_DISASSEMBLE_SECONDS,
+    originalScaling: mounted.mesh.scaling.clone(),
+    effects: createFabricatorDisassemblyEffects(root, mounted.mesh),
+  };
+  root.metadata = {
+    ...(root.metadata ?? {}),
+    fabricatorDisassembly: job,
+  };
+  fabricatorDisassemblyJobs.add(job);
+  if (fabricatorDisassembleButton) {
+    fabricatorDisassembleButton.classList.remove("activated");
+    void fabricatorDisassembleButton.offsetWidth;
+    fabricatorDisassembleButton.classList.add("activated");
+  }
+  renderFabricatorAnalysis();
+  updateInteractionPrompt({ prompt: "Disassembly started" });
+  return true;
+}
+
+function createFabricatorRewards(yieldValues) {
+  return [
+    { item: fabricatorResourceItems.iron, count: yieldValues.iron },
+    { item: fabricatorResourceItems.water, count: yieldValues.water },
+    { item: fabricatorResourceItems.copper, count: yieldValues.copper },
+  ].filter(({ count }) => count > 0);
+}
+
+function updateFabricatorDisassembly(seconds) {
+  if (!fabricatorDisassemblyJobs.size) return;
+
+  for (const job of [...fabricatorDisassemblyJobs]) {
+    if (
+      !job.root ||
+      job.root.isDisposed?.() ||
+      !job.mesh ||
+      job.mesh.isDisposed?.()
+    ) {
+      cancelFabricatorDisassembly(job);
+      continue;
+    }
+
+    job.elapsed = Math.min(job.elapsed + seconds, job.duration);
+    job.remaining = Math.max(0, job.duration - job.elapsed);
+    const progress = job.duration > 0 ? job.elapsed / job.duration : 1;
+    updateFabricatorDisassemblyEffects(job, progress);
+
+    if (activeFabricatorRoot === job.root) {
+      renderFabricatorAnalysis();
+    }
+    if (progress >= 1) {
+      completeFabricatorDisassembly(job);
+    }
+  }
+}
+
+function completeFabricatorDisassembly(job) {
+  fabricatorDisassemblyJobs.delete(job);
+  cleanupFabricatorDisassemblyEffects(job.effects);
+
+  if (job.root?.metadata?.fabricatorMountedAsteroid === job.mounted) {
+    delete job.root.metadata.fabricatorMountedAsteroid;
+  }
+  if (job.root?.metadata?.fabricatorDisassembly === job) {
+    delete job.root.metadata.fabricatorDisassembly;
+  }
+  job.mesh?.dispose(false, true);
+
+  for (const { item, count } of job.rewards) {
+    addInventoryItemCount(item, count);
+  }
+  renderHotbars();
+  renderInventoryGrid();
+  refreshPlacementPreview();
+  if (activeFabricatorRoot === job.root) {
+    renderFabricatorAnalysis();
+  }
+  updateInteractionPrompt({
+    prompt: `Disassembled · ${formatFabricatorRewards(job.rewards)}`,
+  });
+}
+
+function cancelFabricatorDisassembly(job) {
+  fabricatorDisassemblyJobs.delete(job);
+  cleanupFabricatorDisassemblyEffects(job.effects);
+  if (job.root?.metadata?.fabricatorDisassembly === job) {
+    delete job.root.metadata.fabricatorDisassembly;
+  }
+  if (activeFabricatorRoot === job.root) renderFabricatorAnalysis();
+}
+
+function formatFabricatorRewards(rewards) {
+  return rewards
+    .map(({ item, count }) => `${count} ${item.name}`)
+    .join(" · ");
+}
+
+function createFabricatorDisassemblyEffects(root, asteroidMesh) {
+  const platformRoot = level?.platform?.root;
+  if (!platformRoot || !asteroidMesh) return null;
+
+  const start = getWireAnchorPoint(root, "fabricator");
+  const end = asteroidMesh.position.clone();
+  const beamMaterial = createFabricatorLaserMaterial();
+  const beam = B.MeshBuilder.CreateTube(
+    "fabricator-blue-disassembly-laser",
+    {
+      path: [start, end],
+      radius: FABRICATOR_LASER_RADIUS,
+      tessellation: 12,
+      cap: B.Mesh.CAP_ALL,
+    },
+    scene,
+  );
+  beam.parent = platformRoot;
+  beam.material = beamMaterial;
+  beam.isPickable = false;
+  beam.checkCollisions = false;
+  beam.metadata = {
+    ...(beam.metadata ?? {}),
+    excludeFromBounds: true,
+    excludeFromCollision: true,
+    fabricatorDisassemblyEffect: true,
+  };
+
+  const impactMaterial = createFabricatorLaserMaterial();
+  const impact = B.MeshBuilder.CreateSphere(
+    "fabricator-blue-disassembly-impact",
+    { diameter: 0.07, segments: 16 },
+    scene,
+  );
+  impact.parent = platformRoot;
+  impact.position.copyFrom(end);
+  impact.material = impactMaterial;
+  impact.isPickable = false;
+  impact.checkCollisions = false;
+  impact.metadata = {
+    ...(impact.metadata ?? {}),
+    excludeFromBounds: true,
+    excludeFromCollision: true,
+    fabricatorDisassemblyEffect: true,
+  };
+
+  return { beam, impact, beamMaterial, impactMaterial };
+}
+
+function createFabricatorLaserMaterial() {
+  const material = new B.StandardMaterial(
+    "fabricator-blue-disassembly-laser-material",
+    scene,
+  );
+  material.diffuseColor = new B.Color3(0.12, 0.55, 1);
+  material.emissiveColor = new B.Color3(0.18, 0.75, 1);
+  material.specularColor = new B.Color3(0.65, 0.9, 1);
+  material.alpha = 0.72;
+  return material;
+}
+
+function updateFabricatorDisassemblyEffects(job, progress) {
+  const pulse = 0.5 + 0.5 * Math.sin(job.elapsed * 18);
+  if (job.effects?.beamMaterial) {
+    job.effects.beamMaterial.alpha = 0.52 + pulse * 0.34;
+    job.effects.beamMaterial.emissiveColor.copyFromFloats(
+      0.12 + pulse * 0.12,
+      0.55 + pulse * 0.28,
+      1,
+    );
+  }
+  if (job.effects?.impact) {
+    const scale = 0.75 + pulse * 0.55 + progress * 0.85;
+    job.effects.impact.scaling.setAll(scale);
+  }
+  if (job.effects?.impactMaterial) {
+    job.effects.impactMaterial.alpha = 0.36 + pulse * 0.42;
+  }
+  if (job.mesh && !job.mesh.isDisposed?.()) {
+    const shrink = Math.max(0.05, 1 - progress * 0.95);
+    job.mesh.scaling.copyFrom(job.originalScaling.scale(shrink));
+    job.mesh.rotation.y += 0.025;
+  }
+}
+
+function cleanupFabricatorDisassemblyEffects(effects) {
+  effects?.beam?.dispose(false, true);
+  effects?.impact?.dispose(false, true);
+  effects?.beamMaterial?.dispose?.();
+  effects?.impactMaterial?.dispose?.();
+}
+
+function openHatchWarningModal(interaction) {
+  if (!hatchWarningModal || !hatchWarningActions || !interaction) return false;
+  closePlayerModals();
+  pendingHatchInteraction = interaction;
+  hatchWarningActions.replaceChildren(
+    ...createHatchWarningButtons(Boolean(equippedHelmet)),
+  );
+  hatchWarningModal.hidden = false;
+  document.body.classList.add("ui-modal-open");
+  exitPointerLock();
+  updateInteractionPrompt(null);
+  return true;
+}
+
+function createHatchWarningButtons(hasHelmet) {
+  const openButton = document.createElement("button");
+  openButton.type = "button";
+  openButton.className = "hatch-open-button";
+  openButton.textContent = hasHelmet ? "Open" : "Open without helmet";
+  openButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    confirmOpenHatch();
+  });
+
+  if (hasHelmet) return [openButton];
+
+  const abortButton = document.createElement("button");
+  abortButton.type = "button";
+  abortButton.textContent = "Abort";
+  abortButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    closePlayerModals();
+  });
+  return [openButton, abortButton];
+}
+
+function confirmOpenHatch() {
+  const interaction = pendingHatchInteraction;
+  closePlayerModals();
+  if (!interaction || interaction.isOpen) return;
+
+  const result = interaction.activate?.();
+  if (result === false) return;
+
+  triggerHatchDecompression(interaction);
+  updateInteractionPrompt(null);
+}
+
 function closePlayerModals() {
   inventoryModal.hidden = true;
   notebookModal.hidden = true;
+  if (fabricatorModal) fabricatorModal.hidden = true;
+  if (hatchWarningModal) hatchWarningModal.hidden = true;
+  activeFabricatorRoot = null;
+  pendingHatchInteraction = null;
   document.body.classList.remove("ui-modal-open");
   keys.clear();
 }
 
 function isUiModalOpen() {
-  return !inventoryModal.hidden || !notebookModal.hidden;
+  return (
+    !inventoryModal.hidden ||
+    !notebookModal.hidden ||
+    Boolean(fabricatorModal && !fabricatorModal.hidden) ||
+    Boolean(hatchWarningModal && !hatchWarningModal.hidden)
+  );
 }
 
 function exitPointerLock() {
@@ -2259,8 +3326,7 @@ function syncPlayerPlaceholderToPhysics(platform) {
   const sourceHeight = playerPlaceholderRig.metadata?.sourceHeight ?? 1;
   const scale = playerHeight / sourceHeight;
   if (
-    Math.abs((playerPlaceholderRig.metadata?.physicsScale ?? 0) - scale) <
-    0.001
+    Math.abs((playerPlaceholderRig.metadata?.physicsScale ?? 0) - scale) < 0.001
   ) {
     return;
   }
@@ -2495,6 +3561,13 @@ function installHudControls() {
     hud.append(orbitStatus);
   }
 
+  const airPressureControl = createLifeSupportMeter("air-pressure", "Cabin");
+  airPressureMeter = airPressureControl.meter;
+  airPressureMeterText = airPressureControl.text;
+  const oxygenControl = createLifeSupportMeter("oxygen", "O2");
+  oxygenMeter = oxygenControl.meter;
+  oxygenMeterFill = oxygenControl.fill;
+  oxygenMeterText = oxygenControl.text;
   timeButton = createHudButton();
   flyButton = createHudButton();
   cameraButton = createHudButton();
@@ -2526,6 +3599,7 @@ function installHudControls() {
     event.stopPropagation();
     saveCurrentWorldState();
   });
+  vitals?.append(airPressureControl.root, oxygenControl.root);
   hud.append(
     timeButton,
     flyButton,
@@ -2535,6 +3609,26 @@ function installHudControls() {
     sensitivityControl,
   );
   updateHudButtons();
+}
+
+function createLifeSupportMeter(kind, labelText) {
+  const root = document.createElement("span");
+  root.className = `hud-meter ${kind}`;
+
+  const text = document.createElement("span");
+  text.className = "hud-meter-text";
+  text.textContent = labelText;
+
+  const meter = document.createElement("span");
+  meter.className = "hud-meter-track";
+  meter.style.setProperty("--meter-value", "100%");
+
+  const fill = document.createElement("span");
+  fill.className = "hud-meter-fill";
+  meter.append(fill);
+
+  root.append(text, meter);
+  return { root, meter, fill, text };
 }
 
 function createMouseSensitivityControl() {
@@ -2633,12 +3727,19 @@ function createWorldSaveState() {
       thirdPersonMode,
       selectedHotbarIndex,
     },
+    lifeSupport: {
+      cabinPressureAtm: Number(cabinPressureAtm.toFixed(3)),
+      helmetOxygenSeconds: Number(helmetOxygenSeconds.toFixed(1)),
+    },
     inventory: inventoryItems.map(sanitizeInventoryEntryForSave),
     hotbar: hotbarItems.map(sanitizeInventoryEntryForSave),
     pickups: {
       collectedIds: getCollectedPickupIds(),
     },
     placedItems: getPlacedItemsForSave(),
+    asteroids: {
+      dropped: getDroppedAsteroidsForSave(),
+    },
     helmet: getHelmetStateForSave(),
     tether: {
       attached:
@@ -2683,13 +3784,53 @@ function getPlacedItemsForSave() {
   }
 
   for (const root of roots) {
-    placed.push({
+    const placedItem = {
       item: sanitizeItemForSave(root.metadata.placedItem),
       position: vectorToArray(root.position),
       rotationDegrees: vectorRadiansToDegrees(root.rotation),
-    });
+    };
+    const mountedAsteroid = getFabricatorMountedAsteroidForSave(root);
+    if (mountedAsteroid) {
+      placedItem.fabricatorMountedAsteroid = mountedAsteroid;
+    }
+    placed.push(placedItem);
   }
   return placed;
+}
+
+function getDroppedAsteroidsForSave() {
+  return [...asteroidBodies]
+    .filter((body) => isAsteroidBodyActive(body))
+    .map((body) => {
+      const mesh = body.mesh;
+      const rotation =
+        mesh.rotationQuaternion?.toEulerAngles?.() ?? mesh.rotation;
+      return {
+        position: vectorToArray(mesh.position),
+        rotationDegrees: vectorRadiansToDegrees(rotation),
+        scale: vectorToArray(mesh.scaling),
+        velocity: vectorToArray(body.velocity),
+        angularVelocity: vectorToArray(body.angularVelocity),
+        radius: Number(body.radius.toFixed(4)),
+        composition: cloneSave(mesh.metadata?.asteroidComposition ?? {}),
+        color: cloneSave(mesh.metadata?.asteroidColor ?? null),
+      };
+    });
+}
+
+function getFabricatorMountedAsteroidForSave(root) {
+  const mounted = root?.metadata?.fabricatorMountedAsteroid;
+  const mesh = mounted?.mesh;
+  if (!mesh || mesh.isDisposed?.()) return null;
+  const composition = mounted.composition ?? mesh.metadata?.asteroidComposition;
+  if (!composition) return null;
+
+  return {
+    composition: cloneSave(composition),
+    color: cloneSave(mesh.metadata?.asteroidColor ?? null),
+    radius: Number((mounted.radius ?? 0).toFixed(4)),
+    scale: vectorToArray(mesh.scaling),
+  };
 }
 
 function getHelmetStateForSave() {
@@ -2729,9 +3870,11 @@ function restoreSavedWorldState(world) {
 
   restorePlayerState(world.player);
   restoreSceneState(world.scene);
+  restoreLifeSupportState(world.lifeSupport);
   restoreInventoryState(world);
-  restoreHelmetState(world.helmet);
+  restoreHelmetState(world.helmet, world.lifeSupport);
   restorePlacedItems(world.placedItems);
+  restoreDroppedAsteroids(world.asteroids?.dropped);
   if (world.tether?.attached) {
     const hook = getHelmetHookInteraction();
     if (hook) {
@@ -2763,6 +3906,67 @@ function restoreSavedWorldState(world) {
   renderInventoryGrid();
   refreshPlacementPreview();
   updateHudButtons();
+}
+
+function restoreLifeSupportState(lifeSupport) {
+  const savedPressure = Number(lifeSupport?.cabinPressureAtm);
+  cabinPressureAtm = Number.isFinite(savedPressure)
+    ? Math.max(0, Math.min(savedPressure, CABIN_PRESSURE_INITIAL_ATM))
+    : CABIN_PRESSURE_INITIAL_ATM;
+
+  const savedOxygen = Number(lifeSupport?.helmetOxygenSeconds);
+  helmetOxygenSeconds = Number.isFinite(savedOxygen)
+    ? Math.max(0, Math.min(savedOxygen, HELMET_OXYGEN_MAX_SECONDS))
+    : HELMET_OXYGEN_MAX_SECONDS;
+  updateLifeSupportHud();
+}
+
+function restoreDroppedAsteroids(savedAsteroids) {
+  if (!Array.isArray(savedAsteroids)) return;
+  for (const asteroid of savedAsteroids) {
+    restoreDroppedAsteroid(asteroid);
+  }
+}
+
+function restoreDroppedAsteroid(asteroid) {
+  if (!Array.isArray(asteroid?.position)) return;
+
+  const radius =
+    Number(asteroid.radius) || FABRICATOR_ASTEROID_MAX_RADIUS * 0.7;
+  const mesh = createAsteroidMeshFromSource(null, "dropped-asteroid", {
+    color: asteroid.color,
+  });
+  mesh.parent = level?.platform?.root ?? null;
+  mesh.position.copyFrom(B.Vector3.FromArray(asteroid.position));
+  mesh.scaling.copyFrom(
+    B.Vector3.FromArray(asteroid.scale ?? [radius, radius, radius]),
+  );
+  if (Array.isArray(asteroid.rotationDegrees)) {
+    mesh.rotation = B.Vector3.FromArray(
+      vectorDegreesToRadians(asteroid.rotationDegrees),
+    );
+  }
+  mesh.isPickable = true;
+  mesh.checkCollisions = false;
+  mesh.receiveShadows = true;
+  mesh.metadata = {
+    ...(mesh.metadata ?? {}),
+    excludeFromBounds: false,
+    excludeFromCollision: true,
+    heldAsteroid: false,
+    asteroidComposition: cloneSave(asteroid.composition ?? {}),
+    asteroidColor: cloneSave(asteroid.color ?? null),
+  };
+  installDroppedAsteroidInteraction(mesh);
+  registerAsteroidBody(mesh, {
+    radius,
+    velocity: Array.isArray(asteroid.velocity)
+      ? B.Vector3.FromArray(asteroid.velocity)
+      : B.Vector3.Zero(),
+    angularVelocity: Array.isArray(asteroid.angularVelocity)
+      ? B.Vector3.FromArray(asteroid.angularVelocity)
+      : createAsteroidAngularVelocity(),
+  });
 }
 
 function restoreTetherParticles(savedParticles) {
@@ -2842,7 +4046,7 @@ function restoreItemArray(target, source) {
   }
 }
 
-function restoreHelmetState(helmet) {
+function restoreHelmetState(helmet, lifeSupport) {
   const hook = getHelmetHookInteraction();
   if (hook) {
     hook.initialMountResolved = true;
@@ -2857,6 +4061,14 @@ function restoreHelmetState(helmet) {
 
   if (helmet?.equipped?.item) {
     equipHelmetItem(cloneSave(helmet.equipped.item)).then((equipped) => {
+      const savedOxygen = Number(lifeSupport?.helmetOxygenSeconds);
+      if (equipped && Number.isFinite(savedOxygen)) {
+        helmetOxygenSeconds = Math.max(
+          0,
+          Math.min(savedOxygen, HELMET_OXYGEN_MAX_SECONDS),
+        );
+        updateLifeSupportHud();
+      }
       if (equipped && helmet.equipped.visorOpen) {
         setHelmetVisorOpen(true, true);
         updateHudButtons();
@@ -2886,9 +4098,161 @@ async function restorePlacedItem(placed) {
       );
     }
     installPlacedItemMetadata(root, placed.item);
+    restoreFabricatorMountedAsteroid(root, placed.fabricatorMountedAsteroid);
+    queueFabricatorBatteryWireRefresh();
   } catch (error) {
     console.error("Failed to restore placed item.", error);
   }
+}
+
+function restoreFabricatorMountedAsteroid(root, asteroid) {
+  if (!asteroid || !isFabricatorItem(root?.metadata?.placedItem)) return;
+
+  const radius =
+    Number(asteroid.radius) || FABRICATOR_ASTEROID_MAX_RADIUS * 0.7;
+  const mesh = createAsteroidMeshFromSource(
+    null,
+    "fabricator-mounted-asteroid",
+    {
+      color: asteroid.color,
+    },
+  );
+  mesh.scaling.copyFrom(
+    B.Vector3.FromArray(asteroid.scale ?? [radius, radius, radius]),
+  );
+  if (level?.platform?.root) {
+    mesh.parent = level.platform.root;
+  }
+  mesh.isPickable = false;
+  mesh.checkCollisions = false;
+  mesh.receiveShadows = true;
+  mesh.metadata = {
+    ...(mesh.metadata ?? {}),
+    excludeFromBounds: false,
+    excludeFromCollision: true,
+    fabricatorMountedAsteroid: true,
+    asteroidComposition: cloneSave(asteroid.composition ?? {}),
+    asteroidColor: cloneSave(asteroid.color ?? null),
+  };
+  positionAsteroidOnFabricator(mesh, root, radius);
+  root.metadata = {
+    ...(root.metadata ?? {}),
+    fabricatorMountedAsteroid: {
+      mesh,
+      composition: cloneSave(asteroid.composition ?? {}),
+      radius,
+    },
+  };
+}
+
+function queueFabricatorBatteryWireRefresh() {
+  requestAnimationFrame(() => refreshFabricatorBatteryWires());
+}
+
+function refreshFabricatorBatteryWires() {
+  for (const wire of fabricatorBatteryWires) {
+    wire.dispose(false, true);
+  }
+  fabricatorBatteryWires.clear();
+
+  const fabricators = getPlacedItemRoots((item) => isFabricatorItem(item));
+  const batteries = getPlacedItemRoots((item) => isBatteryItem(item));
+  if (!fabricators.length || !batteries.length) return;
+
+  const usedBatteries = new Set();
+  for (const fabricator of fabricators) {
+    const battery = findClosestPlacedRoot(fabricator, batteries, usedBatteries);
+    if (!battery) continue;
+    usedBatteries.add(battery);
+    const wire = createFabricatorBatteryWire(fabricator, battery);
+    if (wire) fabricatorBatteryWires.add(wire);
+  }
+}
+
+function getPlacedItemRoots(predicate) {
+  const roots = new Set();
+  for (const mesh of scene?.meshes ?? []) {
+    const root = mesh.metadata?.glbPickupRoot;
+    const item = root?.metadata?.placedItem;
+    if (root && item && root.isEnabled?.() !== false && predicate(item)) {
+      roots.add(root);
+    }
+  }
+  return [...roots];
+}
+
+function findClosestPlacedRoot(source, candidates, excluded = new Set()) {
+  let closest = null;
+  let closestDistance = Infinity;
+  for (const candidate of candidates) {
+    if (excluded.has(candidate)) continue;
+    const distance = source.position
+      .subtract(candidate.position)
+      .lengthSquared();
+    if (distance < closestDistance) {
+      closest = candidate;
+      closestDistance = distance;
+    }
+  }
+  return closest;
+}
+
+function createFabricatorBatteryWire(fabricator, battery) {
+  const platformRoot = level?.platform?.root;
+  if (!platformRoot) return null;
+
+  const fabricatorPoint = getWireAnchorPoint(fabricator, "fabricator");
+  const batteryPoint = getWireAnchorPoint(battery, "battery");
+  if (!fabricatorPoint || !batteryPoint) return null;
+
+  const midpoint = fabricatorPoint.add(batteryPoint).scale(0.5);
+  midpoint.y = Math.min(fabricatorPoint.y, batteryPoint.y) - 0.045;
+  const wire = B.MeshBuilder.CreateTube(
+    "fabricator-battery-red-wire",
+    {
+      path: [fabricatorPoint, midpoint, batteryPoint],
+      radius: FABRICATOR_BATTERY_WIRE_RADIUS,
+      tessellation: 10,
+      cap: B.Mesh.CAP_ALL,
+    },
+    scene,
+  );
+  wire.parent = platformRoot;
+  wire.material = getFabricatorBatteryWireMaterial();
+  wire.isPickable = false;
+  wire.checkCollisions = false;
+  wire.receiveShadows = true;
+  wire.metadata = {
+    ...(wire.metadata ?? {}),
+    excludeFromBounds: true,
+    excludeFromCollision: true,
+    fabricatorBatteryWire: true,
+  };
+  return wire;
+}
+
+function getWireAnchorPoint(root, type) {
+  const bounds = getRootBoundsInPlatform(root);
+  if (!bounds) return root.position.clone();
+
+  const center = bounds.min.add(bounds.max).scale(0.5);
+  if (type === "fabricator") {
+    return new B.Vector3(center.x, bounds.min.y + 0.06, center.z);
+  }
+  return new B.Vector3(center.x, center.y, center.z);
+}
+
+function getFabricatorBatteryWireMaterial() {
+  const materialName = "fabricator-battery-red-wire-material";
+  const existing = scene.getMaterialByName?.(materialName);
+  if (existing) return existing;
+
+  const material = new B.StandardMaterial(materialName, scene);
+  material.diffuseColor = new B.Color3(0.95, 0.04, 0.025);
+  material.emissiveColor = new B.Color3(0.28, 0.01, 0.006);
+  material.specularColor = new B.Color3(0.45, 0.08, 0.06);
+  material.specularPower = 48;
+  return material;
 }
 
 function getHelmetHookInteraction() {
@@ -3016,6 +4380,8 @@ function installPlayerLoop() {
         if (isShiftHeld()) move.y -= 1;
       }
       updateHatchDecompression(seconds);
+      updateLifeSupport(seconds);
+      updateFabricatorDisassembly(seconds);
 
       if (zeroGravityMovement) {
         updateZeroGravityThrusters(move, platformPhysics, seconds);
@@ -3042,6 +4408,7 @@ function installPlayerLoop() {
       if (groundedMovement) {
         updatePlatformGravity(platformPhysics, seconds);
       }
+      updateAsteroidPhysics(seconds, platformPhysics);
       updatePlayerTether(seconds);
       if (thirdPersonMode) {
         updateThirdPersonCamera();
@@ -3064,6 +4431,11 @@ function updateActiveInteraction() {
     return;
   }
   if (heldAsteroid) {
+    const fabricatorInteraction = createFabricatorInteractionFromLook();
+    if (fabricatorInteraction) {
+      updateInteractionPrompt(fabricatorInteraction);
+      return;
+    }
     updateInteractionPrompt({
       prompt: createAsteroidPrompt(
         heldAsteroid.mesh?.metadata?.asteroidComposition,
@@ -3093,6 +4465,22 @@ function updateActiveInteraction() {
   updateInteractionPrompt(interaction);
 }
 
+function createFabricatorInteractionFromLook() {
+  const ray = createCameraLookRay(GLB_PICKUP_PROMPT_RANGE);
+  const hit = scene.pickWithRay(ray, (mesh) =>
+    Boolean(mesh.metadata?.glbPickupLabel),
+  );
+  const interaction = createGlbPickupPrompt(hit?.pickedMesh);
+  if (
+    !hit?.hit ||
+    interaction?.type !== "fabricator" ||
+    hit.distance > (interaction.range ?? GLB_PICKUP_PROMPT_RANGE)
+  ) {
+    return null;
+  }
+  return interaction;
+}
+
 function createGlbPickupPrompt(mesh) {
   const label = mesh?.metadata?.glbPickupLabel;
   if (!label) return null;
@@ -3100,6 +4488,24 @@ function createGlbPickupPrompt(mesh) {
     id: label,
     name: label,
   };
+  if (isFabricatorItem(item)) {
+    const root = mesh.metadata?.glbPickupRoot ?? mesh;
+    const mounted = root?.metadata?.fabricatorMountedAsteroid;
+    const yieldText = formatAsteroidComposition(mounted?.composition);
+    const occupiedText = mounted && yieldText ? ` · Yield ${yieldText}` : "";
+    const heldPrompt = createHeldAsteroidFabricatorPrompt(root, label);
+    return {
+      type: "fabricator",
+      range: mesh.metadata.glbPickupRange ?? GLB_PICKUP_PROMPT_RANGE,
+      root,
+      item,
+      acceptsHeldAsteroid:
+        Boolean(heldAsteroid) && canPlaceHeldAsteroidOnFabricator(root).ok,
+      prompt: heldAsteroid
+        ? heldPrompt
+        : `Press F to use ${label}${occupiedText}`,
+    };
+  }
 
   return {
     type: "pickup",
@@ -3112,8 +4518,129 @@ function createGlbPickupPrompt(mesh) {
   };
 }
 
+function createHeldAsteroidFabricatorPrompt(root, label) {
+  const placement = canPlaceHeldAsteroidOnFabricator(root);
+  if (!placement.ok) {
+    return `${placement.prompt} · Press F to use ${label}`;
+  }
+  return createAsteroidPrompt(
+    heldAsteroid.mesh?.metadata?.asteroidComposition,
+    `Press E to load ${label} · Press F to use`,
+  );
+}
+
+function canPlaceHeldAsteroidOnFabricator(root) {
+  if (!heldAsteroid?.mesh) {
+    return { ok: false, prompt: "No asteroid held" };
+  }
+  if (!root) {
+    return { ok: false, prompt: "No fabricator target" };
+  }
+  if (root.metadata?.fabricatorMountedAsteroid?.mesh) {
+    return { ok: false, prompt: "Fabricator occupied" };
+  }
+
+  const radius = getHeldAsteroidRadius();
+  if (radius > FABRICATOR_ASTEROID_MAX_RADIUS) {
+    return { ok: false, prompt: "Asteroid too large for fabricator" };
+  }
+  return { ok: true, radius };
+}
+
+function getHeldAsteroidRadius() {
+  const radius = Number(heldAsteroid?.radius);
+  if (Number.isFinite(radius) && radius > 0) return radius;
+  return (
+    heldAsteroid?.mesh?.getBoundingInfo?.().boundingSphere.radiusWorld ?? 0
+  );
+}
+
+function placeHeldAsteroidOnFabricator(interaction) {
+  const root = interaction?.root;
+  const placement = canPlaceHeldAsteroidOnFabricator(root);
+  if (!placement.ok) {
+    updateInteractionPrompt({ prompt: placement.prompt });
+    return false;
+  }
+
+  const mesh = heldAsteroid.mesh;
+  const composition = cloneSave(mesh.metadata?.asteroidComposition ?? {});
+  mesh.computeWorldMatrix(true);
+  if (level?.platform?.root) {
+    mesh.setParent(level.platform.root);
+  } else {
+    mesh.parent = null;
+  }
+  positionAsteroidOnFabricator(mesh, root, placement.radius);
+  mesh.isPickable = false;
+  mesh.checkCollisions = false;
+  mesh.metadata = {
+    ...(mesh.metadata ?? {}),
+    excludeFromBounds: false,
+    excludeFromCollision: true,
+    fabricatorMountedAsteroid: true,
+    heldAsteroid: false,
+  };
+  delete mesh.metadata.interaction;
+
+  root.metadata = {
+    ...(root.metadata ?? {}),
+    fabricatorMountedAsteroid: {
+      mesh,
+      composition,
+      radius: placement.radius,
+    },
+  };
+  heldAsteroid = null;
+  renderFabricatorAnalysis();
+  updateInteractionPrompt({
+    prompt: createAsteroidPrompt(composition, "Asteroid loaded"),
+  });
+  return true;
+}
+
+function positionAsteroidOnFabricator(mesh, root, radius) {
+  const platformRoot = level?.platform?.root;
+  const bounds = root ? getRootBoundsInPlatform(root) : null;
+  if (bounds && platformRoot) {
+    const center = bounds.min.add(bounds.max).scale(0.5);
+    const forward = getFabricatorAsteroidForwardDirection(bounds);
+    mesh.position.copyFrom(
+      new B.Vector3(
+        center.x,
+        bounds.min.y + radius + FABRICATOR_ASTEROID_BOTTOM_CLEARANCE,
+        center.z,
+      ).addInPlace(forward.scale(FABRICATOR_ASTEROID_FORWARD_OFFSET)),
+    );
+    return;
+  }
+
+  mesh.setParent(root ?? platformRoot ?? null);
+  mesh.position.set(0, radius + FABRICATOR_ASTEROID_BOTTOM_CLEARANCE, 0.075);
+}
+
+function getFabricatorAsteroidForwardDirection(bounds) {
+  const platform = level?.platform?.physics;
+  if (!platform || !bounds) return B.Vector3.Zero();
+
+  const center = bounds.min.add(bounds.max).scale(0.5);
+  const minX = platform.minX ?? -platform.width * 0.5;
+  const maxX = platform.maxX ?? platform.width * 0.5;
+  const minZ = platform.minZ ?? -platform.depth * 0.5;
+  const maxZ = platform.maxZ ?? platform.depth * 0.5;
+  const nearestWalls = [
+    { distance: Math.abs(center.x - minX), direction: new B.Vector3(1, 0, 0) },
+    { distance: Math.abs(maxX - center.x), direction: new B.Vector3(-1, 0, 0) },
+    { distance: Math.abs(center.z - minZ), direction: new B.Vector3(0, 0, 1) },
+    { distance: Math.abs(maxZ - center.z), direction: new B.Vector3(0, 0, -1) },
+  ];
+  nearestWalls.sort((a, b) => a.distance - b.distance);
+  return nearestWalls[0]?.direction ?? B.Vector3.Zero();
+}
+
 function deactivateGlbPickupMesh(mesh) {
   const root = mesh?.metadata?.glbPickupRoot ?? mesh;
+  unregisterPlacedItemCollisionMeshes(root);
   const meshes = root?.getChildMeshes?.() ?? [mesh].filter(Boolean);
   for (const child of meshes) {
     child.isPickable = false;
@@ -3129,6 +4656,7 @@ function deactivateGlbPickupMesh(mesh) {
   }
   root?.setEnabled?.(false);
   root?.dispose?.(false, false);
+  refreshFabricatorBatteryWires();
 }
 
 function createCameraLookRay(distance) {
@@ -3207,7 +4735,7 @@ function createHeldAsteroidMesh(asteroid) {
 }
 
 function createAsteroidMeshFromSource(sourceMesh, name, asteroid = {}) {
-  const positions = sourceMesh.getVerticesData(B.VertexBuffer.PositionKind);
+  const positions = sourceMesh?.getVerticesData?.(B.VertexBuffer.PositionKind);
   const mesh = positions
     ? new B.Mesh(name, scene)
     : B.MeshBuilder.CreateIcoSphere(
@@ -3219,12 +4747,13 @@ function createAsteroidMeshFromSource(sourceMesh, name, asteroid = {}) {
   if (positions) {
     const vertexData = new B.VertexData();
     vertexData.positions = positions.slice();
-    vertexData.normals =
-      sourceMesh.getVerticesData(B.VertexBuffer.NormalKind)?.slice();
-    vertexData.uvs =
-      sourceMesh.getVerticesData(B.VertexBuffer.UVKind)?.slice();
-    vertexData.colors =
-      sourceMesh.getVerticesData(B.VertexBuffer.ColorKind)?.slice();
+    vertexData.normals = sourceMesh
+      .getVerticesData(B.VertexBuffer.NormalKind)
+      ?.slice();
+    vertexData.uvs = sourceMesh.getVerticesData(B.VertexBuffer.UVKind)?.slice();
+    vertexData.colors = sourceMesh
+      .getVerticesData(B.VertexBuffer.ColorKind)
+      ?.slice();
     vertexData.indices = sourceMesh.getIndices()?.slice();
     vertexData.applyToMesh(mesh);
   }
@@ -3232,7 +4761,7 @@ function createAsteroidMeshFromSource(sourceMesh, name, asteroid = {}) {
   mesh.useVertexColors = false;
   mesh.hasVertexAlpha = false;
   mesh.material = createShipLitAsteroidMaterial(
-    sourceMesh.material,
+    sourceMesh?.material,
     name,
     asteroid.color,
   );
@@ -3252,7 +4781,10 @@ function createShipLitAsteroidMaterial(sourceMaterial, name, tint) {
     : baseDiffuse;
   material.diffuseTexture = sourceMaterial?.diffuseTexture ?? null;
   material.bumpTexture = sourceMaterial?.bumpTexture ?? null;
-  if (material.bumpTexture && sourceMaterial?.bumpTexture?.level !== undefined) {
+  if (
+    material.bumpTexture &&
+    sourceMaterial?.bumpTexture?.level !== undefined
+  ) {
     material.bumpTexture.level = sourceMaterial.bumpTexture.level;
   }
   material.invertNormalMapY = Boolean(sourceMaterial?.invertNormalMapY);
@@ -3263,7 +4795,8 @@ function createShipLitAsteroidMaterial(sourceMaterial, name, tint) {
     sourceMaterial?.specularColor?.clone?.() ?? new B.Color3(0.04, 0.035, 0.03);
   material.specularPower = sourceMaterial?.specularPower ?? 42;
   material.ambientColor =
-    sourceMaterial?.ambientColor?.clone?.() ?? new B.Color3(0.028, 0.026, 0.022);
+    sourceMaterial?.ambientColor?.clone?.() ??
+    new B.Color3(0.028, 0.026, 0.022);
 
   material.alpha = 1;
   material.backFaceCulling = false;
@@ -3303,10 +4836,250 @@ function createShipLitAsteroidMaterial(sourceMaterial, name, tint) {
   return material;
 }
 
+function registerAsteroidBody(mesh, options = {}) {
+  if (!mesh || mesh.isDisposed?.()) return null;
+
+  unregisterAsteroidBody(mesh);
+  mesh.computeWorldMatrix(true);
+  const radius = options.radius ?? getAsteroidMeshRadius(mesh);
+  const body = {
+    mesh,
+    radius,
+    velocity: options.velocity?.clone?.() ?? B.Vector3.Zero(),
+    angularVelocity:
+      options.angularVelocity?.clone?.() ?? createAsteroidAngularVelocity(),
+  };
+  mesh.metadata = {
+    ...(mesh.metadata ?? {}),
+    asteroidBody: body,
+    asteroidPhysics: true,
+  };
+  asteroidBodies.add(body);
+  return body;
+}
+
+function unregisterAsteroidBody(mesh) {
+  const body = mesh?.metadata?.asteroidBody;
+  if (body) asteroidBodies.delete(body);
+  if (mesh?.metadata) {
+    delete mesh.metadata.asteroidBody;
+    delete mesh.metadata.asteroidPhysics;
+  }
+}
+
+function getAsteroidMeshRadius(mesh) {
+  mesh.computeWorldMatrix(true);
+  return Math.max(
+    mesh.getBoundingInfo?.().boundingSphere.radiusWorld ?? 0,
+    ASTEROID_CONTACT_SKIN,
+  );
+}
+
+function createAsteroidAngularVelocity() {
+  return new B.Vector3(
+    (Math.random() - 0.5) * 1.3,
+    (Math.random() - 0.5) * 1.3,
+    (Math.random() - 0.5) * 1.3,
+  );
+}
+
+function getDroppedAsteroidVelocity() {
+  const velocity = zeroGravityMode
+    ? zeroGravityVelocity.clone()
+    : B.Vector3.Zero();
+  const forward = getCameraForwardLocalDirection();
+  if (forward.lengthSquared() > 0.0001) {
+    velocity.addInPlace(forward.scale(ASTEROID_THROW_SPEED));
+  }
+  clampVectorLengthInPlace(velocity, ASTEROID_MAX_SPEED);
+  return velocity;
+}
+
+function updateAsteroidPhysics(seconds, platform) {
+  if (!seconds || !asteroidBodies.size) return;
+
+  const bodies = [...asteroidBodies].filter((body) =>
+    isAsteroidBodyActive(body),
+  );
+  for (const body of bodies) {
+    updateAsteroidBody(body, seconds, platform);
+  }
+  resolveAsteroidBodyPairs(bodies);
+}
+
+function isAsteroidBodyActive(body) {
+  const mesh = body?.mesh;
+  if (!mesh || mesh.isDisposed?.() || mesh.isEnabled?.(true) === false) {
+    asteroidBodies.delete(body);
+    return false;
+  }
+  if (mesh.metadata?.heldAsteroid || mesh.metadata?.fabricatorMountedAsteroid) {
+    return false;
+  }
+  return true;
+}
+
+function updateAsteroidBody(body, seconds, platform) {
+  const mesh = body.mesh;
+  clampVectorLengthInPlace(body.velocity, ASTEROID_MAX_SPEED);
+  mesh.position.addInPlace(body.velocity.scale(seconds));
+  updateAsteroidSpin(body, seconds);
+
+  resolveAsteroidAgainstCollisionObjects(body, platform);
+  resolveAsteroidAgainstPlayer(body, platform);
+  body.velocity.scaleInPlace(ASTEROID_COLLISION_DAMPING);
+}
+
+function updateAsteroidSpin(body, seconds) {
+  const spin = body.angularVelocity;
+  const angle = spin.length() * seconds;
+  if (angle <= 0.000001) return;
+
+  const axis = spin.clone().normalize();
+  const delta = B.Quaternion.RotationAxis(axis, angle);
+  const current =
+    body.mesh.rotationQuaternion?.clone?.() ??
+    B.Quaternion.RotationYawPitchRoll(
+      body.mesh.rotation.y,
+      body.mesh.rotation.x,
+      body.mesh.rotation.z,
+    );
+  body.mesh.rotationQuaternion = delta.multiply(current);
+}
+
+function resolveAsteroidAgainstCollisionObjects(body, platform) {
+  if (!platform) return;
+
+  body.mesh.computeWorldMatrix(true);
+  for (const collider of getAuthoredCollisionMeshes(platform)) {
+    const correction = getSphereObbCorrection(
+      body.mesh.getAbsolutePosition(),
+      body.radius,
+      collider,
+    );
+    if (!correction) continue;
+
+    const localCorrection = worldVectorToPlatformLocal(correction);
+    body.mesh.position.addInPlace(localCorrection);
+    bounceAsteroidVelocity(body, localCorrection);
+    body.mesh.computeWorldMatrix(true);
+  }
+}
+
+function bounceAsteroidVelocity(body, localCorrection) {
+  if (localCorrection.lengthSquared() <= 0.000001) return;
+  const normal = localCorrection.normalize();
+  const speedIntoSurface = B.Vector3.Dot(body.velocity, normal);
+  if (speedIntoSurface < 0) {
+    body.velocity.subtractInPlace(
+      normal.scale((1 + ASTEROID_BOUNCE_RESTITUTION) * speedIntoSurface),
+    );
+  }
+}
+
+function resolveAsteroidAgainstPlayer(body, platform) {
+  if (!camera || !platform || body.mesh === heldAsteroid?.mesh) return;
+
+  const bounds = getSolidLevelPlayerBounds(platform);
+  const asteroidCenter = body.mesh.position;
+  const samples = getPlayerCollisionSamplePoints(camera.position, bounds);
+  const fallbackNormal = getCameraForwardLocalDirection();
+  let best = null;
+  let bestPenetration = 0;
+
+  for (const sample of samples) {
+    const delta = asteroidCenter.subtract(sample);
+    const distance = delta.length();
+    const minDistance = body.radius + bounds.radius + ASTEROID_CONTACT_SKIN;
+    const penetration = minDistance - distance;
+    if (penetration <= bestPenetration) continue;
+
+    bestPenetration = penetration;
+    best = {
+      normal: distance > 0.000001 ? delta.scale(1 / distance) : fallbackNormal,
+      penetration,
+    };
+  }
+
+  if (!best) return;
+
+  const asteroidPush = best.normal.scale(
+    best.penetration * (1 - ASTEROID_PLAYER_PUSH_FRACTION),
+  );
+  const playerPush = best.normal.scale(
+    -best.penetration * ASTEROID_PLAYER_PUSH_FRACTION,
+  );
+  body.mesh.position.addInPlace(asteroidPush);
+  if (zeroGravityMode && !flyMode) {
+    camera.position.addInPlace(playerPush);
+  }
+
+  const playerVelocity = zeroGravityMode
+    ? zeroGravityVelocity
+    : B.Vector3.Zero();
+  const relativeVelocity = body.velocity.subtract(playerVelocity);
+  const closingSpeed = B.Vector3.Dot(relativeVelocity, best.normal);
+  if (closingSpeed < 0) {
+    const impulse = (1 + ASTEROID_BOUNCE_RESTITUTION) * -closingSpeed;
+    body.velocity.addInPlace(best.normal.scale(impulse));
+    if (zeroGravityMode && !flyMode) {
+      zeroGravityVelocity.subtractInPlace(best.normal.scale(impulse * 0.35));
+      clampVectorLengthInPlace(zeroGravityVelocity, ZERO_G_MAX_SPEED);
+    }
+  } else if (body.velocity.lengthSquared() < 0.0001) {
+    body.velocity.addInPlace(best.normal.scale(0.12));
+  }
+  clampVectorLengthInPlace(body.velocity, ASTEROID_MAX_SPEED);
+}
+
+function getCameraForwardLocalDirection() {
+  const direction = camera.getDirection(B.Axis.Z);
+  if (camera.parent) {
+    const inverseParent = camera.parent.getWorldMatrix().clone().invert();
+    B.Vector3.TransformNormalToRef(direction, inverseParent, direction);
+  }
+  if (direction.lengthSquared() <= 0.000001) return new B.Vector3(1, 0, 0);
+  return direction.normalize();
+}
+
+function resolveAsteroidBodyPairs(bodies) {
+  for (let aIndex = 0; aIndex < bodies.length; aIndex += 1) {
+    for (let bIndex = aIndex + 1; bIndex < bodies.length; bIndex += 1) {
+      resolveAsteroidBodyPair(bodies[aIndex], bodies[bIndex]);
+    }
+  }
+}
+
+function resolveAsteroidBodyPair(a, b) {
+  const delta = b.mesh.position.subtract(a.mesh.position);
+  let distance = delta.length();
+  const minDistance = a.radius + b.radius + ASTEROID_CONTACT_SKIN;
+  if (distance >= minDistance) return;
+
+  const normal =
+    distance > 0.000001 ? delta.scale(1 / distance) : new B.Vector3(1, 0, 0);
+  if (distance <= 0.000001) distance = 0;
+  const correction = normal.scale((minDistance - distance) * 0.5);
+  a.mesh.position.subtractInPlace(correction);
+  b.mesh.position.addInPlace(correction);
+
+  const relativeVelocity = b.velocity.subtract(a.velocity);
+  const closingSpeed = B.Vector3.Dot(relativeVelocity, normal);
+  if (closingSpeed >= 0) return;
+
+  const impulse = (-(1 + ASTEROID_BOUNCE_RESTITUTION) * closingSpeed) / 2;
+  a.velocity.subtractInPlace(normal.scale(impulse));
+  b.velocity.addInPlace(normal.scale(impulse));
+  clampVectorLengthInPlace(a.velocity, ASTEROID_MAX_SPEED);
+  clampVectorLengthInPlace(b.velocity, ASTEROID_MAX_SPEED);
+}
+
 function dropHeldAsteroid() {
   if (!heldAsteroid?.mesh) return false;
 
   const mesh = heldAsteroid.mesh;
+  const velocity = getDroppedAsteroidVelocity();
+  const radius = getHeldAsteroidRadius();
   mesh.computeWorldMatrix(true);
   if (level?.platform?.root) {
     mesh.setParent(level.platform.root);
@@ -3322,6 +5095,7 @@ function dropHeldAsteroid() {
     heldAsteroid: false,
   };
   installDroppedAsteroidInteraction(mesh);
+  registerAsteroidBody(mesh, { radius, velocity });
   heldAsteroid = null;
   updateInteractionPrompt(null);
   return true;
@@ -3346,6 +5120,7 @@ function installDroppedAsteroidInteraction(mesh) {
 function pickUpDroppedAsteroid(mesh) {
   if (heldAsteroid || !mesh || mesh.isDisposed?.()) return false;
 
+  unregisterAsteroidBody(mesh);
   mesh.metadata = {
     ...(mesh.metadata ?? {}),
     excludeFromBounds: true,
@@ -3373,29 +5148,38 @@ function pickUpDroppedAsteroid(mesh) {
 
 function createAsteroidPrompt(composition, actionText) {
   const compositionText = formatAsteroidComposition(composition);
-  return compositionText
-    ? `${actionText} · ${compositionText}`
-    : actionText;
+  return compositionText ? `${actionText} · ${compositionText}` : actionText;
 }
 
 function formatAsteroidComposition(composition) {
-  if (!composition) return "";
-
-  const iron = Number(composition.iron);
-  const copper = Number(composition.copper);
-  const water = Number(composition.water);
-  const total = iron + copper + water;
-  if (!Number.isFinite(total) || total <= 0) return "";
+  const yieldValues = getAsteroidYield(composition);
+  if (!yieldValues) return "";
 
   return [
-    ["Iron", iron],
-    ["Copper", copper],
-    ["Water", water],
+    ["Iron", yieldValues.iron],
+    ["Copper", yieldValues.copper],
+    ["Water", yieldValues.water],
   ]
-    .map(([label, value]) =>
-      `${label} ${Math.round((Number(value) / total) * 100)}%`
-    )
+    .map(([label, value]) => `${label} ${value}`)
     .join(" · ");
+}
+
+function getAsteroidYield(composition) {
+  if (!composition) return null;
+
+  const iron = Math.max(0, Math.min(10, Math.round(Number(composition.iron))));
+  const copper = Math.max(
+    0,
+    Math.min(10, Math.round(Number(composition.copper))),
+  );
+  const water = Math.max(
+    0,
+    Math.min(10, Math.round(Number(composition.water))),
+  );
+  const total = iron + copper + water;
+  if (!Number.isFinite(total) || total <= 0) return null;
+
+  return { iron, copper, water };
 }
 
 function updateInteractionPrompt(interaction) {
@@ -3422,7 +5206,7 @@ function getHelmetHookPrompt(interaction) {
   const tetherText =
     playerTether?.interaction === interaction ? "Q detach tether" : "Q tether";
   if (interaction.mountedRoot) {
-    return `Press E to take helmet · ${tetherText}`;
+    return "Press E to take helmet · Q equip helmet";
   }
   if (equippedHelmet) return `Helmet equipped · ${tetherText}`;
   if (findHelmetInventorySlot()) {
@@ -3544,11 +5328,7 @@ function movePlayerWithSolidLevelCollision(
   platform,
   options = {},
 ) {
-  if (
-    !platform ||
-    !camera ||
-    displacement.lengthSquared() <= 0.0000001
-  ) {
+  if (!platform || !camera || displacement.lengthSquared() <= 0.0000001) {
     return null;
   }
 
@@ -3619,12 +5399,7 @@ function resolvePlayerAgainstSolidLevel(position, platform) {
   return { position: resolved, normal };
 }
 
-function resolveAuthoredCollisionMeshes(
-  position,
-  normal,
-  platform,
-  bounds,
-) {
+function resolveAuthoredCollisionMeshes(position, normal, platform, bounds) {
   const meshes = getAuthoredCollisionMeshes(platform);
   if (!meshes.length) return;
 
@@ -3643,7 +5418,13 @@ function resolveAuthoredCollisionMeshes(
 }
 
 function getAuthoredCollisionMeshes(platform) {
-  return (platform?.authoredCollisionMeshes ?? []).filter(
+  const meshes = new Set(platform?.authoredCollisionMeshes ?? []);
+  for (const mesh of scene?.meshes ?? []) {
+    if (mesh.metadata?.itemCollisionMesh) {
+      meshes.add(mesh);
+    }
+  }
+  return [...meshes].filter(
     (mesh) =>
       mesh &&
       !mesh.isDisposed?.() &&
@@ -3678,7 +5459,9 @@ function getPlayerCollisionSamplePoints(position, bounds) {
   const headOffset = Math.min(bounds.radius, clearance);
   const footOffset = Math.max(clearance - bounds.radius, 0);
   const offsets = [headOffset, clearance * 0.5, footOffset];
-  const uniqueOffsets = [...new Set(offsets.map((offset) => offset.toFixed(4)))];
+  const uniqueOffsets = [
+    ...new Set(offsets.map((offset) => offset.toFixed(4))),
+  ];
   return uniqueOffsets.map((offset) =>
     position.add(B.Axis.Y.scale(-Number(offset))),
   );
@@ -3849,11 +5632,12 @@ function getSolidLevelPlayerBounds(platform) {
 
 function isPlayerInsideSolidLevelFootprint(position, platform, bounds) {
   return (
-    position.x >= bounds.minX + bounds.radius &&
-    position.x <= bounds.maxX - bounds.radius &&
-    position.z >= bounds.minZ + bounds.radius &&
-    position.z <= bounds.maxZ - bounds.radius
-  ) || isPlayerInOpenDoorAperture(position, platform, bounds);
+    (position.x >= bounds.minX + bounds.radius &&
+      position.x <= bounds.maxX - bounds.radius &&
+      position.z >= bounds.minZ + bounds.radius &&
+      position.z <= bounds.maxZ - bounds.radius) ||
+    isPlayerInOpenDoorAperture(position, platform, bounds)
+  );
 }
 
 function isPlayerInOpenDoorAperture(
@@ -4023,6 +5807,7 @@ function installBackgroundMusicUnlock(audio) {
 }
 
 function updateHudButtons() {
+  updateLifeSupportHud();
   const timeScale = scene.metadata.timeScale;
   timeButton.textContent =
     timeScale === 0 ? "Time paused" : `Time ${timeScale}x`;

@@ -7,7 +7,12 @@ export function addPolySurfaceHologram(
   scene = mesh?.getScene?.(),
 ) {
   if (!mesh || !scene || isPolySurfaceHologram(mesh)) return null;
-  if (mesh.metadata?.polySurfaceHologram || mesh.getTotalVertices?.() <= 0) {
+  if (
+    mesh.metadata?.itemCollisionMesh ||
+    mesh.metadata?.authoredCollisionMesh ||
+    mesh.metadata?.polySurfaceHologram ||
+    mesh.getTotalVertices?.() <= 0
+  ) {
     return mesh.metadata?.polySurfaceHologram ?? null;
   }
 

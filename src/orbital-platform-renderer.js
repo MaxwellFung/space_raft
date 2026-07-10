@@ -345,6 +345,13 @@ async function loadShipModel(
     }
     shipRoot.parent = root;
     createControlPanel(scene, root, platform.controlPanel, physics);
+    createHelmetHook(
+      scene,
+      root,
+      platform.helmetHook,
+      physics,
+      interactions,
+    );
     await loadFloorProps(scene, root, platform, physics, interactions);
     shipRoot.metadata = {
       ...(shipRoot.metadata ?? {}),
@@ -1339,8 +1346,36 @@ function createHelmetHook(
     ...(hookMesh.metadata ?? {}),
     interaction,
   };
+  createHelmetHookHitbox(scene, root, hook, interaction);
   interactions?.push(interaction);
   return root;
+}
+
+function createHelmetHookHitbox(scene, root, hook, interaction) {
+  const size = hook.tooltipHitboxSize ?? [0.46, 0.56, 0.62];
+  const offset = hook.tooltipHitboxOffset ?? [0, 0.05, -0.16];
+  const hitbox = B.MeshBuilder.CreateBox(
+    `${root.name}-tooltip-hitbox`,
+    {
+      width: size[0] ?? 0.46,
+      height: size[1] ?? 0.56,
+      depth: size[2] ?? 0.62,
+    },
+    scene,
+  );
+  hitbox.parent = root;
+  hitbox.position.copyFrom(B.Vector3.FromArray(offset));
+  hitbox.isPickable = true;
+  hitbox.visibility = 0;
+  hitbox.checkCollisions = false;
+  hitbox.metadata = {
+    ...(hitbox.metadata ?? {}),
+    interaction,
+    excludeFromBounds: true,
+    excludeFromCollision: true,
+    helmetHookHitbox: true,
+  };
+  return hitbox;
 }
 
 function createHookTubePath(length, lipHeight) {
