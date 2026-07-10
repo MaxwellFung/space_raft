@@ -1,7 +1,11 @@
 const B = window.BABYLON;
 const HOLOGRAM_MATERIAL_NAME = "blue-poly-surface-hologram-material";
+const HOLOGRAM_VISIBILITY_KEY = "polySurfaceHologramsVisible";
 
-export function addPolySurfaceHologram(mesh, scene = mesh?.getScene?.()) {
+export function addPolySurfaceHologram(
+  mesh,
+  scene = mesh?.getScene?.(),
+) {
   if (!mesh || !scene || isPolySurfaceHologram(mesh)) return null;
   if (mesh.metadata?.polySurfaceHologram || mesh.getTotalVertices?.() <= 0) {
     return mesh.metadata?.polySurfaceHologram ?? null;
@@ -28,10 +32,12 @@ export function addPolySurfaceHologram(mesh, scene = mesh?.getScene?.()) {
   hologram.alwaysSelectAsActiveMesh = true;
   hologram.renderingGroupId = Math.max(mesh.renderingGroupId ?? 0, 3);
   hologram.alphaIndex = (mesh.alphaIndex ?? 0) + 100;
+  hologram.visibility = getPolySurfaceHologramsVisible(scene) ? 1 : 0;
   hologram.metadata = {
     excludeFromBounds: true,
     excludeFromCollision: true,
     isPolySurfaceHologram: true,
+    hologramSourceMesh: mesh,
   };
 
   mesh.metadata = {
@@ -41,7 +47,10 @@ export function addPolySurfaceHologram(mesh, scene = mesh?.getScene?.()) {
   return hologram;
 }
 
-export function addPolySurfaceHolograms(root, scene = root?.getScene?.()) {
+export function addPolySurfaceHolograms(
+  root,
+  scene = root?.getScene?.(),
+) {
   return root
     .getChildMeshes(false)
     .map((mesh) => addPolySurfaceHologram(mesh, scene))
@@ -52,16 +61,35 @@ export function isPolySurfaceHologram(mesh) {
   return Boolean(mesh?.metadata?.isPolySurfaceHologram);
 }
 
+export function isPolySurfaceCollisionHologram(mesh) {
+  return isPolySurfaceHologram(mesh);
+}
+
+export function getPolySurfaceHologramsVisible(scene) {
+  return Boolean(scene?.metadata?.[HOLOGRAM_VISIBILITY_KEY]);
+}
+
+export function setPolySurfaceHologramsVisible(scene, visible) {
+  if (!scene) return;
+  scene.metadata = scene.metadata ?? {};
+  scene.metadata[HOLOGRAM_VISIBILITY_KEY] = Boolean(visible);
+  for (const mesh of scene.meshes) {
+    if (isPolySurfaceHologram(mesh)) {
+      mesh.visibility = visible ? 1 : 0;
+    }
+  }
+}
+
 function getHologramMaterial(scene) {
   const existing = scene.getMaterialByName?.(HOLOGRAM_MATERIAL_NAME);
   if (existing) return existing;
 
   const material = new B.StandardMaterial(HOLOGRAM_MATERIAL_NAME, scene);
   material.diffuseColor = new B.Color3(0.05, 0.48, 1);
-  material.emissiveColor = new B.Color3(0.0, 0.7, 1.7);
+  material.emissiveColor = new B.Color3(0.0, 0.42, 1.15);
   material.specularColor = new B.Color3(0.2, 0.85, 1);
-  material.alpha = 0.48;
-  material.wireframe = true;
+  material.alpha = 0.24;
+  material.wireframe = false;
   material.disableLighting = true;
   material.backFaceCulling = false;
   material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;

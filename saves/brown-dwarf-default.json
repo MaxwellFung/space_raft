@@ -33,13 +33,20 @@
     "nearRockDensityBypassRadius": 32
   },
   "platform": {
-    "modelUrl": "./assets/teo_ship.glb",
+    "modelUrl": "./assets/ship_col.glb",
     "modelMaxSize": 2.145,
-    "physicsBounds": {
-      "min": [-1.0297, -0.3962, -1.0365],
-      "max": [1.0297, 1.0725, 1.0365]
-    },
+    "physicsBoundsMode": "model",
+    "playerSpawnMode": "underShip",
+    "playerSpawnClearance": 0.55,
     "modelRotationDegrees": [0, 180, 0],
+    "eyeHeightOffset": 0.12,
+    "doorCompanionMeshNames": [],
+    "doorCollisionMeshNames": ["COL_door"],
+    "ignoredCollisionMeshNames": ["COL_front"],
+    "windowShadowMapSize": 2048,
+    "windowShadowBias": 0.00025,
+    "windowShadowNormalBias": 0.006,
+    "windowShadowMinOrthoSize": 2.2,
     "orbit": {
       "enabled": true,
       "primary": "central_brown_dwarf",
@@ -66,9 +73,10 @@
       "timeScale": 1
     },
     "player": {
-      "position": [0.4876, 0.2511, 1.0451],
       "rotationDegrees": [17.613, 191.543, 0],
       "flyMode": false,
+      "zeroGravityMode": true,
+      "zeroGravityVelocity": [0, 0, 0],
       "thirdPersonMode": false,
       "selectedHotbarIndex": 7
     },

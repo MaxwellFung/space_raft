@@ -1,9 +1,4 @@
 import {
-  isSpaceshipGlassMaterial as isGlassMaterial,
-  isSpaceshipGlassMesh as isGlassMesh,
-  replaceGlassWithClearMaterial,
-} from "./spaceship-glass.js";
-import {
   addPolySurfaceHolograms,
   isPolySurfaceHologram,
 } from "./poly-surface-hologram.js";
@@ -12,6 +7,7 @@ const B = window.BABYLON;
 const GRAVITATIONAL_CONSTANT = 6.6743e-11;
 const JUPITER_MASS_KG = 1.89813e27;
 const JUPITER_RADIUS_KM = 69911;
+const DEFAULT_PLAYER_RADIUS_SCALE = 0.185;
 
 export function createOrbitalPlatform(scene, platform, primary) {
   const orbit = platform.orbit ?? {};
@@ -74,6 +70,14 @@ export function createOrbitalPlatform(scene, platform, primary) {
     renderRadius,
   );
 
+  const initialPlayerHeight =
+    Number(platform.playerHeight) ||
+    platform.eyeHeightMeters / metersPerWorldUnit;
+  const initialPlayerRadius = getConfiguredPlayerRadius(
+    platform,
+    initialPlayerHeight,
+    Math.min(width, depth) * 0.08,
+  );
   const physics = {
     width,
     depth,
@@ -82,10 +86,10 @@ export function createOrbitalPlatform(scene, platform, primary) {
     minZ: -depth * 0.5,
     maxZ: depth * 0.5,
     floorY: 0,
-    ceilingY: platform.eyeHeightMeters / metersPerWorldUnit + 1,
-    playerHeight: platform.eyeHeightMeters / metersPerWorldUnit,
-    eyeHeight: platform.eyeHeightMeters / metersPerWorldUnit,
-    radius: 0.05,
+    ceilingY: initialPlayerHeight + 1,
+    playerHeight: initialPlayerHeight,
+    eyeHeight: initialPlayerHeight,
+    radius: initialPlayerRadius,
     gravity: platform.gravity ?? 20,
     jumpSpeed: platform.jumpSpeed ?? 5.4,
   };
@@ -304,12 +308,24 @@ async function loadShipModel(
   interactions,
 ) {
   try {
-    const modelUrl = platform.modelUrl ?? "./assets/teo_ship.glb";
+    const provisionalEyeHeight = physics.eyeHeight;
+    const cameraWasAtProvisionalSpawn = () =>
+      Math.abs(camera.position.x) < 0.0001 &&
+      Math.abs(camera.position.z) < 0.0001 &&
+      Math.abs(camera.position.y - provisionalEyeHeight) < 0.0001;
+    const modelUrl = platform.modelUrl ?? "./assets/ship.glb";
     const result = await B.SceneLoader.ImportMeshAsync("", "", modelUrl, scene);
+    stopImportedShipAnimations(result);
     const importedNodes = [...result.meshes, ...result.transformNodes];
     for (const node of importedNodes) {
       if (!node.parent) node.parent = shipRoot;
     }
+    hideConfiguredShipMeshes(result.meshes, platform);
+    const authoredCollisionMeshes = configureAuthoredCollisionMeshes(
+      result.meshes,
+      platform,
+    );
+    physics.authoredCollisionMeshes = authoredCollisionMeshes;
 
     const doorInteraction = installShipDoorInteraction(
       scene,
@@ -317,15 +333,16 @@ async function loadShipModel(
       interactions,
       platform,
     );
-    makeMaterialsDoubleSided(result);
-    forceOpaqueShipMaterials(result);
-    if (platform.transparentGlass) {
-      replaceGlassWithClearMaterial(result, scene, platform);
-    }
     normalizeModel(shipRoot, platform.modelMaxSize ?? 3.3);
     applyModelRotation(shipRoot, platform);
     updatePhysicsFromShip(shipRoot, physics, platform);
     configureShipDoorPassage(scene, doorInteraction, physics, platform);
+    if (
+      !cameraWasAtProvisionalSpawn() &&
+      shouldLiftCameraIntoPlatformInterior(platform)
+    ) {
+      liftCameraIntoPlatformInterior(camera, physics);
+    }
     shipRoot.parent = root;
     createControlPanel(scene, root, platform.controlPanel, physics);
     await loadFloorProps(scene, root, platform, physics, interactions);
@@ -333,28 +350,121 @@ async function loadShipModel(
       ...(shipRoot.metadata ?? {}),
       brownDwarfWindowShadows: createBrownDwarfWindowShadows(
         scene,
-        result,
         platform,
         primary,
+        root,
+        shipRoot,
       ),
     };
     addPolySurfaceHolograms(shipRoot, scene);
 
-    camera.position.set(0, physics.eyeHeight, 0);
-    applyPlatformInitialCameraRotation(camera, platform);
+    if (cameraWasAtProvisionalSpawn()) {
+      camera.position.copyFrom(resolveInitialCameraPosition(physics, platform));
+      applyPlatformInitialCameraRotation(camera, platform);
+    }
   } catch (error) {
     console.error("Failed to load ship platform model.", error);
   }
 }
 
+function shouldLiftCameraIntoPlatformInterior(platform) {
+  return !shouldSpawnPlayerUnderShip(platform);
+}
+
+function resolveInitialCameraPosition(physics, platform) {
+  if (Array.isArray(platform.initialCameraPosition)) {
+    return B.Vector3.FromArray(platform.initialCameraPosition);
+  }
+  if (shouldSpawnPlayerUnderShip(platform)) {
+    return getUnderShipSpawnPosition(physics, platform);
+  }
+  return new B.Vector3(0, physics.eyeHeight, 0);
+}
+
+function shouldSpawnPlayerUnderShip(platform) {
+  return platform.playerSpawnMode === "underShip";
+}
+
+function getUnderShipSpawnPosition(physics, platform) {
+  const bounds = physics.bounds ?? physics.interiorBounds;
+  const offset = B.Vector3.FromArray(platform.playerSpawnOffset ?? [0, 0, 0]);
+  const center = bounds
+    ? bounds.min.add(bounds.max).scale(0.5)
+    : B.Vector3.Zero();
+  const configuredClearance = Number(platform.playerSpawnClearance);
+  const clearance =
+    Number.isFinite(configuredClearance) && configuredClearance > 0
+      ? configuredClearance
+      : Math.max((physics.playerHeight ?? 0.75) * 0.65, 0.45);
+  const undersideY = bounds?.min.y ?? (physics.floorY ?? 0);
+  return new B.Vector3(
+    center.x + offset.x,
+    undersideY - clearance + offset.y,
+    center.z + offset.z,
+  );
+}
+
+function liftCameraIntoPlatformInterior(camera, physics) {
+  const eyeHeight = physics.eyeHeight ?? 0;
+  if (camera.position.y >= eyeHeight - 0.001) return;
+
+  const radius = physics.radius ?? 0;
+  const insideFootprint =
+    camera.position.x >= (physics.minX ?? -Infinity) + radius &&
+    camera.position.x <= (physics.maxX ?? Infinity) - radius &&
+    camera.position.z >= (physics.minZ ?? -Infinity) + radius &&
+    camera.position.z <= (physics.maxZ ?? Infinity) - radius;
+  if (!insideFootprint) return;
+
+  camera.position.y = eyeHeight;
+}
+
+function stopImportedShipAnimations(result) {
+  for (const group of result.animationGroups ?? []) {
+    group.stop?.();
+    group.reset?.();
+    group.pause?.();
+  }
+}
+
+function hideConfiguredShipMeshes(meshes, platform) {
+  const hiddenNames = platform.hiddenMeshNames ?? [];
+  if (!hiddenNames.length) return;
+
+  for (const mesh of meshes) {
+    if (!hiddenNames.includes(mesh.name)) continue;
+    mesh.setEnabled(false);
+    mesh.isVisible = false;
+    mesh.visibility = 0;
+    mesh.isPickable = false;
+    mesh.checkCollisions = false;
+    mesh.metadata = {
+      ...(mesh.metadata ?? {}),
+      hiddenByPlatformConfig: true,
+      excludeFromBounds: true,
+      excludeFromCollision: true,
+    };
+  }
+}
+
 function installShipDoorInteraction(scene, meshes, interactions, platform) {
-  const doorMesh = meshes.find((mesh) =>
-    /(^|[_-])door([_-]|$)/i.test(mesh.name ?? ""),
+  const doorMesh = meshes.find(
+    (mesh) =>
+      !mesh.metadata?.authoredCollisionMesh &&
+      /(^|[_-])door([_-]|$)/i.test(mesh.name ?? ""),
   );
   if (!doorMesh) return;
 
+  const doorMeshParent = doorMesh.parent ?? null;
+  const doorMeshName = getImportedDoorPartBaseName(doorMesh, doorMeshParent);
   const hinge = configureShipDoorHinge(scene, doorMesh, platform);
-  attachShipDoorCompanionMeshes(meshes, hinge);
+  attachShipDoorCompanionMeshes(
+    meshes,
+    hinge,
+    platform,
+    doorMeshName,
+    doorMeshParent,
+  );
 
   const interaction = {
     type: "ship-door",
@@ -376,12 +486,68 @@ function installShipDoorInteraction(scene, meshes, interactions, platform) {
   return interaction;
 }
 
-function attachShipDoorCompanionMeshes(meshes, hinge) {
+function getImportedDoorPartBaseName(mesh, parent) {
+  const parentName = parent?.name ?? "";
+  if (/(^|[_-])door([_-]|$)/i.test(parentName)) return parentName;
+  return (mesh.name ?? "").replace(/[_ -]?primitive\d+$/i, "");
+}
+
+function attachShipDoorCompanionMeshes(
+  meshes,
+  hinge,
+  platform,
+  doorMeshName,
+  doorMeshParent,
+) {
   for (const mesh of meshes) {
     const name = mesh.name?.toLowerCase() ?? "";
-    if (!/(door|hatch)/.test(name) || !/(glass|handle)/.test(name)) continue;
+    if (isImportedDoorPartMesh(mesh, doorMeshName, doorMeshParent)) {
+      mesh.setParent(hinge);
+      continue;
+    }
+    if (isConfiguredDoorCompanionMesh(mesh, platform)) {
+      mesh.setParent(hinge);
+      continue;
+    }
+    if (
+      mesh.metadata?.authoredCollisionMesh &&
+      isConfiguredDoorCollisionMesh(mesh, platform)
+    ) {
+      mesh.setParent(hinge);
+      continue;
+    }
+    if (!/(door|hatch)/.test(name)) continue;
+    if (
+      !mesh.metadata?.authoredCollisionMesh &&
+      !/(glass|handle)/.test(name)
+    ) {
+      continue;
+    }
     mesh.setParent(hinge);
   }
+}
+
+function isImportedDoorPartMesh(mesh, doorMeshName, doorMeshParent) {
+  if (!doorMeshName || mesh.metadata?.authoredCollisionMesh) return false;
+  if (mesh.parent !== doorMeshParent) return false;
+  const parentName = doorMeshParent?.name ?? "";
+  if (/(^|[_-])door([_-]|$)/i.test(parentName)) return true;
+  const name = mesh.name ?? "";
+  return name === doorMeshName || name.startsWith(`${doorMeshName}_`);
+}
+
+function isConfiguredDoorCompanionMesh(mesh, platform) {
+  const names = platform.doorCompanionMeshNames ?? [];
+  if (names.some((name) => name === mesh.name)) return true;
+  const pattern = platform.doorCompanionMeshPattern;
+  return pattern ? new RegExp(pattern, "i").test(mesh.name ?? "") : false;
+}
+
+function isConfiguredDoorCollisionMesh(mesh, platform) {
+  const names = platform.doorCollisionMeshNames ?? [];
+  if (names.some((name) => name === mesh.name)) return true;
+  const pattern = platform.doorCollisionMeshPattern;
+  return pattern ? new RegExp(pattern, "i").test(mesh.name ?? "") : false;
 }
 
 function configureShipDoorHinge(scene, doorMesh, platform) {
@@ -606,6 +772,11 @@ function configureShipDoorPassage(scene, interaction, physics, platform) {
     Math.max(radius * 6, physics.thickness ?? 0.35);
   const interiorDepth =
     platform.doorInteriorDepth ?? Math.max(radius * 4, 0.55);
+  const collisionPadding = platform.doorCollisionPadding ?? radius * 1.15;
+  const collisionVerticalPadding =
+    platform.doorCollisionVerticalPadding ?? radius * 0.85;
+  const collisionDepth =
+    platform.doorCollisionDepth ?? Math.max(radius * 2.5, 0.28);
   const passage = {
     oriented: true,
     interaction,
@@ -619,95 +790,16 @@ function configureShipDoorPassage(scene, interaction, physics, platform) {
       ((physics.ceilingY ?? frame.center.y) - (physics.floorY ?? frame.center.y)) *
         0.5,
     ),
+    collisionHalfWidth: frame.halfWidth + collisionPadding,
+    collisionHalfHeight: frame.halfHeight + collisionVerticalPadding,
+    collisionHalfDepth: collisionDepth,
     inwardDepth: interiorDepth,
     outwardDepth: exteriorDepth,
   };
 
   interaction.passage = passage;
   physics.doorPassages = [...(physics.doorPassages ?? []), passage];
-  createShipDoorGlassPane(scene, interaction, frame, platform);
   createShipDoorInteractionProxy(scene, interaction, passage, platform);
-}
-
-function createShipDoorGlassPane(scene, interaction, frame, platform) {
-  if (platform.doorGlass === false) return;
-
-  const doorMesh = interaction.doorMesh;
-  const hinge = doorMesh?.parent;
-  const width = frame.halfWidth * 2 * (platform.doorGlassWidthScale ?? 0.58);
-  const height = frame.halfHeight * 2 * (platform.doorGlassHeightScale ?? 0.62);
-  if (!hinge || width <= 0 || height <= 0) return;
-
-  const pane = B.MeshBuilder.CreatePlane(
-    `${doorMesh.name}-hatch-glass`,
-    {
-      width,
-      height,
-      sideOrientation: B.Mesh.DOUBLESIDE,
-    },
-    scene,
-  );
-  const material = createShipDoorGlassMaterial(scene, platform, pane.name);
-  pane.material = material;
-  pane.isPickable = true;
-  pane.checkCollisions = false;
-  pane.receiveShadows = false;
-  pane.excludeFromDepthRenderer = true;
-  pane.renderingGroupId = platform.glassRenderingGroupId ?? 4;
-  pane.alphaIndex = (platform.glassAlphaIndex ?? 1000) + 2;
-  pane.metadata = {
-    ...(pane.metadata ?? {}),
-    interaction,
-    platformDoorGlass: true,
-  };
-
-  hinge.computeWorldMatrix(true);
-  const inverseHinge = hinge.getWorldMatrix().clone().invert();
-  pane.parent = hinge;
-  pane.position.copyFrom(
-    B.Vector3.TransformCoordinates(
-      frame.center.add(frame.normal.scale(platform.doorGlassOffset ?? 0.012)),
-      inverseHinge,
-    ),
-  );
-  pane.rotationQuaternion = quaternionFromAxes(
-    B.Vector3.TransformNormal(frame.right, inverseHinge).normalize(),
-    B.Vector3.TransformNormal(frame.up, inverseHinge).normalize(),
-    B.Vector3.TransformNormal(frame.normal, inverseHinge).normalize(),
-  );
-}
-
-function createShipDoorGlassMaterial(scene, platform, name) {
-  const material = new B.PBRMaterial(`${name}-material`, scene);
-  material.albedoColor = color3FromOption(
-    platform.doorGlassColor ?? platform.glassColor,
-    [0.76, 0.93, 1.0],
-  );
-  material.alpha =
-    platform.doorGlassAlpha ?? Math.max(platform.glassAlpha ?? 0.32, 0.38);
-  material.metallic = 0;
-  material.roughness = platform.glassRoughness ?? 0.045;
-  material.microSurface = platform.glassMicroSurface ?? 0.96;
-  material.directIntensity = platform.glassDirectIntensity ?? 0.84;
-  material.environmentIntensity = platform.glassEnvironmentIntensity ?? 0.58;
-  material.emissiveColor = color3FromOption(
-    platform.glassSheenColor,
-    [0.08, 0.15, 0.19],
-  );
-  material.emissiveIntensity = platform.doorGlassSheenIntensity ?? 0.12;
-  material.backFaceCulling = false;
-  material.twoSidedLighting = true;
-  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
-  material.alphaMode = B.Engine.ALPHA_COMBINE;
-  material.needDepthPrePass = false;
-  material.disableDepthWrite = true;
-  material.forceDepthWrite = false;
-  if (material.clearCoat) {
-    material.clearCoat.isEnabled = true;
-    material.clearCoat.intensity = 0.92;
-    material.clearCoat.roughness = 0.025;
-  }
-  return material;
 }
 
 function color3FromOption(value, fallback) {
@@ -1281,10 +1373,6 @@ function mergeHookParts(scene, root, parts, material) {
 }
 
 function createHelmetHookMaterial(scene, name, hook) {
-  if (hook.textureBasePath) {
-    return createTexturedHelmetHookMaterial(scene, name, hook);
-  }
-
   const preferredNames = [
     hook.materialName,
     "ship_hull_2",
@@ -1299,49 +1387,13 @@ function createHelmetHookMaterial(scene, name, hook) {
     );
 
   if (source?.clone) {
-    const material = source.clone(`${name}-ship-metal-material`);
-    if ("alpha" in material) material.alpha = 1;
-    if ("transparencyMode" in material) {
-      material.transparencyMode = B.Material.MATERIAL_OPAQUE;
-    }
-    if ("forceDepthWrite" in material) material.forceDepthWrite = true;
-    return material;
+    return source.clone(`${name}-ship-metal-material`);
   }
 
   const material = new B.StandardMaterial(`${name}-material`, scene);
   material.diffuseColor = new B.Color3(0.18, 0.15, 0.12);
   material.specularColor = new B.Color3(0.55, 0.48, 0.36);
   material.specularPower = 48;
-  return material;
-}
-
-function createTexturedHelmetHookMaterial(scene, name, hook) {
-  const basePath = hook.textureBasePath;
-  const material = new B.PBRMaterial(`${name}-textured-metal-material`, scene);
-  const albedoTexture = new B.Texture(`${basePath}_Color.jpg`, scene);
-  const normalTexture = new B.Texture(`${basePath}_NormalGL.jpg`, scene);
-  const metalnessTexture = new B.Texture(`${basePath}_Metalness.jpg`, scene);
-  const textureScale = hook.textureScale ?? 1;
-
-  for (const texture of [albedoTexture, normalTexture, metalnessTexture]) {
-    texture.uScale = textureScale;
-    texture.vScale = textureScale;
-    texture.wrapU = B.Texture.WRAP_ADDRESSMODE;
-    texture.wrapV = B.Texture.WRAP_ADDRESSMODE;
-  }
-
-  material.albedoTexture = albedoTexture;
-  material.bumpTexture = normalTexture;
-  material.metallicTexture = metalnessTexture;
-  material.useMetallnessFromMetallicTextureBlue = true;
-  material.useRoughnessFromMetallicTextureGreen = false;
-  material.albedoColor = B.Color3.FromArray(hook.tintColor ?? [1, 1, 1]);
-  material.metallic = hook.metallic ?? 0.75;
-  material.roughness = hook.roughness ?? 0.7;
-  material.environmentIntensity = hook.environmentIntensity ?? 0.55;
-  material.directIntensity = hook.directIntensity ?? 0.85;
-  material.forceDepthWrite = true;
-  material.backFaceCulling = true;
   return material;
 }
 
@@ -1507,7 +1559,6 @@ async function loadFloorProp(scene, platformRoot, prop, physics) {
       if (!node.parent) node.parent = propRoot;
     }
 
-    makeMaterialsDoubleSided(result);
     normalizeModel(propRoot, prop.maxSize ?? 0.5);
     propRoot.rotation = B.Vector3.FromArray(
       prop.rotation ??
@@ -1689,7 +1740,7 @@ function normalizeModel(root, maxDimension) {
   root.computeWorldMatrix(true);
   for (const mesh of meshes) {
     mesh.computeWorldMatrix(true);
-    mesh.isPickable = !mesh.metadata?.glassThicknessShell;
+    mesh.isPickable = true;
     mesh.checkCollisions = false;
   }
 }
@@ -1699,30 +1750,43 @@ function updatePhysicsFromShip(root, physics, platform) {
   if (!meshes.length) return;
 
   const bounds = getMeshBounds(meshes);
+  const boundsMode = platform.physicsBoundsMode ?? "interior";
+  const savedInterior =
+    boundsMode === "model" ? null : getSavedPhysicsBounds(platform);
   const interior =
-    getSavedPhysicsBounds(platform) ??
-    getInteriorBoundsFromModel(
-      meshes,
-      platform.physicsProbePosition ?? [0, 0, 0],
-    );
+    boundsMode === "model"
+      ? bounds
+      : (savedInterior ??
+        getInteriorBoundsFromModel(
+          meshes,
+          platform.physicsProbePosition ?? [0, 0, 0],
+        ));
   const min = interior?.min ?? bounds.min;
   const max = interior?.max ?? bounds.max;
   const interiorSize = max.subtract(min);
-  const floorY = resolveWalkableFloorY(meshes, { min, max }, platform) ?? min.y;
+  const floorY =
+    getAuthoredFloorSurfaceY(physics.authoredCollisionMeshes, { min, max }, platform) ??
+    resolveWalkableFloorY(
+      meshes,
+      { min, max },
+      platform,
+      Boolean(savedInterior),
+    ) ??
+    min.y;
   const ceilingY = max.y;
   const headroom = Math.max(ceilingY - floorY, 0.001);
-  const radius = Math.max(
-    Math.min(interiorSize.x, interiorSize.z) * 0.08,
-    0.05,
-  );
+  const configuredPlayerHeight = Number(platform.playerHeight);
   const playerHeight = Math.max(
-    radius * 2,
-    Math.min(
-      platform.playerHeight ?? 1.0,
-      headroom * (platform.playerHeightScale ?? 0.82),
-    ),
+    0.001,
+    Number.isFinite(configuredPlayerHeight)
+      ? configuredPlayerHeight
+      : headroom * (platform.playerHeightScale ?? 0.82),
   );
-
+  const radius = getConfiguredPlayerRadius(
+    platform,
+    playerHeight,
+    Math.min(interiorSize.x, interiorSize.z) * 0.08,
+  );
   physics.width = interiorSize.x;
   physics.depth = interiorSize.z;
   physics.minX = min.x;
@@ -1732,10 +1796,25 @@ function updatePhysicsFromShip(root, physics, platform) {
   physics.floorY = floorY;
   physics.ceilingY = ceilingY;
   physics.playerHeight = playerHeight;
-  physics.eyeHeight = floorY + playerHeight;
+  physics.eyeHeight = floorY + playerHeight + (platform.eyeHeightOffset ?? 0);
   physics.radius = radius;
   physics.bounds = bounds;
   physics.interiorBounds = { min: min.clone(), max: max.clone() };
+}
+
+function getConfiguredPlayerRadius(platform, playerHeight, fallbackRadius) {
+  const configuredRadius = Number(platform.playerRadius);
+  if (Number.isFinite(configuredRadius) && configuredRadius > 0) {
+    return configuredRadius;
+  }
+
+  const radiusScale = Number(platform.playerRadiusScale);
+  const scaledRadius =
+    playerHeight *
+    (Number.isFinite(radiusScale) && radiusScale > 0
+      ? radiusScale
+      : DEFAULT_PLAYER_RADIUS_SCALE);
+  return Math.max(scaledRadius, fallbackRadius, 0.05);
 }
 
 function getSavedPhysicsBounds(platform) {
@@ -1752,11 +1831,31 @@ function getSavedPhysicsFloorY(platform) {
   return Number.isFinite(value) ? value : null;
 }
 
-function resolveWalkableFloorY(meshes, interior, platform) {
+function resolveWalkableFloorY(
+  meshes,
+  interior,
+  platform,
+  hasExplicitInterior = false,
+) {
   const saved = getSavedPhysicsFloorY(platform);
   if (saved !== null) return saved;
+  if (hasExplicitInterior) return interior.min.y;
 
   return findWalkableFloorSurfaceY(meshes, interior, platform);
+}
+
+function getAuthoredFloorSurfaceY(meshes, interior, platform) {
+  const floorMeshes = (meshes ?? []).filter(isAuthoredFloorMesh);
+  if (!floorMeshes.length) return null;
+  return findWalkableFloorSurfaceY(floorMeshes, interior, {
+    ...platform,
+    floorSurfaceMinAreaFraction: 0,
+    floorSurfaceMinFootprintFraction: 0,
+  });
+}
+
+function isAuthoredFloorMesh(mesh) {
+  return /(^|[_-])floor([_.-]|$)/i.test(mesh.name ?? "");
 }
 
 function findWalkableFloorSurfaceY(meshes, interior, platform) {
@@ -1776,8 +1875,6 @@ function findWalkableFloorSurfaceY(meshes, interior, platform) {
   const bins = new Map();
 
   for (const mesh of meshes) {
-    if (mesh.metadata?.glassThicknessShell) continue;
-
     const positions = mesh.getVerticesData(B.VertexBuffer.PositionKind);
     if (!positions) continue;
 
@@ -1853,35 +1950,91 @@ function findWalkableFloorSurfaceY(meshes, interior, platform) {
   return viable[viable.length - 1].y;
 }
 
-function createBrownDwarfWindowShadows(scene, result, platform, primary) {
+function createBrownDwarfWindowShadows(
+  scene,
+  platform,
+  primary,
+  platformRoot,
+  shipRoot,
+) {
   if (platform.brownDwarfWindowShadows === false) return null;
 
-  const light = getPrimaryLight(scene, primary);
-  if (!light) return null;
+  const primaryLight = getPrimaryLight(scene, primary);
+  if (!primaryLight) return null;
+
+  const receiverMeshes = platformRoot.getChildMeshes(false).filter((mesh) =>
+    isBrownDwarfWindowLightReceiver(mesh),
+  );
+  const casterMeshes = platformRoot.getChildMeshes(false).filter((mesh) =>
+    isBrownDwarfWindowShadowCaster(mesh, platform),
+  );
+  if (!receiverMeshes.length || !casterMeshes.length) return null;
+
+  excludeMeshesFromLight(primaryLight, receiverMeshes);
+
+  const rayLight = new B.DirectionalLight(
+    `${platform.id}-brown-dwarf-window-rays`,
+    B.Vector3.Forward(),
+    scene,
+  );
+  rayLight.diffuse =
+    primaryLight.diffuse?.clone?.() ?? new B.Color3(1, 0.42, 0.16);
+  rayLight.specular =
+    primaryLight.specular?.clone?.() ?? new B.Color3(1, 0.52, 0.22);
+  rayLight.intensity =
+    platform.windowLightIntensity ??
+    platform.brownDwarfWindowLightIntensity ??
+    primaryLight.intensity;
+  rayLight.includedOnlyMeshes = receiverMeshes;
+  configureDirectionalShadowFrustum(rayLight, platform, shipRoot);
 
   const shadowGenerator = new B.ShadowGenerator(
-    platform.shadowMapSize ?? 1024,
-    light,
+    platform.windowShadowMapSize ?? platform.shadowMapSize ?? 2048,
+    rayLight,
   );
-  shadowGenerator.bias = platform.shadowBias ?? 0.0008;
-  shadowGenerator.normalBias = platform.shadowNormalBias ?? 0.025;
+  shadowGenerator.bias =
+    platform.windowShadowBias ?? platform.shadowBias ?? 0.00025;
+  shadowGenerator.normalBias =
+    platform.windowShadowNormalBias ?? platform.shadowNormalBias ?? 0.006;
   shadowGenerator.usePercentageCloserFiltering = true;
-  shadowGenerator.filteringQuality = B.ShadowGenerator.QUALITY_MEDIUM;
-  shadowGenerator.transparencyShadow = true;
+  shadowGenerator.filteringQuality = B.ShadowGenerator.QUALITY_HIGH;
+  shadowGenerator.transparencyShadow = false;
+  shadowGenerator.forceBackFacesOnly =
+    platform.windowShadowBackFacesOnly ?? false;
 
-  for (const mesh of result.meshes) {
-    if (!isRenderableMesh(mesh)) continue;
-
-    if (isGlassMesh(mesh)) {
-      mesh.receiveShadows = false;
-      continue;
-    }
-
+  for (const mesh of receiverMeshes) {
     mesh.receiveShadows = true;
+  }
+  for (const mesh of casterMeshes) {
     shadowGenerator.addShadowCaster(mesh);
   }
 
-  return shadowGenerator;
+  const primaryPosition = B.Vector3.FromArray(primary?.position ?? [0, 0, 0]);
+  const updateLight = () => {
+    platformRoot.computeWorldMatrix(true);
+    const toShip = platformRoot.getAbsolutePosition().subtract(primaryPosition);
+    if (toShip.lengthSquared() < 0.000001) return;
+
+    const direction = toShip.normalize();
+    rayLight.direction.copyFrom(direction);
+    rayLight.position.copyFrom(
+      platformRoot.getAbsolutePosition().subtract(
+        direction.scale(platform.windowShadowLightDistance ?? 18),
+      ),
+    );
+  };
+  updateLight();
+  const observer = scene.onBeforeRenderObservable.add(updateLight);
+
+  return {
+    rayLight,
+    shadowGenerator,
+    dispose: () => {
+      scene.onBeforeRenderObservable.remove(observer);
+      shadowGenerator.dispose();
+      rayLight.dispose();
+    },
+  };
 }
 
 function getPrimaryLight(scene, primary) {
@@ -1893,66 +2046,108 @@ function getPrimaryLight(scene, primary) {
   );
 }
 
-function forceOpaqueShipMaterials(result) {
-  const materials = [
-    ...new Set(result.meshes.map((mesh) => mesh.material).filter(Boolean)),
-  ];
-
-  for (const material of materials) {
-    if (isGlassMaterial(material)) {
-      continue;
-    }
-
-    material.alpha = 1;
-    material.transparencyMode = B.Material.MATERIAL_OPAQUE;
-    material.alphaMode = B.Engine.ALPHA_DISABLE;
-    material.needDepthPrePass = false;
-    material.disableDepthWrite = false;
-    material.forceDepthWrite = true;
-    if (material.emissiveColor) {
-      material.emissiveColor = B.Color3.Black();
-    }
-    if ("ambientColor" in material) {
-      material.ambientColor = B.Color3.Black();
-    }
-    if ("disableLighting" in material) {
-      material.disableLighting = false;
-    }
-    if ("unlit" in material) {
-      material.unlit = false;
-    }
-    if ("emissiveTexture" in material) {
-      material.emissiveTexture = null;
-    }
-    if ("emissiveIntensity" in material) {
-      material.emissiveIntensity = 0;
-    }
-    if ("useAlphaFromAlbedoTexture" in material) {
-      material.useAlphaFromAlbedoTexture = false;
-    }
-    if ("useAlphaFromDiffuseTexture" in material) {
-      material.useAlphaFromDiffuseTexture = false;
-    }
-    if ("opacityTexture" in material) {
-      material.opacityTexture = null;
-    }
-    if (material.albedoTexture) {
-      material.albedoTexture.hasAlpha = false;
-    }
-    if (material.diffuseTexture) {
-      material.diffuseTexture.hasAlpha = false;
-    }
-  }
+function configureDirectionalShadowFrustum(light, platform, shipRoot) {
+  const bounds = getMeshBounds(getRenderableMeshes(shipRoot));
+  const size = Math.max(
+    bounds.max.x - bounds.min.x,
+    bounds.max.y - bounds.min.y,
+    bounds.max.z - bounds.min.z,
+    platform.windowShadowOrthoSize ?? 0,
+  );
+  const halfSize = Math.max(
+    size * 0.68,
+    platform.windowShadowMinOrthoSize ?? 1.8,
+  );
+  light.autoUpdateExtends = false;
+  light.orthoLeft = -(platform.windowShadowOrthoLeft ?? halfSize);
+  light.orthoRight = platform.windowShadowOrthoRight ?? halfSize;
+  light.orthoBottom = -(platform.windowShadowOrthoBottom ?? halfSize);
+  light.orthoTop = platform.windowShadowOrthoTop ?? halfSize;
+  light.shadowMinZ = platform.windowShadowMinZ ?? 0.1;
+  light.shadowMaxZ = platform.windowShadowMaxZ ?? halfSize * 5;
 }
 
-function makeMaterialsDoubleSided(result) {
-  const materials = [
-    ...new Set(result.meshes.map((mesh) => mesh.material).filter(Boolean)),
-  ];
-  for (const material of materials) {
-    material.backFaceCulling = false;
-    material.twoSidedLighting = true;
+function isBrownDwarfWindowLightReceiver(mesh) {
+  if (!mesh.isEnabled() || mesh.getTotalVertices() <= 0) return false;
+  if (mesh.metadata?.excludeFromBounds) return false;
+  if (isPolySurfaceHologram(mesh)) return false;
+  return true;
+}
+
+function isBrownDwarfWindowShadowCaster(mesh, platform) {
+  if (!mesh.isEnabled() || mesh.getTotalVertices() <= 0) return false;
+  if (isIgnoredCollisionMesh(mesh, platform)) return false;
+  if (mesh.metadata?.platformDoorInteractionProxy) return false;
+  if (isTransparentWindowMesh(mesh)) return false;
+  if (isInteriorLightMesh(mesh)) return false;
+  if (mesh.metadata?.authoredCollisionMesh) return true;
+  return isRenderableMesh(mesh);
+}
+
+function isTransparentWindowMesh(mesh) {
+  const name = mesh.name?.toLowerCase() ?? "";
+  const materialName = mesh.material?.name?.toLowerCase() ?? "";
+  return (
+    /(glass|window|transparent)/.test(name) ||
+    /(glass|window|transparent)/.test(materialName) ||
+    mesh.material?.needAlphaBlending?.() === true
+  );
+}
+
+function isInteriorLightMesh(mesh) {
+  const name = mesh.name?.toLowerCase() ?? "";
+  const materialName = mesh.material?.name?.toLowerCase() ?? "";
+  return (
+    /(light|emissive|lamp)/.test(name) ||
+    /(light|emissive|lamp)/.test(materialName)
+  );
+}
+
+function excludeMeshesFromLight(light, meshes) {
+  const excluded = new Set(light.excludedMeshes ?? []);
+  for (const mesh of meshes) {
+    excluded.add(mesh);
   }
+  light.excludedMeshes = [...excluded];
+}
+
+function configureAuthoredCollisionMeshes(meshes, platform) {
+  const collisionMeshes = [];
+  for (const mesh of meshes) {
+    if (!isAuthoredCollisionMeshName(mesh.name)) continue;
+    mesh.isVisible = false;
+    mesh.visibility = 0;
+    mesh.isPickable = false;
+    mesh.checkCollisions = false;
+    mesh.showBoundingBox = false;
+    mesh.metadata = {
+      ...(mesh.metadata ?? {}),
+      authoredCollisionMesh: true,
+      excludeFromBounds: true,
+      excludeFromCollision: false,
+      originalMaterial: mesh.material ?? null,
+      renderingGroupId: mesh.renderingGroupId ?? 0,
+    };
+    if (isIgnoredCollisionMesh(mesh, platform)) {
+      mesh.metadata = {
+        ...(mesh.metadata ?? {}),
+        authoredCollisionMesh: false,
+        ignoredAuthoredCollisionMesh: true,
+        excludeFromCollision: true,
+      };
+      continue;
+    }
+    collisionMeshes.push(mesh);
+  }
+  return collisionMeshes;
+}
+
+function isAuthoredCollisionMeshName(name = "") {
+  return /^(COL|UCX|UBX|UCP|USP)[_-]/i.test(name);
+}
+
+function isIgnoredCollisionMesh(mesh, platform) {
+  return (platform.ignoredCollisionMeshNames ?? []).includes(mesh.name);
 }
 
 function getRenderableMeshes(root) {
@@ -1963,6 +2158,7 @@ function isRenderableMesh(mesh) {
   return (
     mesh.isEnabled() &&
     mesh.getTotalVertices() > 0 &&
+    !mesh.metadata?.excludeFromBounds &&
     !isPolySurfaceHologram(mesh)
   );
 }

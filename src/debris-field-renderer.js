@@ -1029,6 +1029,7 @@ function applyInstanceBuffers(mesh, matrices, colors) {
     16,
     true,
   );
+  mesh.thinInstanceEnablePicking = true;
   mesh.thinInstanceSetBuffer(
     "color",
     colorBuffer,
@@ -1040,8 +1041,13 @@ function applyInstanceBuffers(mesh, matrices, colors) {
   const hologram = mesh.metadata?.polySurfaceHologram;
   if (hologram) {
     hologram.thinInstanceSetBuffer("matrix", matrixBuffer, 16, true);
+    hologram.thinInstanceEnablePicking = true;
     hologram.thinInstanceSetBuffer("color", colorBuffer, 4, true);
     hologram.thinInstanceRefreshBoundingInfo(true);
+    hologram.metadata = {
+      ...(hologram.metadata ?? {}),
+      hologramUsesThinInstances: true,
+    };
   }
 }
 

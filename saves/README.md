@@ -38,10 +38,22 @@ Useful spatial controls:
 - `world.helmet` / `world.tether`: helmet hook/equipment and tether state.
 - `platform.physicsBounds`: optional explicit local interior bounds, with
   `{ "min": [x, y, z], "max": [x, y, z] }`.
+- `platform.physicsBoundsMode`: set to `"model"` to derive the solid player
+  collider from the loaded model's post-transform bounds instead of explicit or
+  probed interior bounds.
+- Authored GLB collision meshes can be named with `COL_`, `UCX_`, `UBX_`,
+  `UCP_`, or `USP_` prefixes. The runtime hides them from rendering/bounds and
+  F8 reveals those exact authored meshes for inspection.
 - `platform.physicsFloorY`: optional explicit walkable floor height. When absent,
   the ship renderer derives it from broad, near-horizontal model geometry.
 - `platform.physicsProbePosition`: optional local point used to raycast toward
   the actual model walls/floor/ceiling for player bounds.
+- `platform.playerSpawnMode`: set to `"underShip"` to place a fresh player
+  under the loaded ship model instead of at the interior floor height.
+- `platform.playerSpawnClearance`: distance below the ship bounds used by the
+  `"underShip"` spawn mode.
+- `platform.playerSpawnOffset`: optional local `[x, y, z]` offset added to that
+  resolved spawn point.
 - `platform.orbit.fixed`: `true` for geostationary/station-kept, `false` to move.
 - `platform.orbit.lockOrientation`: when `true`, the ship moves along the orbit
   while keeping its initial attitude instead of rotating to face radial/prograde.

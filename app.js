@@ -4,7 +4,6 @@ import { createGlbModelPortrait } from "./src/model-preview.js";
 import { buildLevel } from "./src/level-system.js";
 import { applySaveToLevel, loadSaveFile } from "./src/save-system.js";
 import {
-  addPolySurfaceHologram,
   addPolySurfaceHolograms,
   isPolySurfaceHologram,
 } from "./src/poly-surface-hologram.js";
@@ -35,8 +34,8 @@ const MENU_STAR_DOME_RADIUS = 900;
 const PLACEMENT_RANGE = 3.2;
 const PLACEMENT_PADDING = 0.035;
 const ASTEROID_PICKUP_RANGE = 2.8;
-const HELD_ASTEROID_DISTANCE = 0.82;
-const HELD_ASTEROID_OFFSET = new B.Vector3(0, -0.08, HELD_ASTEROID_DISTANCE);
+const HELD_ASTEROID_DISTANCE = 1.35;
+const HELD_ASTEROID_OFFSET = new B.Vector3(0, -0.18, HELD_ASTEROID_DISTANCE);
 const TETHER_ATTACH_OFFSET = new B.Vector3(0, -0.36, 0);
 const TETHER_SEGMENT_COUNT = 24;
 const TETHER_SOLVER_ITERATIONS = 7;
@@ -63,6 +62,8 @@ const HATCH_WIND_PARTICLE_SECONDS = 1.15;
 const CROUCH_EYE_HEIGHT_SCALE = 0.76;
 const CROUCH_TRANSITION_SPEED = 8;
 const CROUCH_SPEED_SCALE = 0.45;
+const PLAYER_COLLISION_SKIN = 0.012;
+const PLAYER_MAX_LOOK_PITCH = Math.PI / 2 - 0.01;
 const THIRD_PERSON_DISTANCE = 0.82;
 const THIRD_PERSON_HEIGHT = 0.22;
 let gameStarted = false;
@@ -96,7 +97,7 @@ addEventListener("keydown", (event) => {
   }
   if (event.code === "F8") {
     event.preventDefault();
-    toggleThirdPersonCamera();
+    toggleCollisionDebug();
     return;
   }
   if (event.code === "Tab") {
@@ -212,6 +213,7 @@ let mouseSensitivitySlider = null;
 let mouseSensitivityValue = null;
 let activeInteraction = null;
 let objectBoundsVisible = false;
+let collisionDebugVisible = false;
 let draggedInventorySlot = null;
 let placementPreview = null;
 let placementPreviewKey = "";
@@ -221,6 +223,7 @@ let placementInProgress = false;
 let equippedHelmet = null;
 let helmetEquipInProgress = false;
 let playerTether = null;
+let playerPlaceholderRig = null;
 let heldAsteroid = null;
 
 const inventoryItems = Array.from({ length: 20 }, () => null);
@@ -843,17 +846,54 @@ function stopParticleSystemAfter(system, texture, secondsTotal) {
 }
 
 function platformLocalPointToWorld(point) {
+  const root = level?.platform?.root;
+  if (!root) return point.clone();
+  root.computeWorldMatrix(true);
   return B.Vector3.TransformCoordinates(
     point,
-    level.platform.root.getWorldMatrix(),
+    root.getWorldMatrix(),
   );
 }
 
 function platformLocalDirectionToWorld(direction) {
-  return B.Vector3.TransformNormal(
+  const root = level?.platform?.root;
+  if (!root) return direction.clone();
+  root.computeWorldMatrix(true);
+  const world = B.Vector3.TransformNormal(direction, root.getWorldMatrix());
+  if (world.lengthSquared() <= 0.000001) return direction.clone();
+  return world.normalize();
+}
+
+function worldPointToPlatformLocal(point) {
+  const root = level?.platform?.root;
+  if (!root) return point.clone();
+  root.computeWorldMatrix(true);
+  return B.Vector3.TransformCoordinates(
+    point,
+    root.getWorldMatrix().clone().invert(),
+  );
+}
+
+function worldDirectionToPlatformLocal(direction) {
+  const root = level?.platform?.root;
+  if (!root) return direction.clone();
+  root.computeWorldMatrix(true);
+  const local = B.Vector3.TransformNormal(
     direction,
-    level.platform.root.getWorldMatrix(),
-  ).normalize();
+    root.getWorldMatrix().clone().invert(),
+  );
+  if (local.lengthSquared() <= 0.000001) return direction.clone();
+  return local.normalize();
+}
+
+function worldVectorToPlatformLocal(vector) {
+  const root = level?.platform?.root;
+  if (!root) return vector.clone();
+  root.computeWorldMatrix(true);
+  return B.Vector3.TransformNormal(
+    vector,
+    root.getWorldMatrix().clone().invert(),
+  );
 }
 
 function attachPlayerTether(interaction) {
@@ -1680,7 +1720,9 @@ async function loadItemModelRoot(item, options = {}) {
     mesh.showBoundingBox =
       !excludeFromBounds && Boolean(scene.metadata?.objectBoundsVisible);
   }
-  addPolySurfaceHolograms(root, scene);
+  if (!excludeFromBounds) {
+    addPolySurfaceHolograms(root, scene);
+  }
 
   return root;
 }
@@ -1988,6 +2030,7 @@ function startGame(saveFile) {
     timeScale: 1,
     profiler: createAssetProfiler(),
   };
+  collisionDebugVisible = false;
   performanceMonitor = createPerformanceMonitor(engine, metrics);
 
   scene.clearColor.set(0, 0, 0, 1);
@@ -2007,8 +2050,9 @@ function startGame(saveFile) {
   camera.angularSensibility = BASE_MOUSE_SENSIBILITY;
   camera.inertia = 0.18;
   camera.setTarget(B.Vector3.FromArray(brownDwarfLevel.spawn.target));
+  enforceUprightCamera(camera);
   camera.attachControl(canvas, true);
-  createPlayerPlaceholderRig(scene, camera);
+  playerPlaceholderRig = createPlayerPlaceholderRig(scene, camera);
 
   canvas.addEventListener("pointerdown", handleCanvasPointerDown);
   installBackgroundMusicUnlock(backgroundMusic);
@@ -2053,9 +2097,10 @@ function createThirdPersonCamera(scene, playerCamera) {
 }
 
 function createPlayerPlaceholderRig(scene, parentCamera) {
-  const root = new B.TransformNode("player-placeholder-limbs", scene);
-  root.parent = parentCamera;
-  root.position.set(0, 0, 0);
+  const root = new B.TransformNode("player-placeholder-body", scene);
+  root.parent = parentCamera.parent ?? null;
+  root.position.copyFrom(parentCamera.position);
+  root.rotation.set(0, getCameraYaw(parentCamera), 0);
 
   const suitMaterial = new B.StandardMaterial(
     "player-placeholder-suit-material",
@@ -2066,139 +2111,112 @@ function createPlayerPlaceholderRig(scene, parentCamera) {
   suitMaterial.specularColor = new B.Color3(0.18, 0.2, 0.22);
   suitMaterial.specularPower = 58;
 
-  const gloveMaterial = new B.StandardMaterial(
-    "player-placeholder-glove-material",
+  const lensMaterial = new B.StandardMaterial(
+    "player-placeholder-eye-lens-material",
     scene,
   );
-  gloveMaterial.diffuseColor = new B.Color3(0.16, 0.18, 0.2);
-  gloveMaterial.emissiveColor = new B.Color3(0.025, 0.03, 0.035);
-  gloveMaterial.specularColor = new B.Color3(0.1, 0.11, 0.12);
+  lensMaterial.diffuseColor = new B.Color3(0.02, 0.06, 0.08);
+  lensMaterial.emissiveColor = new B.Color3(0.0, 0.18, 0.26);
+  lensMaterial.specularColor = new B.Color3(0.4, 0.9, 1);
 
-  const bootMaterial = new B.StandardMaterial(
-    "player-placeholder-boot-material",
-    scene,
-  );
-  bootMaterial.diffuseColor = new B.Color3(0.12, 0.13, 0.15);
-  bootMaterial.emissiveColor = new B.Color3(0.02, 0.022, 0.026);
-  bootMaterial.specularColor = new B.Color3(0.08, 0.08, 0.09);
+  createPlayerPlaceholderCapsule(scene, root, suitMaterial);
+  createPlayerPlaceholderHead(scene, root, suitMaterial, lensMaterial);
 
-  const limbs = [
-    {
-      name: "left-arm",
-      start: [-0.34, -0.24, 0.26],
-      end: [-0.16, -0.58, 0.7],
-      radius: 0.036,
-      material: suitMaterial,
-    },
-    {
-      name: "right-arm",
-      start: [0.34, -0.24, 0.26],
-      end: [0.16, -0.58, 0.7],
-      radius: 0.036,
-      material: suitMaterial,
-    },
-    {
-      name: "left-leg",
-      start: [-0.13, -0.72, 0.26],
-      end: [-0.19, -1.08, 0.66],
-      radius: 0.045,
-      material: suitMaterial,
-    },
-    {
-      name: "right-leg",
-      start: [0.13, -0.72, 0.26],
-      end: [0.19, -1.08, 0.66],
-      radius: 0.045,
-      material: suitMaterial,
-    },
-  ];
-
-  for (const limb of limbs) {
-    createPlayerPlaceholderLimb(scene, root, limb);
-  }
-
-  for (const hand of [
-    ["left-hand", [-0.16, -0.58, 0.7]],
-    ["right-hand", [0.16, -0.58, 0.7]],
-  ]) {
-    createPlayerPlaceholderJoint(
-      scene,
-      root,
-      hand[0],
-      hand[1],
-      0.052,
-      gloveMaterial,
-    );
-  }
-
-  for (const boot of [
-    ["left-boot", [-0.2, -1.1, 0.73]],
-    ["right-boot", [0.2, -1.1, 0.73]],
-  ]) {
-    const mesh = B.MeshBuilder.CreateBox(
-      `player-placeholder-${boot[0]}`,
-      { width: 0.11, height: 0.06, depth: 0.18 },
-      scene,
-    );
-    mesh.parent = root;
-    mesh.position.copyFrom(B.Vector3.FromArray(boot[1]));
-    mesh.rotation.x = -0.18;
-    mesh.material = bootMaterial;
-    configurePlayerPlaceholderMesh(mesh);
-  }
-
+  measurePlayerPlaceholderSourceBounds(root);
+  syncPlayerPlaceholderPose(root);
+  updatePlayerPlaceholderVisibility(root);
   return root;
 }
 
-function createPlayerPlaceholderLimb(scene, root, limb) {
-  const start = B.Vector3.FromArray(limb.start);
-  const end = B.Vector3.FromArray(limb.end);
-  const delta = end.subtract(start);
-  const length = delta.length();
-  if (length <= 0.0001) return null;
+function createPlayerPlaceholderCapsule(scene, root, material) {
+  if (typeof B.MeshBuilder.CreateCapsule === "function") {
+    const capsule = B.MeshBuilder.CreateCapsule(
+      "player-placeholder-capsule",
+      {
+        height: 0.9,
+        radius: 0.18,
+        tessellation: 18,
+        subdivisions: 4,
+        capSubdivisions: 8,
+      },
+      scene,
+    );
+    capsule.parent = root;
+    capsule.position.set(0, -0.64, 0.38);
+    capsule.material = material;
+    configurePlayerPlaceholderMesh(capsule);
+    return capsule;
+  }
 
-  const mesh = B.MeshBuilder.CreateCylinder(
-    `player-placeholder-${limb.name}`,
-    {
-      height: length,
-      diameterTop: limb.radius * 1.85,
-      diameterBottom: limb.radius * 2.2,
-      tessellation: 10,
-    },
-    scene,
-  );
-  mesh.parent = root;
-  mesh.position.copyFrom(start.add(end).scale(0.5));
-  mesh.rotationQuaternion = quaternionFromUnitVectors(
-    B.Axis.Y,
-    delta.scale(1 / length),
-  );
-  mesh.material = limb.material;
-  configurePlayerPlaceholderMesh(mesh);
-  return mesh;
+  const capsuleRoot = new B.TransformNode("player-placeholder-capsule", scene);
+  capsuleRoot.parent = root;
+  capsuleRoot.position.set(0, -0.64, 0.38);
+
+  for (const [mesh, y] of [
+    [
+      B.MeshBuilder.CreateCylinder(
+        "player-placeholder-capsule-core",
+        { height: 0.54, diameter: 0.36, tessellation: 18 },
+        scene,
+      ),
+      0,
+    ],
+    [
+      B.MeshBuilder.CreateSphere(
+        "player-placeholder-capsule-top",
+        { diameter: 0.36, segments: 18 },
+        scene,
+      ),
+      0.27,
+    ],
+    [
+      B.MeshBuilder.CreateSphere(
+        "player-placeholder-capsule-bottom",
+        { diameter: 0.36, segments: 18 },
+        scene,
+      ),
+      -0.27,
+    ],
+  ]) {
+    mesh.parent = capsuleRoot;
+    mesh.position.y = y;
+    mesh.material = material;
+    configurePlayerPlaceholderMesh(mesh);
+  }
+
+  return capsuleRoot;
 }
 
-function createPlayerPlaceholderJoint(
-  scene,
-  root,
-  name,
-  position,
-  radius,
-  material,
-) {
-  const mesh = B.MeshBuilder.CreateSphere(
-    `player-placeholder-${name}`,
-    { diameter: radius * 2, segments: 10 },
+function createPlayerPlaceholderHead(scene, root, material, lensMaterial) {
+  const head = B.MeshBuilder.CreateSphere(
+    "player-placeholder-head",
+    { diameter: 1, segments: 16 },
     scene,
   );
-  mesh.parent = root;
-  mesh.position.copyFrom(B.Vector3.FromArray(position));
-  mesh.material = material;
-  configurePlayerPlaceholderMesh(mesh);
-  return mesh;
+  head.parent = root;
+  head.position.set(0, -0.045, -0.09);
+  head.scaling.set(0.14, 0.17, 0.14);
+  head.material = material;
+  configurePlayerPlaceholderMesh(head, { thirdPersonOnly: true });
+
+  for (const [name, x] of [
+    ["left-eye", -0.045],
+    ["right-eye", 0.045],
+  ]) {
+    const eye = B.MeshBuilder.CreateSphere(
+      `player-placeholder-${name}`,
+      { diameter: 1, segments: 8 },
+      scene,
+    );
+    eye.parent = root;
+    eye.position.set(x, 0, 0.025);
+    eye.scaling.set(0.018, 0.026, 0.008);
+    eye.material = lensMaterial;
+    configurePlayerPlaceholderMesh(eye, { thirdPersonOnly: true });
+  }
 }
 
-function configurePlayerPlaceholderMesh(mesh) {
+function configurePlayerPlaceholderMesh(mesh, options = {}) {
   mesh.isPickable = false;
   mesh.checkCollisions = false;
   mesh.alwaysSelectAsActiveMesh = true;
@@ -2206,29 +2224,89 @@ function configurePlayerPlaceholderMesh(mesh) {
     ...(mesh.metadata ?? {}),
     excludeFromBounds: true,
     excludeFromCollision: true,
-    playerPlaceholderLimb: true,
+    playerPlaceholderBody: true,
+    thirdPersonOnly: Boolean(options.thirdPersonOnly),
   };
 }
 
-function quaternionFromUnitVectors(from, to) {
-  const start = from.clone().normalize();
-  const end = to.clone().normalize();
-  const dot = B.Vector3.Dot(start, end);
-  if (dot > 0.999999) return B.Quaternion.Identity();
-
-  if (dot < -0.999999) {
-    let axis = B.Vector3.Cross(B.Axis.X, start);
-    if (axis.lengthSquared() < 0.000001) {
-      axis = B.Vector3.Cross(B.Axis.Z, start);
-    }
-    axis.normalize();
-    return B.Quaternion.RotationAxis(axis, Math.PI);
+function updatePlayerPlaceholderVisibility(root) {
+  if (!root) return;
+  for (const mesh of root.getChildMeshes(false)) {
+    mesh.setEnabled(thirdPersonMode);
   }
+}
 
-  const cross = B.Vector3.Cross(start, end);
-  const quaternion = new B.Quaternion(cross.x, cross.y, cross.z, 1 + dot);
-  quaternion.normalize();
-  return quaternion;
+function measurePlayerPlaceholderSourceBounds(root) {
+  const bounds = getRootLocalBounds(root);
+  if (!bounds) return;
+  const sourceHeight = bounds.max.y - bounds.min.y;
+  if (!Number.isFinite(sourceHeight) || sourceHeight <= 0) return;
+  root.metadata = {
+    ...(root.metadata ?? {}),
+    sourceBounds: {
+      min: bounds.min.clone(),
+      max: bounds.max.clone(),
+    },
+    sourceHeight,
+  };
+}
+
+function syncPlayerPlaceholderToPhysics(platform) {
+  if (!playerPlaceholderRig || !platform) return;
+  const playerHeight =
+    platform.playerHeight ?? (platform.eyeHeight ?? 0) - (platform.floorY ?? 0);
+  if (!Number.isFinite(playerHeight) || playerHeight <= 0) return;
+  const sourceHeight = playerPlaceholderRig.metadata?.sourceHeight ?? 1;
+  const scale = playerHeight / sourceHeight;
+  if (
+    Math.abs((playerPlaceholderRig.metadata?.physicsScale ?? 0) - scale) <
+    0.001
+  ) {
+    return;
+  }
+  playerPlaceholderRig.scaling.setAll(scale);
+  playerPlaceholderRig.metadata = {
+    ...(playerPlaceholderRig.metadata ?? {}),
+    physicsScale: scale,
+  };
+}
+
+function syncPlayerPlaceholderPose(root = playerPlaceholderRig) {
+  if (!root || !camera) return;
+  root.parent = camera.parent ?? null;
+  root.position.copyFrom(camera.position);
+  root.rotationQuaternion = null;
+  root.rotation.set(0, getCameraYaw(camera), 0);
+}
+
+function getCameraYaw(targetCamera) {
+  const rotation = getCameraEulerRotation(targetCamera);
+  return Number.isFinite(rotation.y) ? rotation.y : 0;
+}
+
+function getCameraEulerRotation(targetCamera) {
+  if (!targetCamera) return B.Vector3.Zero();
+  if (targetCamera.rotationQuaternion) {
+    return targetCamera.rotationQuaternion.toEulerAngles();
+  }
+  return targetCamera.rotation ?? B.Vector3.Zero();
+}
+
+function enforceUprightCamera(targetCamera) {
+  if (!targetCamera) return;
+  if (targetCamera.rotationQuaternion) {
+    targetCamera.rotation.copyFrom(
+      targetCamera.rotationQuaternion.toEulerAngles(),
+    );
+    targetCamera.rotationQuaternion = null;
+  }
+  targetCamera.rotation.x = clamp(
+    Number.isFinite(targetCamera.rotation.x) ? targetCamera.rotation.x : 0,
+    -PLAYER_MAX_LOOK_PITCH,
+    PLAYER_MAX_LOOK_PITCH,
+  );
+  if (!Number.isFinite(targetCamera.rotation.y)) targetCamera.rotation.y = 0;
+  targetCamera.rotation.z = 0;
 }
 
 function toggleThirdPersonCamera() {
@@ -2236,23 +2314,31 @@ function toggleThirdPersonCamera() {
 
   thirdPersonMode = !thirdPersonMode;
   if (thirdPersonMode) {
+    enforceUprightCamera(camera);
     updateThirdPersonCamera(true);
     thirdPersonCamera.rotation.copyFrom(camera.rotation);
+    enforceUprightCamera(thirdPersonCamera);
     camera.detachControl(canvas);
     thirdPersonCamera.attachControl(canvas, true);
     scene.activeCamera = thirdPersonCamera;
   } else {
+    enforceUprightCamera(thirdPersonCamera);
     camera.rotation.copyFrom(thirdPersonCamera.rotation);
+    enforceUprightCamera(camera);
     thirdPersonCamera.detachControl(canvas);
     camera.attachControl(canvas, true);
     scene.activeCamera = camera;
   }
+  syncPlayerPlaceholderPose();
+  updatePlayerPlaceholderVisibility(playerPlaceholderRig);
   updateHudButtons();
 }
 
 function syncPlayerLookFromThirdPersonCamera() {
   if (!thirdPersonMode || !thirdPersonCamera || !camera) return;
+  enforceUprightCamera(thirdPersonCamera);
   camera.rotation.copyFrom(thirdPersonCamera.rotation);
+  enforceUprightCamera(camera);
 }
 
 function updateThirdPersonCamera(snap = false) {
@@ -2281,7 +2367,9 @@ function updateThirdPersonCamera(snap = false) {
       thirdPersonCamera.position,
     );
   }
+  enforceUprightCamera(camera);
   thirdPersonCamera.rotation.copyFrom(camera.rotation);
+  enforceUprightCamera(thirdPersonCamera);
 }
 
 function startMenuBackground() {
@@ -2714,6 +2802,7 @@ function restorePlayerState(player) {
     camera.rotation = B.Vector3.FromArray(
       vectorDegreesToRadians(player.rotationDegrees),
     );
+    enforceUprightCamera(camera);
   }
   flyMode = Boolean(player.flyMode);
   zeroGravityMode =
@@ -2734,6 +2823,9 @@ function restorePlayerState(player) {
   if (playerPhysics) {
     playerPhysics.verticalVelocity = 0;
     playerPhysics.grounded = Boolean(level.platform);
+    syncPlayerPhysicsToPlatformHeight(level.platform?.physics, {
+      snapCamera: playerPhysics.grounded && !flyMode && !zeroGravityMode,
+    });
   }
 }
 
@@ -2884,7 +2976,14 @@ function installPlayerLoop() {
       );
       const crouching = groundedMovement && isShiftHeld();
       const move = B.Vector3.Zero();
+      syncPlayerPhysicsToPlatformHeight(platformPhysics, {
+        preserveCameraOffset: zeroGravityMovement || flyMode,
+        snapCamera: groundedMovement && playerPhysics.grounded,
+      });
+      syncPlayerPlaceholderToPhysics(platformPhysics);
       syncPlayerLookFromThirdPersonCamera();
+      enforceUprightCamera(camera);
+      syncPlayerPlaceholderPose();
       const forward = camera.getDirection(B.Axis.Z);
       const right = camera.getDirection(B.Axis.X);
 
@@ -2931,9 +3030,11 @@ function installPlayerLoop() {
             move.normalize().scale(speed * seconds),
             platformPhysics,
           );
-          constrainPlayerToPlatform(platformPhysics);
         } else {
-          camera.position.addInPlace(move.normalize().scale(speed * seconds));
+          movePlayerFreely(
+            move.normalize().scale(speed * seconds),
+            platformPhysics,
+          );
         }
       } else {
         stopZeroGravityThrusterEffect();
@@ -3102,7 +3203,6 @@ function createHeldAsteroidMesh(asteroid) {
     asteroidComposition: asteroid.composition ?? null,
     asteroidColor: asteroid.color ?? null,
   };
-  addPolySurfaceHologram(mesh, scene);
   return mesh;
 }
 
@@ -3339,6 +3439,52 @@ function toggleObjectBounds() {
   applyObjectBoundsVisibility();
 }
 
+function toggleCollisionDebug() {
+  collisionDebugVisible = !collisionDebugVisible;
+  const count = setAuthoredCollisionMeshesVisible(collisionDebugVisible);
+  if (collisionDebugVisible && count === 0) {
+    updateInteractionPrompt({ prompt: "No authored collision meshes found" });
+  }
+}
+
+function setAuthoredCollisionMeshesVisible(visible) {
+  if (!scene) return 0;
+  let count = 0;
+  for (const mesh of scene.meshes) {
+    if (!mesh.metadata?.authoredCollisionMesh) continue;
+    count += 1;
+    mesh.isVisible = visible;
+    mesh.visibility = visible ? 0.28 : 0;
+    mesh.showBoundingBox = visible;
+    mesh.renderingGroupId = visible ? 3 : (mesh.metadata.renderingGroupId ?? 0);
+    if (visible) {
+      mesh.material = getAuthoredCollisionDebugMaterial();
+    } else if (mesh.metadata.originalMaterial !== undefined) {
+      mesh.material = mesh.metadata.originalMaterial;
+    }
+  }
+  return count;
+}
+
+function getAuthoredCollisionDebugMaterial() {
+  const materialName = "authored-collision-debug-material";
+  const existing = scene.getMaterialByName?.(materialName);
+  if (existing) return existing;
+
+  const material = new B.StandardMaterial(materialName, scene);
+  material.diffuseColor = new B.Color3(1, 0.7, 0.05);
+  material.emissiveColor = new B.Color3(0.55, 0.32, 0.02);
+  material.specularColor = B.Color3.Black();
+  material.alpha = 0.28;
+  material.wireframe = true;
+  material.disableLighting = true;
+  material.backFaceCulling = false;
+  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+  material.needDepthPrePass = false;
+  material.disableDepthWrite = true;
+  return material;
+}
+
 function applyObjectBoundsVisibility() {
   if (!scene) return;
   for (const mesh of scene.meshes) {
@@ -3379,15 +3525,425 @@ function isControlHeld() {
   return keys.has("ControlLeft") || keys.has("ControlRight");
 }
 
+function getPlayerStandingSurface(platform) {
+  if (!platform || !camera) return null;
+  const bounds = getSolidLevelPlayerBounds(platform);
+  if (!isPlayerInsideSolidLevelFootprint(camera.position, platform, bounds)) {
+    return null;
+  }
+
+  return {
+    floorY: bounds.floorY,
+    eyeHeight: bounds.minEyeY,
+    normal: B.Axis.Y.clone(),
+  };
+}
+
+function movePlayerWithSolidLevelCollision(
+  displacement,
+  platform,
+  options = {},
+) {
+  if (
+    !platform ||
+    !camera ||
+    displacement.lengthSquared() <= 0.0000001
+  ) {
+    return null;
+  }
+
+  const collision = resolveSolidLevelMovement(displacement, platform, options);
+  if (!collision) return null;
+
+  camera.position.copyFrom(collision.position);
+  return collision;
+}
+
+function movePlayerWithSolidLevelSlide(displacement, platform, options = {}) {
+  const collision = movePlayerWithSolidLevelCollision(displacement, platform, {
+    ...options,
+    ignoreWalkableSurfaces: false,
+  });
+  if (!collision) {
+    camera.position.addInPlace(displacement);
+    return null;
+  }
+  return collision;
+}
+
+function resolveSolidLevelMovement(displacement, platform) {
+  const start = camera.position.clone();
+  const target = start.add(displacement);
+  const { position, normal } = resolvePlayerAgainstSolidLevel(target, platform);
+  if (position.subtract(target).lengthSquared() <= 0.00000001) return null;
+
+  const distance = displacement.length();
+  const resolvedMovement = position.subtract(start);
+  return {
+    distance,
+    allowedDistance: Math.min(resolvedMovement.length(), distance),
+    normal,
+    point: position.clone(),
+    position,
+  };
+}
+
+function resolvePlayerAgainstSolidLevel(position, platform) {
+  const bounds = getSolidLevelPlayerBounds(platform);
+  const resolved = position.clone();
+  const normal = B.Vector3.Zero();
+  const hasAuthoredColliders = getAuthoredCollisionMeshes(platform).length > 0;
+
+  if (hasAuthoredColliders) {
+    resolveAuthoredCollisionMeshes(resolved, normal, platform, bounds);
+    if (normal.lengthSquared() > 0.000001) {
+      normal.normalize();
+    }
+    return { position: resolved, normal };
+  }
+
+  if (resolved.y < bounds.minEyeY) {
+    resolved.y = bounds.minEyeY;
+    normal.addInPlace(B.Axis.Y);
+  }
+  if (resolved.y > bounds.maxEyeY) {
+    resolved.y = bounds.maxEyeY;
+    normal.subtractInPlace(B.Axis.Y);
+  }
+
+  resolveSolidLevelBox(resolved, normal, platform, bounds);
+
+  if (normal.lengthSquared() > 0.000001) {
+    normal.normalize();
+  }
+  return { position: resolved, normal };
+}
+
+function resolveAuthoredCollisionMeshes(
+  position,
+  normal,
+  platform,
+  bounds,
+) {
+  const meshes = getAuthoredCollisionMeshes(platform);
+  if (!meshes.length) return;
+
+  for (let pass = 0; pass < 4; pass += 1) {
+    let moved = false;
+    for (const mesh of meshes) {
+      const correction = getPlayerColliderCorrection(position, bounds, mesh);
+      if (!correction) continue;
+      const localCorrection = worldVectorToPlatformLocal(correction);
+      position.addInPlace(localCorrection);
+      normal.addInPlace(localCorrection);
+      moved = true;
+    }
+    if (!moved) break;
+  }
+}
+
+function getAuthoredCollisionMeshes(platform) {
+  return (platform?.authoredCollisionMeshes ?? []).filter(
+    (mesh) =>
+      mesh &&
+      !mesh.isDisposed?.() &&
+      mesh.isEnabled?.(true) !== false &&
+      mesh.metadata?.authoredCollisionMesh,
+  );
+}
+
+function getPlayerColliderCorrection(position, bounds, mesh) {
+  const samples = getPlayerCollisionSamplePoints(position, bounds);
+  let bestCorrection = null;
+  let bestLengthSquared = 0;
+
+  for (const sample of samples) {
+    const correction = getSphereObbCorrection(
+      platformLocalPointToWorld(sample),
+      bounds.radius,
+      mesh,
+    );
+    const lengthSquared = correction?.lengthSquared?.() ?? 0;
+    if (lengthSquared > bestLengthSquared) {
+      bestCorrection = correction;
+      bestLengthSquared = lengthSquared;
+    }
+  }
+
+  return bestCorrection;
+}
+
+function getPlayerCollisionSamplePoints(position, bounds) {
+  const clearance = Math.max(bounds.clearance, bounds.radius * 2);
+  const headOffset = Math.min(bounds.radius, clearance);
+  const footOffset = Math.max(clearance - bounds.radius, 0);
+  const offsets = [headOffset, clearance * 0.5, footOffset];
+  const uniqueOffsets = [...new Set(offsets.map((offset) => offset.toFixed(4)))];
+  return uniqueOffsets.map((offset) =>
+    position.add(B.Axis.Y.scale(-Number(offset))),
+  );
+}
+
+function getSphereObbCorrection(center, radius, mesh) {
+  const obb = getMeshWorldObb(mesh);
+  if (!obb) return null;
+
+  const delta = center.subtract(obb.center);
+  const local = obb.axes.map((axis) => B.Vector3.Dot(delta, axis));
+  const closest = obb.center.clone();
+  let inside = true;
+
+  for (let index = 0; index < 3; index += 1) {
+    const clamped = clamp(
+      local[index],
+      -obb.halfExtents[index],
+      obb.halfExtents[index],
+    );
+    if (Math.abs(local[index]) > obb.halfExtents[index]) inside = false;
+    closest.addInPlace(obb.axes[index].scale(clamped));
+  }
+
+  if (!inside) {
+    const separation = center.subtract(closest);
+    const distanceSquared = separation.lengthSquared();
+    const expandedRadius = radius + PLAYER_COLLISION_SKIN;
+    if (distanceSquared >= expandedRadius * expandedRadius) return null;
+    if (distanceSquared <= 0.0000001) return null;
+    const distance = Math.sqrt(distanceSquared);
+    return separation.scale((expandedRadius - distance) / distance);
+  }
+
+  let bestAxis = 0;
+  let bestPenetration = Infinity;
+  for (let index = 0; index < 3; index += 1) {
+    const penetration = obb.halfExtents[index] - Math.abs(local[index]);
+    if (penetration < bestPenetration) {
+      bestPenetration = penetration;
+      bestAxis = index;
+    }
+  }
+
+  const sign = local[bestAxis] >= 0 ? 1 : -1;
+  return obb.axes[bestAxis].scale(
+    sign * (bestPenetration + radius + PLAYER_COLLISION_SKIN),
+  );
+}
+
+function getMeshWorldObb(mesh) {
+  mesh.computeWorldMatrix(true);
+  const world = mesh.getWorldMatrix();
+  const box = mesh.getBoundingInfo().boundingBox;
+  const centerLocal = box.minimum.add(box.maximum).scale(0.5);
+  const halfLocal = box.maximum.subtract(box.minimum).scale(0.5);
+  const basis = [
+    B.Vector3.TransformNormal(B.Axis.X, world),
+    B.Vector3.TransformNormal(B.Axis.Y, world),
+    B.Vector3.TransformNormal(B.Axis.Z, world),
+  ];
+  const axes = [];
+  const halfExtents = [];
+
+  for (let index = 0; index < 3; index += 1) {
+    const length = basis[index].length();
+    if (length <= 0.000001) return null;
+    axes.push(basis[index].scale(1 / length));
+    halfExtents.push(
+      Math.max(halfLocal.asArray()[index] * length, PLAYER_COLLISION_SKIN),
+    );
+  }
+
+  return {
+    center: B.Vector3.TransformCoordinates(centerLocal, world),
+    axes,
+    halfExtents,
+  };
+}
+
+function resolveSolidLevelBox(position, normal, platform, bounds) {
+  resolveSolidLevelBoundary(
+    position,
+    normal,
+    platform,
+    bounds,
+    "x",
+    bounds.minX + bounds.radius,
+    new B.Vector3(-1, 0, 0),
+    1,
+  );
+  resolveSolidLevelBoundary(
+    position,
+    normal,
+    platform,
+    bounds,
+    "x",
+    bounds.maxX - bounds.radius,
+    new B.Vector3(1, 0, 0),
+    -1,
+  );
+  resolveSolidLevelBoundary(
+    position,
+    normal,
+    platform,
+    bounds,
+    "z",
+    bounds.minZ + bounds.radius,
+    new B.Vector3(0, 0, -1),
+    1,
+  );
+  resolveSolidLevelBoundary(
+    position,
+    normal,
+    platform,
+    bounds,
+    "z",
+    bounds.maxZ - bounds.radius,
+    new B.Vector3(0, 0, 1),
+    -1,
+  );
+}
+
+function resolveSolidLevelBoundary(
+  position,
+  normal,
+  platform,
+  bounds,
+  axis,
+  limit,
+  outwardNormal,
+  correctionSign,
+) {
+  const outside =
+    correctionSign > 0 ? position[axis] < limit : position[axis] > limit;
+  if (!outside) return;
+  if (isPlayerInOpenDoorAperture(position, platform, bounds, outwardNormal)) {
+    return;
+  }
+
+  position[axis] = limit;
+  normal.addInPlace(outwardNormal.scale(-1));
+}
+
+function getSolidLevelPlayerBounds(platform) {
+  const radius = Math.max(platform.radius ?? 0, 0);
+  const clearance = getPlayerEyeClearance(platform);
+  const floorY = platform.floorY ?? 0;
+  const ceilingY = platform.ceilingY ?? floorY + clearance + radius;
+  const minEyeY = floorY + clearance;
+  const maxEyeY = Math.max(
+    minEyeY,
+    ceilingY - Math.max(radius, PLAYER_COLLISION_SKIN),
+  );
+  return {
+    radius,
+    clearance,
+    floorY,
+    ceilingY,
+    minEyeY,
+    maxEyeY,
+    minX: platform.minX ?? -((platform.width ?? 0) * 0.5),
+    maxX: platform.maxX ?? (platform.width ?? 0) * 0.5,
+    minZ: platform.minZ ?? -((platform.depth ?? 0) * 0.5),
+    maxZ: platform.maxZ ?? (platform.depth ?? 0) * 0.5,
+  };
+}
+
+function isPlayerInsideSolidLevelFootprint(position, platform, bounds) {
+  return (
+    position.x >= bounds.minX + bounds.radius &&
+    position.x <= bounds.maxX - bounds.radius &&
+    position.z >= bounds.minZ + bounds.radius &&
+    position.z <= bounds.maxZ - bounds.radius
+  ) || isPlayerInOpenDoorAperture(position, platform, bounds);
+}
+
+function isPlayerInOpenDoorAperture(
+  position,
+  platform,
+  bounds = getSolidLevelPlayerBounds(platform),
+  boundaryNormal = null,
+) {
+  for (const passage of platform.doorPassages ?? []) {
+    if (!passage?.interaction?.isOpen) continue;
+    if (
+      boundaryNormal &&
+      B.Vector3.Dot(passage.normal, boundaryNormal) < 0.62
+    ) {
+      continue;
+    }
+    if (isPlayerCapsuleInsideDoorAperture(position, bounds, passage)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isPlayerCapsuleInsideDoorAperture(position, bounds, passage) {
+  const bodyCenter = position.add(B.Axis.Y.scale(-bounds.clearance * 0.5));
+  const delta = bodyCenter.subtract(passage.center);
+  const rightDistance = B.Vector3.Dot(delta, passage.right);
+  const upDistance = B.Vector3.Dot(delta, passage.up);
+  const halfBodyHeight = Math.max(bounds.clearance * 0.5 - bounds.radius, 0);
+  const halfWidth = Math.max(
+    bounds.radius * 0.35,
+    (passage.collisionHalfWidth ?? passage.halfWidth ?? 0) -
+      bounds.radius * 0.35,
+  );
+  const halfHeight =
+    (passage.collisionHalfHeight ?? passage.halfHeight ?? 0) +
+    bounds.radius * 0.65;
+
+  return (
+    Math.abs(rightDistance) <= halfWidth &&
+    Math.abs(upDistance) + halfBodyHeight <= halfHeight
+  );
+}
+
+function getPlayerEyeClearance(platform) {
+  const floorY = platform.floorY ?? 0;
+  const eyeHeight = playerPhysics?.eyeHeight ?? platform.eyeHeight ?? floorY;
+  return Math.max(eyeHeight - floorY, (platform.radius ?? 0) * 2);
+}
+
+function getPlatformStandingEyeHeight(platform) {
+  const floorY = platform?.floorY ?? 0;
+  const configuredHeight = Number(platform?.playerHeight);
+  if (Number.isFinite(configuredHeight) && configuredHeight > 0) {
+    return floorY + configuredHeight;
+  }
+  return platform?.eyeHeight ?? floorY;
+}
+
+function syncPlayerPhysicsToPlatformHeight(platform, options = {}) {
+  if (!playerPhysics || !platform) return;
+  const standingEyeHeight = getPlatformStandingEyeHeight(platform);
+  const previousEyeHeight = playerPhysics.platformEyeHeight;
+  const eyeHeightDelta = Number.isFinite(previousEyeHeight)
+    ? standingEyeHeight - previousEyeHeight
+    : 0;
+  playerPhysics.platformEyeHeight = standingEyeHeight;
+  playerPhysics.eyeHeight = standingEyeHeight;
+  if (options.snapCamera) {
+    camera.position.y = standingEyeHeight;
+  } else if (
+    options.preserveCameraOffset &&
+    isPositionInsidePlatformPhysicsVolume(camera.position, platform) &&
+    Number.isFinite(eyeHeightDelta) &&
+    Math.abs(eyeHeightDelta) > 0.0001
+  ) {
+    camera.position.y += eyeHeightDelta;
+  }
+}
+
 function updateCrouch(platform, seconds, crouching) {
   const floorY = platform.floorY ?? 0;
-  const standingEyeHeight = platform.eyeHeight;
-  if (playerPhysics.platformEyeHeight !== standingEyeHeight) {
-    playerPhysics.platformEyeHeight = standingEyeHeight;
-    playerPhysics.eyeHeight = standingEyeHeight;
-    if (playerPhysics.grounded) {
-      camera.position.y = standingEyeHeight;
-    }
+  const standingEyeHeight = getPlatformStandingEyeHeight(platform);
+  if (
+    !Number.isFinite(playerPhysics.platformEyeHeight) ||
+    Math.abs(playerPhysics.platformEyeHeight - standingEyeHeight) > 0.0001
+  ) {
+    syncPlayerPhysicsToPlatformHeight(platform, {
+      snapCamera: playerPhysics.grounded,
+    });
   }
   const standingHeight = standingEyeHeight - floorY;
   const crouchEyeHeight = Math.max(
@@ -3476,7 +4032,7 @@ function updateHudButtons() {
   flyButton.setAttribute("aria-pressed", String(flyMode));
   if (cameraButton) {
     cameraButton.textContent = thirdPersonMode ? "3rd person" : "1st person";
-    cameraButton.title = "Toggle third-person camera (F8)";
+    cameraButton.title = "Toggle third-person camera";
     cameraButton.setAttribute("aria-pressed", String(thirdPersonMode));
   }
   if (visorButton) {
@@ -3526,18 +4082,10 @@ function updateQuickAccessButtons() {
 }
 
 function updatePlatformGravity(platform, seconds) {
-  const minX = platform.minX ?? -platform.width * 0.5;
-  const maxX = platform.maxX ?? platform.width * 0.5;
-  const minZ = platform.minZ ?? -platform.depth * 0.5;
-  const maxZ = platform.maxZ ?? platform.depth * 0.5;
-  const overDeck =
-    (camera.position.x >= minX &&
-      camera.position.x <= maxX &&
-      camera.position.z >= minZ &&
-      camera.position.z <= maxZ) ||
-    Boolean(getOpenPlatformPassageAt(camera.position, platform));
-
-  const eyeHeight = playerPhysics.eyeHeight ?? platform.eyeHeight;
+  const standingSurface = getPlayerStandingSurface(platform);
+  const overDeck = Boolean(standingSurface);
+  const eyeHeight =
+    standingSurface?.eyeHeight ?? playerPhysics.eyeHeight ?? platform.eyeHeight;
 
   if (keys.has("Space") && playerPhysics.grounded) {
     playerPhysics.verticalVelocity = platform.jumpSpeed;
@@ -3546,7 +4094,6 @@ function updatePlatformGravity(platform, seconds) {
 
   playerPhysics.verticalVelocity -= platform.gravity * seconds;
   camera.position.y += playerPhysics.verticalVelocity * seconds;
-  constrainPlayerToPlatform(platform);
 
   if (
     overDeck &&
@@ -3558,17 +4105,6 @@ function updatePlatformGravity(platform, seconds) {
     playerPhysics.grounded = true;
   } else {
     playerPhysics.grounded = false;
-  }
-
-  if (
-    platform.ceilingY !== undefined &&
-    camera.position.y > platform.ceilingY - (platform.radius ?? 0)
-  ) {
-    camera.position.y = platform.ceilingY - (platform.radius ?? 0);
-    playerPhysics.verticalVelocity = Math.min(
-      playerPhysics.verticalVelocity,
-      0,
-    );
   }
 }
 
@@ -3591,7 +4127,16 @@ function updateZeroGravityThrusters(thrustInput, platform, seconds) {
     clampVectorLengthInPlace(zeroGravityVelocity, ZERO_G_MAX_SPEED);
   }
 
-  camera.position.addInPlace(zeroGravityVelocity.scale(seconds));
+  const movement = zeroGravityVelocity.scale(seconds);
+  const collision = movePlayerWithSolidLevelSlide(movement, platform, {
+    sampleBody: true,
+  });
+  if (collision?.normal) {
+    const impactSpeed = B.Vector3.Dot(zeroGravityVelocity, collision.normal);
+    if (impactSpeed < 0) {
+      zeroGravityVelocity.subtractInPlace(collision.normal.scale(impactSpeed));
+    }
+  }
   playerPhysics.grounded = false;
   playerPhysics.verticalVelocity = zeroGravityVelocity.y;
 }
@@ -3716,7 +4261,19 @@ function movePlayerHorizontally(displacement, platform) {
   const startZ = camera.position.z;
   if (!platform || displacement.lengthSquared() <= 0) return B.Vector3.Zero();
 
-  camera.position.addInPlace(displacement);
+  const steps = [
+    new B.Vector3(displacement.x, 0, 0),
+    new B.Vector3(0, 0, displacement.z),
+  ];
+  for (const step of steps) {
+    if (step.lengthSquared() <= 0.0000001) continue;
+    const collision = movePlayerWithSolidLevelCollision(step, platform, {
+      sampleBody: true,
+    });
+    if (!collision) {
+      camera.position.addInPlace(step);
+    }
+  }
 
   return new B.Vector3(
     camera.position.x - startX,
@@ -3725,102 +4282,15 @@ function movePlayerHorizontally(displacement, platform) {
   );
 }
 
-function constrainPlayerToPlatform(platform, options = {}) {
-  const radius = platform.radius ?? 0;
-  const minX = platform.minX ?? -platform.width * 0.5;
-  const maxX = platform.maxX ?? platform.width * 0.5;
-  const minZ = platform.minZ ?? -platform.depth * 0.5;
-  const maxZ = platform.maxZ ?? platform.depth * 0.5;
-  const passage = getOpenPlatformPassageAt(camera.position, platform);
-
-  if (passage?.oriented) {
-    constrainPlayerToOrientedPassage(camera.position, passage, radius, options);
-  } else if (passage) {
-    camera.position.x = clamp(
-      camera.position.x,
-      (passage.minX ?? minX) + radius,
-      (passage.maxX ?? maxX) - radius,
-    );
-    camera.position.z = clamp(
-      camera.position.z,
-      (passage.minZ ?? minZ) + radius,
-      (passage.maxZ ?? maxZ) - radius,
-    );
-  } else {
-    camera.position.x = clamp(camera.position.x, minX + radius, maxX - radius);
-    camera.position.z = clamp(camera.position.z, minZ + radius, maxZ - radius);
+function movePlayerFreely(displacement, platform) {
+  if (!platform || displacement.lengthSquared() <= 0) {
+    camera.position.addInPlace(displacement);
+    return;
   }
 
-  if (options.constrainVertical !== false && platform.floorY !== undefined) {
-    camera.position.y = Math.max(
-      camera.position.y,
-      playerPhysics.eyeHeight ?? platform.eyeHeight,
-    );
-  }
-}
-
-function getOpenPlatformPassageAt(position, platform) {
-  const radius = platform.radius ?? 0;
-  for (const passage of platform.doorPassages ?? []) {
-    if (!passage.interaction?.isOpen) continue;
-    if (!isPositionInsidePassage(position, passage, radius)) continue;
-    return passage;
-  }
-  return null;
-}
-
-function isPositionInsidePassage(position, passage, radius) {
-  if (passage.oriented) {
-    const local = getOrientedPassagePosition(position, passage);
-    return (
-      Math.abs(local.right) <= passage.halfWidth + radius &&
-      Math.abs(local.up) <= passage.halfHeight + radius &&
-      local.normal >= -passage.inwardDepth - radius &&
-      local.normal <= passage.outwardDepth + radius
-    );
-  }
-
-  return (
-    position.x >= (passage.minX ?? -Infinity) + radius &&
-    position.x <= (passage.maxX ?? Infinity) - radius &&
-    position.y >= (passage.minY ?? -Infinity) &&
-    position.y <= (passage.maxY ?? Infinity) &&
-    position.z >= (passage.minZ ?? -Infinity) + radius &&
-    position.z <= (passage.maxZ ?? Infinity) - radius
-  );
-}
-
-function constrainPlayerToOrientedPassage(position, passage, radius, options) {
-  const local = getOrientedPassagePosition(position, passage);
-  const nextRight = clamp(
-    local.right,
-    -passage.halfWidth + radius,
-    passage.halfWidth - radius,
-  );
-  const nextUp =
-    options.constrainVertical === false
-      ? local.up
-      : clamp(local.up, -passage.halfHeight, passage.halfHeight);
-  const nextNormal = clamp(
-    local.normal,
-    -passage.inwardDepth,
-    passage.outwardDepth,
-  );
-
-  position
-    .copyFrom(passage.center)
-    .addInPlace(passage.right.scale(nextRight))
-    .addInPlace(passage.up.scale(nextUp))
-    .addInPlace(passage.normal.scale(nextNormal));
-}
-
-function getOrientedPassagePosition(position, passage) {
-  const offset = position.subtract(passage.center);
-  return {
-    right: B.Vector3.Dot(offset, passage.right),
-    up: B.Vector3.Dot(offset, passage.up),
-    normal: B.Vector3.Dot(offset, passage.normal),
-  };
+  movePlayerWithSolidLevelSlide(displacement, platform, {
+    sampleBody: true,
+  });
 }
 
 function clamp(value, min, max) {
