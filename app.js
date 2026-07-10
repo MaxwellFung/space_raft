@@ -50,11 +50,13 @@ const MENU_STAR_DOME_RADIUS = 900;
 const PLACEMENT_RANGE = 3.2;
 const PLACEMENT_PADDING = 0.035;
 const ASTEROID_PICKUP_RANGE = 2.8;
+const ASTEROID_PHYSICS_ACTIVATION_RANGE = 7.5;
+const ASTEROID_PHYSICS_ACTIVATION_LIMIT = 12;
 const FABRICATOR_ASTEROID_MAX_RADIUS = 0.11;
 const FABRICATOR_ASTEROID_BOTTOM_CLEARANCE = 0.05;
 const FABRICATOR_ASTEROID_FORWARD_OFFSET = 0.06;
 const FABRICATOR_DISASSEMBLE_SECONDS = 10;
-const FABRICATOR_LASER_RADIUS = 0.008;
+const FABRICATOR_LASER_RADIUS = 0.0025;
 const ASTEROID_THROW_SPEED = 0.85;
 const ASTEROID_BOUNCE_RESTITUTION = 0.68;
 const ASTEROID_COLLISION_DAMPING = 0.985;
@@ -2792,6 +2794,8 @@ function startFabricatorDisassembly(root) {
     remaining: FABRICATOR_DISASSEMBLE_SECONDS,
     duration: FABRICATOR_DISASSEMBLE_SECONDS,
     originalScaling: mounted.mesh.scaling.clone(),
+    originalPosition: getNodePositionInPlatform(mounted.mesh),
+    meshData: createFabricatorDisassemblyMeshData(mounted.mesh),
     effects: createFabricatorDisassemblyEffects(root, mounted.mesh),
   };
   root.metadata = {
@@ -2890,16 +2894,18 @@ function createFabricatorDisassemblyEffects(root, asteroidMesh) {
   const platformRoot = level?.platform?.root;
   if (!platformRoot || !asteroidMesh) return null;
 
-  const start = getWireAnchorPoint(root, "fabricator");
-  const end = asteroidMesh.position.clone();
+  const start = getFabricatorLaserSourcePoint(root);
+  const end = getNodePositionInPlatform(asteroidMesh);
+  const path = createFabricatorLaserPath(start, end, 0);
   const beamMaterial = createFabricatorLaserMaterial();
   const beam = B.MeshBuilder.CreateTube(
     "fabricator-blue-disassembly-laser",
     {
-      path: [start, end],
+      path,
       radius: FABRICATOR_LASER_RADIUS,
       tessellation: 12,
       cap: B.Mesh.CAP_ALL,
+      updatable: true,
     },
     scene,
   );
@@ -2914,25 +2920,11 @@ function createFabricatorDisassemblyEffects(root, asteroidMesh) {
     fabricatorDisassemblyEffect: true,
   };
 
-  const impactMaterial = createFabricatorLaserMaterial();
-  const impact = B.MeshBuilder.CreateSphere(
-    "fabricator-blue-disassembly-impact",
-    { diameter: 0.07, segments: 16 },
-    scene,
-  );
-  impact.parent = platformRoot;
-  impact.position.copyFrom(end);
-  impact.material = impactMaterial;
-  impact.isPickable = false;
-  impact.checkCollisions = false;
-  impact.metadata = {
-    ...(impact.metadata ?? {}),
-    excludeFromBounds: true,
-    excludeFromCollision: true,
-    fabricatorDisassemblyEffect: true,
-  };
+  return { beam, beamMaterial };
+}
 
-  return { beam, impact, beamMaterial, impactMaterial };
+function createFabricatorLaserPath(start, end, progress) {
+  return [start, end];
 }
 
 function createFabricatorLaserMaterial() {
@@ -2949,33 +2941,272 @@ function createFabricatorLaserMaterial() {
 
 function updateFabricatorDisassemblyEffects(job, progress) {
   const pulse = 0.5 + 0.5 * Math.sin(job.elapsed * 18);
+  const raster = getFabricatorDisassemblyRasterState(job, progress);
+  const target = raster?.target;
+  if (job.effects?.beam && target) {
+    const start = getFabricatorLaserSourcePoint(job.root);
+    const path = createFabricatorLaserPath(start, target, progress);
+    B.MeshBuilder.CreateTube(
+      "fabricator-blue-disassembly-laser",
+      {
+        path,
+        radius: FABRICATOR_LASER_RADIUS * (0.82 + pulse * 0.28),
+        tessellation: 12,
+        cap: B.Mesh.CAP_ALL,
+        instance: job.effects.beam,
+      },
+      scene,
+    );
+  }
   if (job.effects?.beamMaterial) {
-    job.effects.beamMaterial.alpha = 0.52 + pulse * 0.34;
+    job.effects.beamMaterial.alpha = 0.68 + pulse * 0.2;
     job.effects.beamMaterial.emissiveColor.copyFromFloats(
       0.12 + pulse * 0.12,
       0.55 + pulse * 0.28,
       1,
     );
   }
-  if (job.effects?.impact) {
-    const scale = 0.75 + pulse * 0.55 + progress * 0.85;
-    job.effects.impact.scaling.setAll(scale);
-  }
-  if (job.effects?.impactMaterial) {
-    job.effects.impactMaterial.alpha = 0.36 + pulse * 0.42;
-  }
   if (job.mesh && !job.mesh.isDisposed?.()) {
-    const shrink = Math.max(0.05, 1 - progress * 0.95);
-    job.mesh.scaling.copyFrom(job.originalScaling.scale(shrink));
-    job.mesh.rotation.y += 0.025;
+    updateFabricatorAsteroidReversePrintMesh(job, progress);
   }
+}
+
+function getFabricatorDisassemblyRasterState(job, progress) {
+  const mesh = job.mesh;
+  const data = job.meshData;
+  if (!mesh || mesh.isDisposed?.() || !data) return null;
+
+  const source = getFabricatorLaserSourcePoint(job.root);
+  const sourceLocal = platformPointToNodeLocal(mesh, source);
+  const z = sourceLocal.z >= data.center.z ? data.max.z : data.min.z;
+  const layerCount = data.layerCount;
+  const clampedProgress = clamp(progress, 0, 0.999999);
+  const layerFloat = clampedProgress * layerCount;
+  const layerIndex = Math.min(layerCount - 1, Math.floor(layerFloat));
+  const layerProgress = layerFloat - layerIndex;
+  const forward = layerIndex % 2 === 0;
+  const scanProgress = forward ? layerProgress : 1 - layerProgress;
+  const localY = data.max.y - (layerIndex + 0.5) * data.layerHeight;
+  const startX = forward ? data.min.x : data.max.x;
+  const endX = forward ? data.max.x : data.min.x;
+  const localTarget = getFabricatorRasterMeshPoint(
+    data,
+    startX + (endX - startX) * scanProgress,
+    localY,
+    z,
+  );
+
+  return {
+    target: nodeLocalPointToPlatform(mesh, localTarget),
+    layerIndex,
+    layerProgress,
+    forward,
+  };
+}
+
+function updateFabricatorAsteroidReversePrintMesh(job, progress) {
+  if (!job.meshData) return;
+
+  const indices = getFabricatorRemainingTriangleIndices(job.meshData, progress);
+  job.mesh.setIndices(indices);
+  job.mesh.refreshBoundingInfo?.();
+}
+
+function getFabricatorRasterMeshPoint(data, x, y, z) {
+  let bestIndex = 0;
+  let bestScore = Infinity;
+  for (let index = 0; index < data.positions.length; index += 3) {
+    const dx = data.positions[index] - x;
+    const dy = data.positions[index + 1] - y;
+    const dz = data.positions[index + 2] - z;
+    const score = dx * dx + dy * dy + dz * dz * 0.35;
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+
+  return new B.Vector3(
+    data.positions[bestIndex],
+    data.positions[bestIndex + 1],
+    data.positions[bestIndex + 2],
+  );
+}
+
+function createFabricatorDisassemblyMeshData(mesh) {
+  const positions = mesh.getVerticesData?.(B.VertexBuffer.PositionKind)?.slice();
+  const sourceIndices = mesh.getIndices?.()?.slice();
+  if (!positions?.length || !sourceIndices?.length) return null;
+
+  const min = new B.Vector3(Infinity, Infinity, Infinity);
+  const max = new B.Vector3(-Infinity, -Infinity, -Infinity);
+  for (let index = 0; index < positions.length; index += 3) {
+    min.x = Math.min(min.x, positions[index]);
+    min.y = Math.min(min.y, positions[index + 1]);
+    min.z = Math.min(min.z, positions[index + 2]);
+    max.x = Math.max(max.x, positions[index]);
+    max.y = Math.max(max.y, positions[index + 1]);
+    max.z = Math.max(max.z, positions[index + 2]);
+  }
+
+  const layerCount = 42;
+  const layerHeight = Math.max((max.y - min.y) / layerCount, 0.0001);
+  return {
+    positions,
+    sourceIndices,
+    min,
+    max,
+    center: min.add(max).scale(0.5),
+    layerCount,
+    layerHeight,
+  };
+}
+
+function getFabricatorRemainingTriangleIndices(data, progress) {
+  if (progress >= 0.9999) return [];
+
+  const clampedProgress = clamp(progress, 0, 0.9999);
+  const layerFloat = clampedProgress * data.layerCount;
+  const layerIndex = Math.min(data.layerCount - 1, Math.floor(layerFloat));
+  const layerProgress = layerFloat - layerIndex;
+  const forward = layerIndex % 2 === 0;
+  const currentLayerTop = data.max.y - layerIndex * data.layerHeight;
+  const currentLayerBottom = currentLayerTop - data.layerHeight;
+  const scanX = forward
+    ? data.min.x + (data.max.x - data.min.x) * layerProgress
+    : data.max.x - (data.max.x - data.min.x) * layerProgress;
+  const remaining = [];
+
+  for (let index = 0; index < data.sourceIndices.length; index += 3) {
+    const a = data.sourceIndices[index];
+    const b = data.sourceIndices[index + 1];
+    const c = data.sourceIndices[index + 2];
+    const centroid = getTriangleCentroid(data.positions, a, b, c);
+    if (isFabricatorTriangleDisassembled(
+      centroid,
+      currentLayerTop,
+      currentLayerBottom,
+      scanX,
+      forward,
+    )) {
+      continue;
+    }
+
+    remaining.push(a, b, c);
+  }
+
+  return remaining;
+}
+
+function getTriangleCentroid(positions, a, b, c) {
+  const ai = a * 3;
+  const bi = b * 3;
+  const ci = c * 3;
+  return {
+    x: (positions[ai] + positions[bi] + positions[ci]) / 3,
+    y: (positions[ai + 1] + positions[bi + 1] + positions[ci + 1]) / 3,
+  };
+}
+
+function isFabricatorTriangleDisassembled(
+  centroid,
+  currentLayerTop,
+  currentLayerBottom,
+  scanX,
+  forward,
+) {
+  if (centroid.y > currentLayerTop) return true;
+  if (centroid.y <= currentLayerBottom) return false;
+  return forward ? centroid.x <= scanX : centroid.x >= scanX;
+}
+
+function getNodePositionInPlatform(node) {
+  const platformRoot = level?.platform?.root;
+  if (!platformRoot || !node) {
+    return node?.position?.clone?.() ?? B.Vector3.Zero();
+  }
+
+  node.computeWorldMatrix?.(true);
+  platformRoot.computeWorldMatrix?.(true);
+  const inversePlatform = platformRoot.getWorldMatrix().clone().invert();
+  const worldPosition = node.getAbsolutePosition?.() ?? node.position;
+  return B.Vector3.TransformCoordinates(worldPosition, inversePlatform);
+}
+
+function setNodePositionInPlatform(node, position) {
+  const platformRoot = level?.platform?.root;
+  if (!platformRoot || !node) {
+    node?.position?.copyFrom?.(position);
+    return;
+  }
+
+  if (node.parent === platformRoot) {
+    node.position.copyFrom(position);
+    return;
+  }
+
+  platformRoot.computeWorldMatrix?.(true);
+  const worldPosition = B.Vector3.TransformCoordinates(
+    position,
+    platformRoot.getWorldMatrix(),
+  );
+  if (!node.parent) {
+    node.position.copyFrom(worldPosition);
+    return;
+  }
+
+  node.parent.computeWorldMatrix?.(true);
+  node.position.copyFrom(
+    B.Vector3.TransformCoordinates(
+      worldPosition,
+      node.parent.getWorldMatrix().clone().invert(),
+    ),
+  );
+}
+
+function getFabricatorLaserSourcePoint(root) {
+  const bounds = getRootBoundsInPlatform(root);
+  if (!bounds) return getWireAnchorPoint(root, "fabricator");
+
+  const center = bounds.min.add(bounds.max).scale(0.5);
+  return new B.Vector3(center.x, bounds.max.y + 0.12, center.z);
+}
+
+function nodeLocalPointToPlatform(node, localPoint) {
+  const platformRoot = level?.platform?.root;
+  if (!node || !platformRoot) return localPoint.clone();
+
+  node.computeWorldMatrix?.(true);
+  platformRoot.computeWorldMatrix?.(true);
+  const worldPoint = B.Vector3.TransformCoordinates(
+    localPoint,
+    node.getWorldMatrix(),
+  );
+  return B.Vector3.TransformCoordinates(
+    worldPoint,
+    platformRoot.getWorldMatrix().clone().invert(),
+  );
+}
+
+function platformPointToNodeLocal(node, platformPoint) {
+  const platformRoot = level?.platform?.root;
+  if (!node || !platformRoot) return platformPoint.clone();
+
+  platformRoot.computeWorldMatrix?.(true);
+  node.computeWorldMatrix?.(true);
+  const worldPoint = B.Vector3.TransformCoordinates(
+    platformPoint,
+    platformRoot.getWorldMatrix(),
+  );
+  return B.Vector3.TransformCoordinates(
+    worldPoint,
+    node.getWorldMatrix().clone().invert(),
+  );
 }
 
 function cleanupFabricatorDisassemblyEffects(effects) {
   effects?.beam?.dispose(false, true);
-  effects?.impact?.dispose(false, true);
   effects?.beamMaterial?.dispose?.();
-  effects?.impactMaterial?.dispose?.();
 }
 
 function openHatchWarningModal(interaction) {
@@ -3125,6 +3356,7 @@ function startGame(saveFile) {
   installBackgroundMusicUnlock(backgroundMusic);
 
   level = buildLevel(scene, brownDwarfLevel);
+  installDebrisFieldPlayerCollision();
   thirdPersonCamera = createThirdPersonCamera(scene, camera);
   playerPhysics = {
     verticalVelocity: 0,
@@ -3145,6 +3377,89 @@ function startGame(saveFile) {
     performanceMonitor.endFrame(frame);
   });
   addEventListener("resize", () => engine?.resize());
+}
+
+function resolveDebrisFieldPlayerCollisions(seconds) {
+  level?.debrisField?.rocks?.resolvePlayerCollisions?.(seconds);
+}
+
+function installDebrisFieldPlayerCollision() {
+  const rocks = level?.debrisField?.rocks;
+  if (!rocks?.setPlayerCollisionSource) return;
+
+  rocks.setPlayerCollisionSource(() => {
+    const platform = level?.platform?.physics;
+    if (!camera || !platform) return null;
+
+    const bounds = getSolidLevelPlayerBounds(platform);
+    const capsule = getPlayerCollisionCapsule(camera.position, bounds);
+    return {
+      capsuleStart: platformLocalPointToWorld(capsule.start),
+      capsuleEnd: platformLocalPointToWorld(capsule.end),
+      radius: bounds.radius,
+      skin: ASTEROID_CONTACT_SKIN,
+      minRockRadius: 0.22,
+      playerPushFraction: 0.65,
+      worldToLocal: (point) => {
+        rocks.computeWorldMatrix?.(true);
+        return B.Vector3.TransformCoordinates(
+          point,
+          rocks.getWorldMatrix().clone().invert(),
+        );
+      },
+      localToWorldVector: (vector) => {
+        rocks.computeWorldMatrix?.(true);
+        return B.Vector3.TransformNormal(vector, rocks.getWorldMatrix());
+      },
+      applyCorrection: (worldCorrection, localNormal) => {
+        applyDebrisAsteroidPlayerCorrection(
+          worldCorrection,
+          localNormal,
+          rocks,
+          platform,
+        );
+      },
+    };
+  });
+}
+
+function getPlayerCollisionCapsule(position, bounds) {
+  const clearance = Math.max(bounds.clearance, bounds.radius * 2);
+  const headOffset = Math.min(bounds.radius, clearance);
+  const footOffset = Math.max(clearance - bounds.radius, headOffset);
+  return {
+    start: position.add(B.Axis.Y.scale(-headOffset)),
+    end: position.add(B.Axis.Y.scale(-footOffset)),
+  };
+}
+
+function applyDebrisAsteroidPlayerCorrection(
+  worldCorrection,
+  localNormal,
+  rocks,
+  platform,
+) {
+  if (!camera || !worldCorrection) return;
+
+  const localCorrection = worldVectorToPlatformLocal(worldCorrection);
+  camera.position.addInPlace(localCorrection);
+  if (platform) {
+    const resolved = resolvePlayerAgainstSolidLevel(camera.position, platform);
+    camera.position.copyFrom(resolved.position);
+  }
+
+  if (!zeroGravityMode || flyMode) return;
+
+  const worldNormal = rocks?.getWorldMatrix
+    ? B.Vector3.TransformNormal(localNormal, rocks.getWorldMatrix())
+    : worldCorrection.clone();
+  const localNormalToPlayer = worldVectorToPlatformLocal(worldNormal);
+  if (localNormalToPlayer.lengthSquared() <= 0.000001) return;
+
+  localNormalToPlayer.normalize();
+  const impulse = Math.min(worldCorrection.length() * 2.4, 0.45);
+  zeroGravityVelocity.addInPlace(localNormalToPlayer.scale(impulse));
+  clampVectorLengthInPlace(zeroGravityVelocity, ZERO_G_MAX_SPEED);
 }
 
 function createThirdPersonCamera(scene, playerCamera) {
@@ -4352,6 +4667,7 @@ function installPlayerLoop() {
       const right = camera.getDirection(B.Axis.X);
 
       initializeMountedHooks();
+      activateNearbyDebrisAsteroidBodies();
       updateActiveInteraction();
       updatePlacementPreview();
 
@@ -4408,6 +4724,7 @@ function installPlayerLoop() {
       if (groundedMovement) {
         updatePlatformGravity(platformPhysics, seconds);
       }
+      resolveDebrisFieldPlayerCollisions(seconds);
       updateAsteroidPhysics(seconds, platformPhysics);
       updatePlayerTether(seconds);
       if (thirdPersonMode) {
@@ -4681,6 +4998,9 @@ function createAsteroidPickupInteraction() {
   );
   if (!candidate) return null;
 
+  const mesh = promoteFieldAsteroidCandidate(candidate);
+  if (mesh?.metadata?.interaction) return mesh.metadata.interaction;
+
   return {
     type: "asteroid",
     range: ASTEROID_PICKUP_RANGE,
@@ -4690,6 +5010,64 @@ function createAsteroidPickupInteraction() {
     ),
     activate: () => pickUpAsteroidFromField(candidate),
   };
+}
+
+function promoteFieldAsteroidCandidate(candidate) {
+  const asteroid = level?.debrisField?.rocks?.takeAsteroid?.(candidate);
+  return createFieldAsteroidBody(asteroid);
+}
+
+function activateNearbyDebrisAsteroidBodies() {
+  const debrisRocks = level?.debrisField?.rocks;
+  if (!debrisRocks?.extractAsteroidsInSphere || !camera) return;
+
+  const asteroids = debrisRocks.extractAsteroidsInSphere(
+    camera.globalPosition,
+    ASTEROID_PHYSICS_ACTIVATION_RANGE,
+    ASTEROID_PHYSICS_ACTIVATION_LIMIT,
+  );
+  for (const asteroid of asteroids) {
+    createFieldAsteroidBody(asteroid);
+  }
+}
+
+function createFieldAsteroidBody(asteroid) {
+  if (!asteroid?.sourceMesh) return null;
+
+  const mesh = createAsteroidMeshFromSource(
+    asteroid.sourceMesh,
+    "field-asteroid",
+    asteroid,
+  );
+  if (level?.platform?.root) {
+    mesh.parent = level.platform.root;
+    mesh.position.copyFrom(worldPointToPlatformLocal(asteroid.position));
+  } else {
+    mesh.position.copyFrom(asteroid.position);
+  }
+  mesh.scaling.copyFrom(asteroid.scale);
+  mesh.rotationQuaternion =
+    asteroid.rotation?.clone?.() ?? B.Quaternion.Identity();
+  mesh.isPickable = true;
+  mesh.checkCollisions = false;
+  mesh.receiveShadows = true;
+  mesh.metadata = {
+    ...(mesh.metadata ?? {}),
+    excludeFromBounds: false,
+    excludeFromCollision: true,
+    heldAsteroid: false,
+    fieldAsteroid: true,
+    asteroidComposition: cloneSave(asteroid.composition ?? {}),
+    asteroidColor: cloneSave(asteroid.color ?? null),
+  };
+  installDroppedAsteroidInteraction(mesh);
+  registerAsteroidBody(mesh, {
+    radius: asteroid.radius,
+    velocity: worldVectorToPlatformLocal(asteroid.velocity ?? B.Vector3.Zero()),
+    angularVelocity:
+      asteroid.angularVelocity?.clone?.() ?? createAsteroidAngularVelocity(),
+  });
+  return mesh;
 }
 
 function pickUpAsteroidFromField(candidate) {
@@ -4740,7 +5118,7 @@ function createAsteroidMeshFromSource(sourceMesh, name, asteroid = {}) {
     ? new B.Mesh(name, scene)
     : B.MeshBuilder.CreateIcoSphere(
         name,
-        { radius: 1, subdivisions: 3, flat: false },
+        { radius: 1, subdivisions: 3, flat: false, updatable: true },
         scene,
       );
 
@@ -4755,7 +5133,7 @@ function createAsteroidMeshFromSource(sourceMesh, name, asteroid = {}) {
       .getVerticesData(B.VertexBuffer.ColorKind)
       ?.slice();
     vertexData.indices = sourceMesh.getIndices()?.slice();
-    vertexData.applyToMesh(mesh);
+    vertexData.applyToMesh(mesh, true);
   }
 
   mesh.useVertexColors = false;

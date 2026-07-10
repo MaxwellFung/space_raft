@@ -78,6 +78,7 @@ function createRockField(scene, field) {
   const scratchWorldPosition = B.Vector3.Zero();
   let centerProvider = () => scene.activeCamera.globalPosition;
   let flowProvider = () => B.Axis.Z;
+  let playerCollisionProvider = null;
   let lastCell = "";
   let simulationTime = 0;
   let asteroidFrame = 0;
@@ -122,6 +123,7 @@ function createRockField(scene, field) {
         regenerateRocks(cell);
       }
 
+      resolveRocksAgainstPlayer(seconds);
       updateRockMatrices(seconds);
       scene.metadata?.profiler?.setGpuWeight(
         "Asteroids",
@@ -139,9 +141,15 @@ function createRockField(scene, field) {
   root.setFlowDirection = (provider) => {
     flowProvider = provider;
   };
-  root.setPlayerCollisionSource = () => {};
+  root.setPlayerCollisionSource = (provider) => {
+    playerCollisionProvider = typeof provider === "function" ? provider : null;
+  };
   root.findAsteroidAlongRay = (ray, range = 2.8) =>
     findAsteroidAlongRay(ray, range);
+  root.extractAsteroidsInSphere = (worldCenter, range, limit = 16) =>
+    extractAsteroidsInSphere(worldCenter, range, limit);
+  root.resolvePlayerCollisions = (seconds = 0) =>
+    resolveRocksAgainstPlayer(seconds);
   root.takeAsteroid = (candidate) => takeAsteroid(candidate);
 
   return root;
@@ -339,9 +347,15 @@ function createRockField(scene, field) {
       rock.age += seconds;
       const position = getRockPositionToRef(rock, scratchRockPosition);
       if (isInsideShipGraceBubble(position, rock.radius)) {
-        rocks.splice(index, 1);
-        continue;
+        if ((rock.playerCollisionGraceSeconds ?? 0) <= 0) {
+          rocks.splice(index, 1);
+          continue;
+        }
       }
+      rock.playerCollisionGraceSeconds = Math.max(
+        0,
+        (rock.playerCollisionGraceSeconds ?? 0) - seconds,
+      );
       if (position.lengthSquared() > renderDistance * renderDistance) {
         retiringRocks.push({
           material: rock.material,
@@ -476,6 +490,77 @@ function createRockField(scene, field) {
     );
   }
 
+  function resolveRocksAgainstPlayer(seconds) {
+    const source = playerCollisionProvider?.();
+    if (!source?.capsuleStart || !source?.capsuleEnd) return;
+    if (!Number.isFinite(source.radius)) return;
+
+    const playerRadius = Math.max(0, source.radius);
+    const skin = Math.max(0, source.skin ?? 0.01);
+    const minRockRadius = Math.max(0, source.minRockRadius ?? 0);
+    const playerPushFraction = clamp01(source.playerPushFraction ?? 0.7);
+    const worldToLocal =
+      source.worldToLocal ?? ((point) => point.subtract(renderCenter));
+    const localToWorldVector =
+      source.localToWorldVector ?? ((vector) => vector.clone());
+    const capsuleStart = worldToLocal(source.capsuleStart);
+    const capsuleEnd = worldToLocal(source.capsuleEnd);
+    const capsuleDelta = capsuleEnd.subtract(capsuleStart);
+    const capsuleLengthSquared = capsuleDelta.lengthSquared();
+
+    for (const rock of rocks) {
+      const position = getRockPositionToRef(rock, scratchRockPosition);
+      const closest = getClosestPointOnSegmentToRef(
+        position,
+        capsuleStart,
+        capsuleDelta,
+        capsuleLengthSquared,
+        scratchWorldPosition,
+      );
+      const delta = closest.subtract(position);
+      const distance = delta.length();
+      const normal = distance > 0.000001
+        ? delta.scale(1 / distance)
+        : B.Axis.Z.clone();
+      const rockRadius = Math.max(rock.radius, minRockRadius);
+      const minDistance = rockRadius + playerRadius + skin;
+      const penetration = minDistance - distance;
+      if (penetration <= 0) continue;
+
+      const playerPush = normal.scale(penetration * playerPushFraction);
+      const rockPush = normal.scale(-penetration * (1 - playerPushFraction));
+      source.applyCorrection?.(localToWorldVector(playerPush), normal.clone());
+      position.addInPlace(rockPush);
+      setRockBaseFromCurrentPosition(rock, position);
+      rock.playerCollisionGraceSeconds = Math.max(
+        rock.playerCollisionGraceSeconds ?? 0,
+        1.5,
+      );
+
+      const velocityDelta = normal.scale(
+        Math.min(penetration / Math.max(seconds, 0.016), 1.2) * -0.18,
+      );
+      rock.relativeVelocity.addInPlace(velocityDelta);
+    }
+  }
+
+  function getClosestPointOnSegmentToRef(
+    point,
+    start,
+    delta,
+    lengthSquared,
+    target,
+  ) {
+    if (lengthSquared <= 0.000001) return target.copyFrom(start);
+
+    const amount = clamp(
+      B.Vector3.Dot(point.subtract(start), delta) / lengthSquared,
+      0,
+      1,
+    );
+    return target.copyFrom(start).addInPlace(delta.scale(amount));
+  }
+
   function findAsteroidAlongRay(ray, range = 2.8) {
     if (!ray || !rocks.length) return null;
 
@@ -513,6 +598,34 @@ function createRockField(scene, field) {
     const index = rocks.indexOf(rock);
     if (index === -1) return null;
 
+    return extractAsteroidAtIndex(index);
+  }
+
+  function extractAsteroidsInSphere(worldCenter, range, limit = 16) {
+    if (!worldCenter || range <= 0 || limit <= 0) return [];
+
+    const localCenter = worldCenter.subtract(renderCenter);
+    const extracted = [];
+    for (
+      let index = rocks.length - 1;
+      index >= 0 && extracted.length < limit;
+      index -= 1
+    ) {
+      const rock = rocks[index];
+      const position = getRockPositionToRef(rock, scratchRockPosition);
+      const activationRadius = Math.max(rock.radius, field.rockPickupRadius ?? 0.22);
+      const maxDistance = range + activationRadius;
+      if (position.subtract(localCenter).lengthSquared() > maxDistance * maxDistance) {
+        continue;
+      }
+
+      extracted.push(extractAsteroidAtIndex(index));
+    }
+    return extracted;
+  }
+
+  function extractAsteroidAtIndex(index) {
+    const rock = rocks[index];
     const position = getRockPositionToRef(rock, scratchRockPosition).clone();
     const displayRotation = getRockDisplayRotation(rock).clone();
     rocks.splice(index, 1);
@@ -524,6 +637,8 @@ function createRockField(scene, field) {
       scale: rock.scale.clone(),
       rotation: displayRotation,
       radius: rock.radius,
+      velocity: rock.relativeVelocity.clone(),
+      angularVelocity: rock.spinAxis.scale(rock.spinRate),
     };
   }
 
