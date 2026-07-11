@@ -10,7 +10,42 @@ export function createGlbModelPortrait(modelUrl, options = {}) {
   return previewCache.get(key);
 }
 
+export function createMeshModelPortrait(key, createPreviewMesh, options = {}) {
+  if (!key || typeof createPreviewMesh !== "function") {
+    return Promise.resolve(null);
+  }
+
+  const cacheKey = `mesh:${key}:${JSON.stringify(options.rotation ?? [])}`;
+  if (!previewCache.has(cacheKey)) {
+    previewCache.set(
+      cacheKey,
+      renderMeshModelPortrait(createPreviewMesh, options),
+    );
+  }
+  return previewCache.get(cacheKey);
+}
+
 async function renderGlbModelPortrait(modelUrl, options) {
+  return renderModelPortraitScene(options, async (scene, root) => {
+    const B = window.BABYLON;
+    const result = await B.SceneLoader.ImportMeshAsync("", "", modelUrl, scene);
+    for (const node of [...result.meshes, ...result.transformNodes]) {
+      if (!node.parent) node.parent = root;
+    }
+  });
+}
+
+async function renderMeshModelPortrait(createPreviewMesh, options) {
+  return renderModelPortraitScene(options, async (scene, root, B) => {
+    const result = await createPreviewMesh(scene, B);
+    const nodes = Array.isArray(result) ? result : [result].filter(Boolean);
+    for (const node of nodes) {
+      if (!node.parent) node.parent = root;
+    }
+  });
+}
+
+async function renderModelPortraitScene(options, populateScene) {
   const B = window.BABYLON;
   if (!B) return null;
 
@@ -63,11 +98,8 @@ async function renderGlbModelPortrait(modelUrl, options) {
   key.intensity = 1.35;
 
   try {
-    const result = await B.SceneLoader.ImportMeshAsync("", "", modelUrl, scene);
     const root = new B.TransformNode("inventory-preview-root", scene);
-    for (const node of [...result.meshes, ...result.transformNodes]) {
-      if (!node.parent) node.parent = root;
-    }
+    await populateScene(scene, root, B);
 
     for (const mesh of getRenderableMeshes(root)) {
       mesh.isPickable = false;
@@ -84,7 +116,7 @@ async function renderGlbModelPortrait(modelUrl, options) {
     scene.render();
     return captureVisiblePreview(engine, canvas);
   } catch (error) {
-    console.warn("Failed to render GLB inventory preview.", error);
+    console.warn("Failed to render inventory model preview.", error);
     return null;
   } finally {
     scene.dispose();
@@ -108,8 +140,7 @@ function captureVisiblePreview(engine, canvas) {
   let visiblePixels = 0;
   for (let index = 0; index < pixels.length; index += 4) {
     const alpha = pixels[index + 3];
-    const brightness = pixels[index] + pixels[index + 1] + pixels[index + 2];
-    if (alpha > 12 && brightness > 16) visiblePixels += 1;
+    if (alpha > 12) visiblePixels += 1;
   }
 
   const minimumVisiblePixels = canvas.width * canvas.height * 0.01;

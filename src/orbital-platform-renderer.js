@@ -114,7 +114,7 @@ export function createOrbitalPlatform(scene, platform, primary) {
   camera.position.set(0, physics.eyeHeight, 0);
   applyPlatformInitialCameraRotation(camera, platform);
 
-  loadShipModel(
+  const readyPromise = loadShipModel(
     scene,
     platform,
     primary,
@@ -206,6 +206,7 @@ export function createOrbitalPlatform(scene, platform, primary) {
     physics,
     interactions,
     applyExternalImpulse,
+    readyPromise,
   };
 }
 
@@ -321,6 +322,7 @@ async function loadShipModel(
       if (!node.parent) node.parent = shipRoot;
     }
     hideConfiguredShipMeshes(result.meshes, platform);
+    enhanceShipGlassMeshes(scene, result.meshes, platform);
     const authoredCollisionMeshes = configureAuthoredCollisionMeshes(
       result.meshes,
       platform,
@@ -427,6 +429,10 @@ function liftCameraIntoPlatformInterior(camera, physics) {
 }
 
 function stopImportedShipAnimations(result) {
+  stopImportedAnimations(result);
+}
+
+function stopImportedAnimations(result) {
   for (const group of result.animationGroups ?? []) {
     group.stop?.();
     group.reset?.();
@@ -452,6 +458,79 @@ function hideConfiguredShipMeshes(meshes, platform) {
       excludeFromCollision: true,
     };
   }
+}
+
+function enhanceShipGlassMeshes(scene, meshes, platform) {
+  const glassMaterial = createShipGlassMaterial(scene, platform);
+  for (const mesh of meshes) {
+    if (!isShipGlassMesh(mesh)) continue;
+    mesh.metadata = {
+      ...(mesh.metadata ?? {}),
+      shipGlassMesh: true,
+      originalGlassMaterial: mesh.metadata?.originalGlassMaterial ?? mesh.material,
+    };
+    mesh.material = glassMaterial;
+    mesh.visibility = 1;
+    mesh.isVisible = true;
+    mesh.hasVertexAlpha = false;
+    mesh.alwaysSelectAsActiveMesh = true;
+    mesh.renderingGroupId = 0;
+    mesh.disableEdgesRendering?.();
+  }
+}
+
+function isShipGlassMesh(mesh) {
+  if (!mesh || mesh.getTotalVertices?.() <= 0) return false;
+  const name = mesh.name?.toLowerCase() ?? "";
+  const materialName = mesh.material?.name?.toLowerCase() ?? "";
+  return /(glass|window|transparent)/.test(`${name} ${materialName}`);
+}
+
+function createShipGlassMaterial(scene, platform) {
+  const materialName = "ship-readable-glass-material";
+  const existing = scene.getMaterialByName?.(materialName);
+  if (existing) return existing;
+
+  const material = new B.PBRMaterial(materialName, scene);
+  material.albedoColor = B.Color3.FromArray(
+    platform.glassTintColor ?? [0.48, 0.68, 0.76],
+  );
+  material.emissiveColor = B.Color3.FromArray(
+    platform.glassEmissiveColor ?? [0.012, 0.025, 0.032],
+  );
+  material.reflectivityColor = B.Color3.FromArray(
+    platform.glassReflectivityColor ?? [0.72, 0.88, 1.0],
+  );
+  material.alpha = platform.glassAlpha ?? 0.52;
+  material.metallic = 0;
+  material.roughness = platform.glassRoughness ?? 0.035;
+  material.microSurface = platform.glassMicroSurface ?? 0.96;
+  material.indexOfRefraction = platform.glassIndexOfRefraction ?? 1.52;
+  material.environmentIntensity = platform.glassEnvironmentIntensity ?? 1.35;
+  material.directIntensity = platform.glassDirectIntensity ?? 1.05;
+  material.specularIntensity = platform.glassSpecularIntensity ?? 1.15;
+  material.backFaceCulling = false;
+  material.twoSidedLighting = true;
+  material.useAlphaFromAlbedoTexture = false;
+  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+  material.alphaMode = B.Engine.ALPHA_COMBINE;
+  material.needDepthPrePass = true;
+  material.separateCullingPass = false;
+  material.forceDepthWrite = false;
+  material.disableDepthWrite = false;
+
+  if (material.subSurface) {
+    material.subSurface.isRefractionEnabled = true;
+    material.subSurface.refractionIntensity =
+      platform.glassRefractionIntensity ?? 0.18;
+    material.subSurface.tintColor = B.Color3.FromArray(
+      platform.glassSubsurfaceTintColor ?? [0.58, 0.82, 0.95],
+    );
+    material.subSurface.minimumThickness = 0.02;
+    material.subSurface.maximumThickness = 0.12;
+  }
+
+  return material;
 }
 
 function installShipDoorInteraction(scene, meshes, interactions, platform) {
@@ -1249,17 +1328,18 @@ function createControlPanel(scene, platformRoot, panel, physics) {
 function createHelmetHook(
   scene,
   platformRoot,
-  hookConfig = {},
+  hookConfig = null,
   physics,
   interactions,
 ) {
+  if (!hookConfig || hookConfig.enabled === false) return null;
+
   const hook = {
     wall: "frontWall",
     center: [0, 0.86, 0],
     wallOffset: 0.035,
     ...(hookConfig ?? {}),
   };
-  if (hook.enabled === false) return null;
 
   const root = new B.TransformNode(hook.id ?? "helmet-hook", scene);
   root.parent = platformRoot;
@@ -1578,6 +1658,61 @@ function drawControlPanelTexture(texture, panel) {
   texture.update();
 }
 
+function enhanceHelmetPropGlassMeshes(scene, meshes, prop) {
+  if (!isHelmetProp(prop)) return;
+  const material = getHelmetGlassMaterial(scene);
+  for (const mesh of meshes) {
+    if (!isHelmetGlassMesh(mesh)) continue;
+    mesh.material = material;
+    mesh.visibility = 1;
+    mesh.hasVertexAlpha = false;
+    mesh.renderingGroupId = 0;
+    mesh.disableEdgesRendering?.();
+  }
+}
+
+function isHelmetProp(prop) {
+  const name = `${prop?.id ?? ""} ${prop?.label ?? ""} ${prop?.modelUrl ?? ""}`;
+  return /helmet/i.test(name);
+}
+
+function isHelmetGlassMesh(mesh) {
+  const names = [];
+  let node = mesh;
+  while (node) {
+    names.push(node.name ?? "", node.id ?? "");
+    node = node.parent;
+  }
+  names.push(mesh?.material?.name ?? "");
+  return /helmet[_ -]?glass/i.test(names.join(" "));
+}
+
+function getHelmetGlassMaterial(scene) {
+  const materialName = "helmet-smoked-glass-material";
+  const existing = scene.getMaterialByName?.(materialName);
+  if (existing) return existing;
+
+  const material = new B.PBRMaterial(materialName, scene);
+  material.albedoColor = new B.Color3(0.08, 0.16, 0.2);
+  material.emissiveColor = new B.Color3(0.005, 0.018, 0.028);
+  material.reflectivityColor = new B.Color3(0.5, 0.82, 1.0);
+  material.alpha = 0.42;
+  material.metallic = 0;
+  material.roughness = 0.045;
+  material.microSurface = 0.94;
+  material.indexOfRefraction = 1.5;
+  material.environmentIntensity = 1.2;
+  material.directIntensity = 1.0;
+  material.specularIntensity = 1.05;
+  material.backFaceCulling = false;
+  material.twoSidedLighting = true;
+  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+  material.alphaMode = B.Engine.ALPHA_COMBINE;
+  material.needDepthPrePass = true;
+  material.separateCullingPass = false;
+  return material;
+}
+
 async function loadFloorProp(scene, platformRoot, prop, physics) {
   if (!prop?.modelUrl) return null;
 
@@ -1588,6 +1723,7 @@ async function loadFloorProp(scene, platformRoot, prop, physics) {
       prop.modelUrl,
       scene,
     );
+    stopImportedAnimations(result);
     const propRoot = new B.TransformNode(prop.id ?? "floor-prop", scene);
     const importedNodes = [...result.meshes, ...result.transformNodes];
     for (const node of importedNodes) {
@@ -1604,6 +1740,7 @@ async function loadFloorProp(scene, platformRoot, prop, physics) {
     );
     propRoot.computeWorldMatrix(true);
     const meshes = getRenderableMeshes(propRoot);
+    enhanceHelmetPropGlassMeshes(scene, meshes, prop);
     for (const mesh of meshes) {
       mesh.computeWorldMatrix(true);
       mesh.isPickable = true;
@@ -1674,12 +1811,17 @@ async function loadFloorProps(
 
 function createPickupInteraction(root, prop) {
   const name = prop.label ?? prop.id ?? "Item";
+  const modelUrl = prop.modelUrl?.toLowerCase?.() ?? "";
+  const isHelmet = /helmet/.test(`${prop.id ?? ""} ${name} ${modelUrl}`);
   const interaction = {
     type: "pickup",
     rootId: prop.id ?? root.name,
     range: prop.pickupRange ?? 1.65,
     item: createPickupItem(root, prop),
-    getPrompt: () => `Press E to pick up ${name}`,
+    getPrompt: () =>
+      isHelmet
+        ? `Press E to pick up ${name} · Q equip`
+        : `Press E to pick up ${name}`,
     activate: () => deactivatePickupRoot(root, interaction),
   };
   return interaction;

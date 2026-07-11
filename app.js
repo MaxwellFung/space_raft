@@ -1,6 +1,8 @@
 import baseBrownDwarfLevel from "./levels/brown_dwarf/level.js";
-import { createItemPortrait } from "./src/item-portraits.js";
-import { createGlbModelPortrait } from "./src/model-preview.js";
+import {
+  createGlbModelPortrait,
+  createMeshModelPortrait,
+} from "./src/model-preview.js";
 import { buildLevel } from "./src/level-system.js";
 import { applySaveToLevel, loadSaveFile } from "./src/save-system.js";
 import {
@@ -15,19 +17,29 @@ const metrics = document.querySelector(".metrics");
 const hud = document.querySelector(".hud");
 const vitals = document.querySelector(".vitals");
 const menuError = document.querySelector("#menu-error");
+const loadingScreen = document.querySelector("#loading-screen");
+const loadingStatus = document.querySelector("#loading-status");
 const savePathInput = document.querySelector("#save-path-input");
 const saveFileInput = document.querySelector("#save-file-input");
 const hotbar = document.querySelector("#hotbar");
-const zeroGravityKeyButton = document.querySelector("#zero-gravity-key-button");
-const inventoryKeyButton = document.querySelector("#inventory-key-button");
-const notebookKeyButton = document.querySelector("#notebook-key-button");
 const inventoryModal = document.querySelector("#inventory-modal");
 const notebookModal = document.querySelector("#notebook-modal");
 const fabricatorModal = document.querySelector("#fabricator-modal");
+const batteryModal = document.querySelector("#battery-modal");
+const batteryEnergyValue = document.querySelector("#battery-energy-value");
+const batteryEnergyFill = document.querySelector("#battery-energy-fill");
 const hatchWarningModal = document.querySelector("#hatch-warning-modal");
 const hatchWarningActions = document.querySelector("#hatch-warning-actions");
+const deathScreen = document.querySelector("#death-screen");
+const nearDeathPulse = document.querySelector("#near-death-pulse");
 const fabricatorDisassembleButton = document.querySelector(
   "#fabricator-disassemble-button",
+);
+const fabricatorModeDisassemblyButton = document.querySelector(
+  "#fabricator-mode-disassembly",
+);
+const fabricatorModeFabricationButton = document.querySelector(
+  "#fabricator-mode-fabrication",
 );
 const fabricatorAnalysisStatus = document.querySelector(
   "#fabricator-analysis-status",
@@ -37,6 +49,12 @@ const fabricatorYieldCopper = document.querySelector(
   "#fabricator-yield-copper",
 );
 const fabricatorYieldWater = document.querySelector("#fabricator-yield-water");
+const fabricatorEnergyValue = document.querySelector(
+  "#fabricator-energy-value",
+);
+const fabricatorEnergyBar = document.querySelector("#fabricator-energy-bar");
+const fabricatorEnergyCost = document.querySelector("#fabricator-energy-cost");
+const fabricatorRecipesPanel = document.querySelector("#fabricator-recipes");
 const inventoryGrid = document.querySelector(".inventory-grid");
 const modalHotbar = document.querySelector(".modal-hotbar");
 const clothingGrid = document.querySelector(".clothing-grid");
@@ -52,18 +70,34 @@ const PLACEMENT_PADDING = 0.035;
 const ASTEROID_PICKUP_RANGE = 2.8;
 const ASTEROID_PHYSICS_ACTIVATION_RANGE = 7.5;
 const ASTEROID_PHYSICS_ACTIVATION_LIMIT = 12;
-const FABRICATOR_ASTEROID_MAX_RADIUS = 0.11;
-const FABRICATOR_ASTEROID_BOTTOM_CLEARANCE = 0.05;
+const FABRICATOR_ASTEROID_MAX_RADIUS = 0.22;
+const FABRICATOR_ASTEROID_BOTTOM_CLEARANCE = 0.1;
 const FABRICATOR_ASTEROID_FORWARD_OFFSET = 0.06;
+const FABRICATOR_ASTEROID_RIGHT_OFFSET = -0.0;
 const FABRICATOR_DISASSEMBLE_SECONDS = 10;
-const FABRICATOR_LASER_RADIUS = 0.0025;
+const FABRICATOR_LASER_RADIUS = 0.0012;
+const FABRICATOR_LASER_CORE_RADIUS = 0.0011;
+const FABRICATOR_LASER_GLOW_RADIUS = 0.0048;
+const FABRICATOR_LASER_NUB_Y_OFFSET = 0.012;
+const FABRICATOR_PRINT_LAYER_COUNT = 48;
+const FABRICATOR_PRINT_LINES_PER_LAYER = 18;
+const FABRICATOR_TRACE_RING_POINTS = 80;
+const FABRICATOR_RESOURCE_CHUNK_SIZE = 0.052;
+const FABRICATOR_RESOURCE_CHUNK_RADIUS = 0.038;
+const FABRICATOR_RESOURCE_EJECT_SPEED = 0.72;
+const FABRICATOR_RESOURCE_EJECT_SPREAD = 0.22;
+const FABRICATOR_DISASSEMBLY_ENERGY_COST = 12;
+const FABRICATOR_RESOURCE_STACK_LIMIT = 16;
+const BATTERY_DEFAULT_ENERGY = 120;
+const BATTERY_MAX_ENERGY = 120;
 const ASTEROID_THROW_SPEED = 0.85;
 const ASTEROID_BOUNCE_RESTITUTION = 0.68;
 const ASTEROID_COLLISION_DAMPING = 0.985;
 const ASTEROID_MAX_SPEED = 5.6;
 const ASTEROID_CONTACT_SKIN = 0.004;
 const ASTEROID_PLAYER_PUSH_FRACTION = 0.42;
-const FABRICATOR_BATTERY_WIRE_RADIUS = 0.008;
+const FABRICATOR_BATTERY_WIRE_RADIUS = 0.0048;
+const FABRICATOR_BATTERY_WIRE_SEGMENTS = 14;
 const HELD_ASTEROID_DISTANCE = 1.35;
 const HELD_ASTEROID_OFFSET = new B.Vector3(0, -0.18, HELD_ASTEROID_DISTANCE);
 const TETHER_ATTACH_OFFSET = new B.Vector3(0, -0.36, 0);
@@ -79,20 +113,70 @@ const TETHER_TAUT_EPSILON = 0.025;
 const TETHER_PLATFORM_PULL_CORRECTION_TRANSFER = 0.45;
 const TETHER_PLATFORM_PULL_VELOCITY_TRANSFER = 0.16;
 const TETHER_PLATFORM_PULL_MAX_ACCELERATION = 1.8;
+const FABRICATOR_REFLECTION_PROBE_SIZE = 128;
 const ZERO_G_THRUST_ACCELERATION = 1.55;
 const ZERO_G_THRUST_BOOST_MULTIPLIER = 1.55;
 const ZERO_G_MAX_SPEED = 4.6;
 const ZERO_G_THRUSTER_EMIT_RATE = 85;
 const ZERO_G_THRUSTER_EMITTER_OFFSET = 0.34;
-const HATCH_DECOMPRESSION_INITIAL_IMPULSE = 3.4;
-const HATCH_DECOMPRESSION_ACCELERATION = 6.25;
-const HATCH_DECOMPRESSION_DURATION = 1.35;
-const HATCH_DECOMPRESSION_MAX_SPEED = 6.75;
+const HATCH_DECOMPRESSION_INITIAL_IMPULSE = 2.1;
+const HATCH_DECOMPRESSION_ACCELERATION = 4.2;
+const HATCH_DECOMPRESSION_DURATION = 2.2;
+const HATCH_DECOMPRESSION_MAX_SPEED = 4.25;
+const HATCH_DECOMPRESSION_EXIT_LEAD = 1.25;
 const HATCH_WIND_PARTICLE_SECONDS = 1.15;
 const CABIN_PRESSURE_INITIAL_ATM = 0.3;
 const CABIN_PRESSURE_VACUUM_ATM = 0;
-const HELMET_OXYGEN_MAX_SECONDS = 300;
-const HELMET_OXYGEN_DRAIN_PER_SECOND = 1;
+const HELMET_OXYGEN_MAX_LITERS = 100;
+const HELMET_OXYGEN_SECONDS_TO_EMPTY = 600;
+const HELMET_OXYGEN_LITERS_PER_SECOND =
+  HELMET_OXYGEN_MAX_LITERS / HELMET_OXYGEN_SECONDS_TO_EMPTY;
+const PRESSURE_STANDARD_KPA = 100;
+const PRESSURE_DAMAGE_THRESHOLD_KPA = 25;
+const PRESSURE_YELLOW_THRESHOLD_KPA = 50;
+const PRESSURE_DAMAGE_PER_SECOND = 12;
+const PLAYER_HEALTH_MAX = 100;
+const PLAYER_FOOD_MAX = 100;
+const PLAYER_THIRST_MAX = 100;
+const PLAYER_RESTROOM_MAX = 100;
+const PLAYER_COMFORT_MAX = 100;
+const PLAYER_FOOD_WARNING_PERCENT = 45;
+const PLAYER_THIRST_WARNING_PERCENT = 45;
+const PLAYER_RESTROOM_WARNING_PERCENT = 45;
+const PLAYER_COMFORT_WARNING_PERCENT = 40;
+const PLAYER_FOOD_SECONDS_TO_WARNING = 30 * 60;
+const PLAYER_THIRST_SECONDS_TO_WARNING = 30 * 60;
+const PLAYER_RESTROOM_SECONDS_TO_WARNING = 45 * 60;
+const PLAYER_COMFORT_SECONDS_TO_WARNING = 60 * 60;
+const PLAYER_TEMPERATURE_SECONDS_TO_HOT = 60 * 60;
+const PLAYER_TEMPERATURE_IDEAL_C = 21;
+const PLAYER_TEMPERATURE_WARN_DELTA_C = 9;
+const PLAYER_TEMPERATURE_CRITICAL_DELTA_C = 16;
+const PLAYER_FOOD_DRAIN_PER_SECOND =
+  (PLAYER_FOOD_MAX - PLAYER_FOOD_WARNING_PERCENT) /
+  PLAYER_FOOD_SECONDS_TO_WARNING;
+const PLAYER_THIRST_DRAIN_PER_SECOND =
+  (PLAYER_THIRST_MAX - PLAYER_THIRST_WARNING_PERCENT) /
+  PLAYER_THIRST_SECONDS_TO_WARNING;
+const PLAYER_RESTROOM_DRAIN_PER_SECOND =
+  (PLAYER_RESTROOM_MAX - PLAYER_RESTROOM_WARNING_PERCENT) /
+  PLAYER_RESTROOM_SECONDS_TO_WARNING;
+const PLAYER_COMFORT_DRAIN_PER_SECOND =
+  (PLAYER_COMFORT_MAX - PLAYER_COMFORT_WARNING_PERCENT) /
+  PLAYER_COMFORT_SECONDS_TO_WARNING;
+const PLAYER_TEMPERATURE_HEAT_C_PER_SECOND =
+  PLAYER_TEMPERATURE_WARN_DELTA_C / PLAYER_TEMPERATURE_SECONDS_TO_HOT;
+const VITAL_STATUS_ORDERS = Object.freeze({
+  temperature: 1,
+  comfort: 2,
+  restroom: 3,
+  thirst: 4,
+  food: 5,
+  oxygen: 6,
+});
+const VITAL_STATUS_WARN_ORDER_OFFSET = 20;
+const VITAL_STATUS_CRITICAL_ORDER_OFFSET = 30;
+const NEAR_DEATH_HEALTH_THRESHOLD = 35;
 const CROUCH_EYE_HEIGHT_SCALE = 0.76;
 const CROUCH_TRANSITION_SPEED = 8;
 const CROUCH_SPEED_SCALE = 0.45;
@@ -101,6 +185,8 @@ const PLAYER_MAX_LOOK_PITCH = Math.PI / 2 - 0.01;
 const THIRD_PERSON_DISTANCE = 0.82;
 const THIRD_PERSON_HEIGHT = 0.22;
 let gameStarted = false;
+let gameBooting = false;
+let playerDead = false;
 
 addEventListener("error", (event) =>
   showRuntimeError(event.error ?? event.message),
@@ -129,6 +215,11 @@ addEventListener("keydown", (event) => {
     toggleObjectBounds();
     return;
   }
+  if (event.code === "F3") {
+    event.preventDefault();
+    toggleToolTipsVisibility();
+    return;
+  }
   if (event.code === "F8") {
     event.preventDefault();
     toggleCollisionDebug();
@@ -153,6 +244,12 @@ addEventListener("keydown", (event) => {
   if (event.code === "KeyF" && activeInteraction?.type === "fabricator") {
     event.preventDefault();
     openFabricatorModal(activeInteraction.root);
+    keys.delete("KeyF");
+    return;
+  }
+  if (event.code === "KeyF" && activeInteraction?.type === "battery") {
+    event.preventDefault();
+    showBatteryEnergy(activeInteraction);
     keys.delete("KeyF");
     return;
   }
@@ -216,12 +313,15 @@ addEventListener("keydown", (event) => {
       keys.delete("KeyE");
       return;
     }
-    if (activeInteraction.type === "pickup") {
+    if (
+      activeInteraction.type === "pickup" ||
+      activeInteraction.type === "battery"
+    ) {
       interactionHandled = collectPickupInteraction(activeInteraction);
     } else if (activeInteraction.type === "helmet-hook") {
       interactionHandled = activateHelmetHook(activeInteraction);
     } else if (activeInteraction.type === "fabricator") {
-      interactionHandled = false;
+      interactionHandled = collectFabricatorInteraction(activeInteraction);
     } else {
       const result = activeInteraction.activate?.();
       interactionHandled = result !== false;
@@ -266,11 +366,30 @@ let flyButton = null;
 let cameraButton = null;
 let visorButton = null;
 let saveStartButton = null;
-let airPressureMeter = null;
-let airPressureMeterText = null;
-let oxygenMeter = null;
-let oxygenMeterFill = null;
-let oxygenMeterText = null;
+let playerHealth = PLAYER_HEALTH_MAX;
+let playerFood = PLAYER_FOOD_MAX;
+let playerThirst = PLAYER_THIRST_MAX;
+let playerRestroom = PLAYER_RESTROOM_MAX;
+let playerComfort = PLAYER_COMFORT_MAX;
+let playerTemperatureC = PLAYER_TEMPERATURE_IDEAL_C;
+let mainIssueRoot = null;
+let mainIssueText = null;
+let oxygenStatusRoot = null;
+let oxygenPressureText = null;
+let oxygenStatusText = null;
+let healthMeterRoot = null;
+let healthMeter = null;
+let healthMeterFill = null;
+let foodStatusRoot = null;
+let foodStatusText = null;
+let thirstStatusRoot = null;
+let thirstStatusText = null;
+let restroomStatusRoot = null;
+let restroomStatusText = null;
+let comfortStatusRoot = null;
+let comfortStatusText = null;
+let temperatureStatusRoot = null;
+let temperatureStatusText = null;
 let mouseSensitivitySlider = null;
 let mouseSensitivityValue = null;
 let activeInteraction = null;
@@ -290,7 +409,10 @@ let heldAsteroid = null;
 let activeFabricatorRoot = null;
 let pendingHatchInteraction = null;
 let cabinPressureAtm = CABIN_PRESSURE_INITIAL_ATM;
-let helmetOxygenSeconds = HELMET_OXYGEN_MAX_SECONDS;
+let helmetOxygenLiters = HELMET_OXYGEN_MAX_LITERS;
+let helmetOxygenMeter = null;
+let helmetOxygenFill = null;
+let helmetOxygenText = null;
 const asteroidBodies = new Set();
 const fabricatorBatteryWires = new Set();
 const fabricatorDisassemblyJobs = new Set();
@@ -300,6 +422,21 @@ const fabricatorResourceItems = {
   copper: { id: "copper", name: "Copper", icon: "Cu", swatch: "#c8753e" },
   water: { id: "water", name: "Water", icon: "H2O", swatch: "#58b9e8" },
 };
+
+const fabricatorRecipes = [
+  createFabricatorRecipe("drill", "Drill", 4, 2, 18),
+  createFabricatorRecipe("airlock", "Airlock", 10, 5, 42),
+  createFabricatorRecipe("electrolizer", "Electrolizer", 5, 8, 36),
+  createFabricatorRecipe("build-tool", "Build Tool", 3, 6, 28),
+  createFabricatorRecipe("research-machine", "Research Machine", 8, 10, 54),
+  createFabricatorRecipe("solar-panel", "Solar Panel", 6, 12, 48),
+  createFabricatorRecipe("battery", "Battery", 5, 8, 30, {
+    modelUrl: "./assets/battery.glb",
+    maxSize: 0.22,
+    energyStored: BATTERY_DEFAULT_ENERGY,
+    maxEnergy: BATTERY_MAX_ENERGY,
+  }),
+];
 
 const inventoryItems = Array.from({ length: 20 }, () => null);
 const hotbarItems = Array.from({ length: 10 }, () => null);
@@ -371,18 +508,6 @@ function installMainMenu() {
 }
 
 function installPlayerUi() {
-  zeroGravityKeyButton.addEventListener("click", (event) => {
-    event.stopPropagation();
-    if (gameStarted) toggleZeroGravityMode();
-  });
-  inventoryKeyButton.addEventListener("click", (event) => {
-    event.stopPropagation();
-    if (gameStarted) toggleInventory();
-  });
-  notebookKeyButton.addEventListener("click", (event) => {
-    event.stopPropagation();
-    if (gameStarted) toggleNotebook();
-  });
   inventoryModal.addEventListener("click", (event) => {
     if (event.target === inventoryModal) closePlayerModals();
   });
@@ -392,12 +517,23 @@ function installPlayerUi() {
   fabricatorModal?.addEventListener("click", (event) => {
     if (event.target === fabricatorModal) closePlayerModals();
   });
+  batteryModal?.addEventListener("click", (event) => {
+    if (event.target === batteryModal) closePlayerModals();
+  });
   hatchWarningModal?.addEventListener("click", (event) => {
     if (event.target === hatchWarningModal) closePlayerModals();
   });
   fabricatorDisassembleButton?.addEventListener("click", (event) => {
     event.stopPropagation();
-    pulseFabricatorDisassembleButton();
+    activateFabricatorPrimaryButton();
+  });
+  fabricatorModeDisassemblyButton?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setFabricatorMode(activeFabricatorRoot, "disassembly");
+  });
+  fabricatorModeFabricationButton?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setFabricatorMode(activeFabricatorRoot, "fabrication");
   });
 
   renderHotbars();
@@ -555,6 +691,16 @@ function createItemSlot(entry, index, options = {}) {
       image.alt = "";
       image.src = portrait;
       slot.append(image);
+    } else if (isFabricatorResourceItem(entry)) {
+      hydrateInventoryPortrait(entry, entry);
+      const preview = document.createElement("span");
+      preview.className = "slot-portrait slot-portrait-loading";
+      slot.append(preview);
+    } else if (entry.modelUrl) {
+      hydrateInventoryPortrait(entry, entry);
+      const preview = document.createElement("span");
+      preview.className = "slot-portrait slot-portrait-loading";
+      slot.append(preview);
     } else {
       const iconLabel = document.createElement("span");
       iconLabel.textContent = icon;
@@ -651,8 +797,20 @@ function moveInventorySlot(targetSlot) {
 
   const targetEntry = targetSlot.items[targetSlot.index];
   if (targetEntry?.id && targetEntry.id === sourceEntry.id) {
-    targetEntry.count = (targetEntry.count ?? 1) + (sourceEntry.count ?? 1);
-    sourceSlot.items[sourceSlot.index] = null;
+    const stackLimit = getItemStackLimit(targetEntry);
+    const targetCount = targetEntry.count ?? 1;
+    const sourceCount = sourceEntry.count ?? 1;
+    const room = Number.isFinite(stackLimit)
+      ? Math.max(0, stackLimit - targetCount)
+      : sourceCount;
+    const moved = Math.min(room, sourceCount);
+    if (moved > 0) {
+      targetEntry.count = targetCount + moved;
+      sourceEntry.count = sourceCount - moved;
+    }
+    if ((sourceEntry.count ?? 0) <= 0) {
+      sourceSlot.items[sourceSlot.index] = null;
+    }
   } else {
     sourceSlot.items[sourceSlot.index] = targetEntry ?? null;
     targetSlot.items[targetSlot.index] = sourceEntry;
@@ -665,38 +823,18 @@ function moveInventorySlot(targetSlot) {
 
 function collectPickupInteraction(interaction) {
   const item = interaction.item ?? {};
-  const id = item.id ?? "item";
-  const existingEntry = findInventoryEntry(id);
-  if (existingEntry) {
-    existingEntry.count = (existingEntry.count ?? 1) + 1;
-    mergeItemMetadata(existingEntry, item);
-    hydrateInventoryPortrait(existingEntry, item);
-    interaction.activate?.();
-    renderHotbars();
-    renderInventoryGrid();
-    refreshPlacementPreview();
-    return true;
-  }
-
-  const slot = findEmptyInventorySlot();
-  if (!slot) {
+  if (!addInventoryItemCount(item, 1)) {
     updateInteractionPrompt({ prompt: "Inventory full" });
     return false;
   }
 
-  const entry = {
-    ...item,
-    id,
-    name: item.name ?? item.label ?? "Item",
-    count: 1,
-    portrait: item.portrait ?? createItemPortrait(item),
-  };
-  slot.items[slot.index] = entry;
-  hydrateInventoryPortrait(entry, item);
   interaction.activate?.();
   renderHotbars();
   renderInventoryGrid();
   refreshPlacementPreview();
+  if (isBatteryItem(item) || isFabricatorItem(item)) {
+    queueFabricatorBatteryWireRefresh();
+  }
   return true;
 }
 
@@ -736,17 +874,62 @@ function findEmptyInventorySlot() {
 }
 
 function hydrateInventoryPortrait(entry, item) {
-  if (!item.modelUrl || entry.modelPortraitLoaded) return;
+  if (
+    entry.portrait ||
+    entry.modelPortraitLoading ||
+    entry.modelPortraitFailed
+  ) {
+    return;
+  }
+  entry.modelPortraitLoading = true;
+
+  if (isFabricatorResourceItem(item)) {
+    createFabricatorResourceChunkPortrait(item)
+      .then((portrait) => {
+        entry.modelPortraitLoading = false;
+        if (!portrait) {
+          entry.modelPortraitFailed = true;
+          return;
+        }
+        entry.portrait = portrait;
+        entry.modelPortraitLoaded = true;
+        renderHotbars();
+        renderInventoryGrid();
+      })
+      .catch(() => {
+        entry.modelPortraitLoading = false;
+        entry.modelPortraitFailed = true;
+      });
+    return;
+  }
+
+  if (!item.modelUrl) {
+    entry.modelPortraitLoading = false;
+    return;
+  }
 
   createGlbModelPortrait(item.modelUrl, {
     rotation: item.rotation ?? item.rotationDegrees,
-  }).then((portrait) => {
-    if (!portrait) return;
-    entry.portrait = portrait;
-    entry.modelPortraitLoaded = true;
-    renderHotbars();
-    renderInventoryGrid();
-  });
+  })
+    .then((portrait) => {
+      entry.modelPortraitLoading = false;
+      if (!portrait) {
+        entry.modelPortraitFailed = true;
+        return;
+      }
+      entry.portrait = portrait;
+      entry.modelPortraitLoaded = true;
+      renderHotbars();
+      renderInventoryGrid();
+    })
+    .catch(() => {
+      entry.modelPortraitLoading = false;
+      entry.modelPortraitFailed = true;
+    });
+}
+
+function isFabricatorResourceItem(item) {
+  return Boolean(item?.id && fabricatorResourceItems[item.id]);
 }
 
 function getSelectedPlaceableItem() {
@@ -828,6 +1011,7 @@ async function placeSelectedItem() {
       pickable: true,
     });
     applyPlacementStateToRoot(root, item, state);
+    refreshFabricatorReflectionProbe(root, item);
     installPlacedItemMetadata(root, item);
     refreshFabricatorBatteryWires();
 
@@ -882,24 +1066,26 @@ function toggleTetherFromActiveHook() {
 function triggerHatchDecompression(interaction) {
   if (!interaction || interaction.decompressionTriggered) return;
 
-  const direction = getHatchOutflowDirection(interaction);
+  const outflowDirection = getHatchOutflowDirection(interaction);
+  const suctionDirection = getHatchSuctionDirection(interaction);
   interaction.decompressionTriggered = true;
-  cabinPressureAtm = CABIN_PRESSURE_VACUUM_ATM;
   hatchDecompression = {
-    direction,
+    interaction,
+    outflowDirection,
+    startPressureAtm: cabinPressureAtm,
     elapsed: 0,
     duration: HATCH_DECOMPRESSION_DURATION,
   };
   zeroGravityMode = true;
   zeroGravityVelocity.addInPlace(
-    direction.scale(HATCH_DECOMPRESSION_INITIAL_IMPULSE),
+    suctionDirection.scale(HATCH_DECOMPRESSION_INITIAL_IMPULSE),
   );
   clampVectorLengthInPlace(zeroGravityVelocity, HATCH_DECOMPRESSION_MAX_SPEED);
   if (playerPhysics) {
     playerPhysics.grounded = false;
     playerPhysics.verticalVelocity = zeroGravityVelocity.y;
   }
-  createHatchWindBurst(interaction, direction);
+  createHatchWindBurst(interaction, outflowDirection);
   updateQuickAccessButtons();
   updateLifeSupportHud();
 }
@@ -908,10 +1094,23 @@ function updateHatchDecompression(seconds) {
   if (!hatchDecompression) return;
 
   const progress = hatchDecompression.elapsed / hatchDecompression.duration;
-  const falloff = Math.max(0, 1 - progress);
+  const pressureProgress = smoothstep(0, 1, progress);
+  cabinPressureAtm = Math.max(
+    CABIN_PRESSURE_VACUUM_ATM,
+    hatchDecompression.startPressureAtm * (1 - pressureProgress),
+  );
+  const remaining = Math.max(0, 1 - progress);
+  const falloff = 0.28 + remaining * remaining * 0.72;
+  const direction = getHatchSuctionDirection(
+    hatchDecompression.interaction,
+    hatchDecompression.outflowDirection,
+  );
+  const distanceBoost = getHatchSuctionDistanceBoost(
+    hatchDecompression.interaction,
+  );
   zeroGravityVelocity.addInPlace(
-    hatchDecompression.direction.scale(
-      HATCH_DECOMPRESSION_ACCELERATION * falloff * falloff * seconds,
+    direction.scale(
+      HATCH_DECOMPRESSION_ACCELERATION * falloff * distanceBoost * seconds,
     ),
   );
   clampVectorLengthInPlace(zeroGravityVelocity, HATCH_DECOMPRESSION_MAX_SPEED);
@@ -922,57 +1121,474 @@ function updateHatchDecompression(seconds) {
 
   hatchDecompression.elapsed += seconds;
   if (hatchDecompression.elapsed >= hatchDecompression.duration) {
+    cabinPressureAtm = CABIN_PRESSURE_VACUUM_ATM;
     hatchDecompression = null;
   }
 }
 
 function updateLifeSupport(seconds) {
-  if (!equippedHelmet) return;
+  updatePlayerNeeds(seconds);
 
-  helmetOxygenSeconds = Math.max(
+  const pressureKpa = getCabinPressureKpa();
+  if (equippedHelmet && !equippedHelmet.visorOpen && helmetOxygenLiters > 0) {
+    helmetOxygenLiters = Math.max(
+      0,
+      helmetOxygenLiters - HELMET_OXYGEN_LITERS_PER_SECOND * seconds,
+    );
+  }
+
+  if (pressureKpa < PRESSURE_DAMAGE_THRESHOLD_KPA && !isHelmetProtecting()) {
+    applyPressureDamage(seconds);
+  }
+  updateLifeSupportHud();
+}
+
+function updatePlayerNeeds(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return;
+  playerFood = Math.max(0, playerFood - PLAYER_FOOD_DRAIN_PER_SECOND * seconds);
+  playerThirst = Math.max(
     0,
-    helmetOxygenSeconds - HELMET_OXYGEN_DRAIN_PER_SECOND * seconds,
+    playerThirst - PLAYER_THIRST_DRAIN_PER_SECOND * seconds,
   );
+  playerRestroom = Math.max(
+    0,
+    playerRestroom - PLAYER_RESTROOM_DRAIN_PER_SECOND * seconds,
+  );
+  playerComfort = Math.max(
+    0,
+    playerComfort - PLAYER_COMFORT_DRAIN_PER_SECOND * seconds,
+  );
+  playerTemperatureC = Math.min(
+    PLAYER_TEMPERATURE_IDEAL_C + PLAYER_TEMPERATURE_CRITICAL_DELTA_C,
+    playerTemperatureC + PLAYER_TEMPERATURE_HEAT_C_PER_SECOND * seconds,
+  );
+}
+
+function isHelmetProtecting() {
+  return Boolean(
+    equippedHelmet && !equippedHelmet.visorOpen && helmetOxygenLiters > 0,
+  );
+}
+
+function applyPressureDamage(seconds) {
+  if (playerDead || playerHealth <= 0) return;
+  playerHealth = Math.max(
+    0,
+    playerHealth - PRESSURE_DAMAGE_PER_SECOND * seconds,
+  );
+  if (playerHealth <= 0) showDeathScreen();
+}
+
+function showDeathScreen() {
+  if (playerDead) return;
+  playerDead = true;
+  keys.clear();
+  zeroGravityVelocity.copyFromFloats(0, 0, 0);
+  if (scene?.metadata) scene.metadata.timeScale = 0;
+  document.body.classList.add("player-dead");
+  deathScreen?.setAttribute("aria-hidden", "false");
+  exitPointerLock();
   updateLifeSupportHud();
 }
 
 function updateLifeSupportHud() {
-  if (airPressureMeterText) {
-    airPressureMeterText.textContent = `Cabin ${cabinPressureAtm.toFixed(2)} atm`;
+  updateOxygenStatusBox();
+  updateFoodStatusTile();
+  updateThirstStatusTile();
+  updateRestroomStatusTile();
+  updateComfortStatusTile();
+  updateTemperatureStatusTile();
+  updateHelmetOxygenMeter();
+  updateMainIssueTile();
+  setVitalMeterValue(
+    healthMeter,
+    healthMeterFill,
+    playerHealth / PLAYER_HEALTH_MAX,
+  );
+  updateNearDeathPulse();
+}
+
+function setVitalMeterValue(meter, fill, value) {
+  const percent = Math.max(0, Math.min(Number(value) || 0, 1)) * 100;
+  meter?.style.setProperty("--meter-value", `${percent}%`);
+  if (fill) fill.style.width = `${percent}%`;
+}
+
+function updateOxygenStatusBox() {
+  const pressureKpa = getCabinPressureKpa();
+  if (!oxygenStatusRoot || !oxygenStatusText || !oxygenPressureText) return;
+
+  const helmetProtected = isHelmetProtecting();
+  const status = getOxygenStatusLevel(pressureKpa, helmetProtected);
+  setStatusTileState(oxygenStatusRoot, status.tone, status.order);
+  oxygenStatusText.textContent = status.label;
+  oxygenPressureText.textContent =
+    `Outer Pressure: ${Math.round(pressureKpa)} kPa` +
+    (equippedHelmet ? " (helmet)" : "");
+}
+
+function updateHelmetOxygenMeter() {
+  if (!helmetOxygenMeter || !helmetOxygenFill || !helmetOxygenText) return;
+  const liters = clamp(helmetOxygenLiters, 0, HELMET_OXYGEN_MAX_LITERS);
+  const percent = (liters / HELMET_OXYGEN_MAX_LITERS) * 100;
+  helmetOxygenMeter.hidden = !equippedHelmet;
+  helmetOxygenMeter.style.setProperty("--helmet-oxygen-fill", `${percent}%`);
+  helmetOxygenFill.style.height = `${percent}%`;
+  helmetOxygenText.textContent = `${Math.ceil(liters)}/${HELMET_OXYGEN_MAX_LITERS} L`;
+}
+
+function updateFoodStatusTile() {
+  if (!foodStatusRoot || !foodStatusText) return;
+  const percent = clamp(playerFood / PLAYER_FOOD_MAX, 0, 1) * 100;
+  const baseOrder = VITAL_STATUS_ORDERS.food;
+  let status = { label: "Full", tone: "good", order: baseOrder };
+  if (percent < 20) {
+    status = {
+      label: "Starving",
+      tone: "critical",
+      order: baseOrder + VITAL_STATUS_CRITICAL_ORDER_OFFSET,
+    };
+  } else if (percent < PLAYER_FOOD_WARNING_PERCENT) {
+    status = {
+      label: "Hungry",
+      tone: "warn",
+      order: baseOrder + VITAL_STATUS_WARN_ORDER_OFFSET,
+    };
+  } else if (percent < 80) {
+    status = { label: "Okay", tone: "good", order: baseOrder + 10 };
   }
-  if (airPressureMeter) {
-    const pressurePercent =
-      CABIN_PRESSURE_INITIAL_ATM > 0
-        ? cabinPressureAtm / CABIN_PRESSURE_INITIAL_ATM
-        : 0;
-    airPressureMeter.style.setProperty(
-      "--meter-value",
-      `${Math.max(0, Math.min(pressurePercent, 1)) * 100}%`,
-    );
+  setStatusTileState(foodStatusRoot, status.tone, status.order);
+  foodStatusText.textContent = status.label;
+}
+
+function updateThirstStatusTile() {
+  if (!thirstStatusRoot || !thirstStatusText) return;
+  const percent = clamp(playerThirst / PLAYER_THIRST_MAX, 0, 1) * 100;
+  const baseOrder = VITAL_STATUS_ORDERS.thirst;
+  let status = { label: "Hydrated", tone: "good", order: baseOrder };
+  if (percent < 20) {
+    status = {
+      label: "Dehydrated",
+      tone: "critical",
+      order: baseOrder + VITAL_STATUS_CRITICAL_ORDER_OFFSET,
+    };
+  } else if (percent < PLAYER_THIRST_WARNING_PERCENT) {
+    status = {
+      label: "Thirsty",
+      tone: "warn",
+      order: baseOrder + VITAL_STATUS_WARN_ORDER_OFFSET,
+    };
+  } else if (percent < 80) {
+    status = { label: "Okay", tone: "good", order: baseOrder + 10 };
   }
-  if (oxygenMeterText) {
-    oxygenMeterText.textContent = equippedHelmet
-      ? `O2 ${Math.ceil(helmetOxygenSeconds)}s`
-      : "O2 no helmet";
+  setStatusTileState(thirstStatusRoot, status.tone, status.order);
+  thirstStatusText.textContent = status.label;
+}
+
+function updateRestroomStatusTile() {
+  if (!restroomStatusRoot || !restroomStatusText) return;
+  const percent = clamp(playerRestroom / PLAYER_RESTROOM_MAX, 0, 1) * 100;
+  const baseOrder = VITAL_STATUS_ORDERS.restroom;
+  let status = { label: "Good", tone: "good", order: baseOrder };
+  if (percent < 20) {
+    status = {
+      label: "Dire",
+      tone: "critical",
+      order: baseOrder + VITAL_STATUS_CRITICAL_ORDER_OFFSET,
+    };
+  } else if (percent < PLAYER_RESTROOM_WARNING_PERCENT) {
+    status = {
+      label: "Issue",
+      tone: "warn",
+      order: baseOrder + VITAL_STATUS_WARN_ORDER_OFFSET,
+    };
+  } else if (percent < 80) {
+    status = { label: "Okay", tone: "good", order: baseOrder + 10 };
   }
-  if (oxygenMeter) {
-    oxygenMeter.classList.toggle(
-      "empty",
-      !equippedHelmet || helmetOxygenSeconds <= 0,
-    );
+  setStatusTileState(restroomStatusRoot, status.tone, status.order);
+  restroomStatusText.textContent = status.label;
+}
+
+function updateComfortStatusTile() {
+  if (!comfortStatusRoot || !comfortStatusText) return;
+  const percent = clamp(playerComfort / PLAYER_COMFORT_MAX, 0, 1) * 100;
+  const baseOrder = VITAL_STATUS_ORDERS.comfort;
+  let status = { label: "High", tone: "good", order: baseOrder };
+  if (percent < 20) {
+    status = {
+      label: "Low",
+      tone: "critical",
+      order: baseOrder + VITAL_STATUS_CRITICAL_ORDER_OFFSET,
+    };
+  } else if (percent < PLAYER_COMFORT_WARNING_PERCENT) {
+    status = {
+      label: "Medium",
+      tone: "warn",
+      order: baseOrder + VITAL_STATUS_WARN_ORDER_OFFSET,
+    };
+  } else if (percent < 80) {
+    status = { label: "Okay", tone: "good", order: baseOrder + 10 };
   }
-  if (oxygenMeterFill) {
-    const oxygenPercent = equippedHelmet
-      ? helmetOxygenSeconds / HELMET_OXYGEN_MAX_SECONDS
+  setStatusTileState(comfortStatusRoot, status.tone, status.order);
+  comfortStatusText.textContent = status.label;
+}
+
+function updateTemperatureStatusTile() {
+  if (!temperatureStatusRoot || !temperatureStatusText) return;
+  const delta = playerTemperatureC - PLAYER_TEMPERATURE_IDEAL_C;
+  const absDelta = Math.abs(delta);
+  const baseOrder = VITAL_STATUS_ORDERS.temperature;
+  let status = { label: "Comfortable", tone: "good", order: baseOrder };
+  if (absDelta >= PLAYER_TEMPERATURE_CRITICAL_DELTA_C) {
+    status = {
+      label: delta > 0 ? "Overheated" : "Freezing",
+      tone: "critical",
+      order: baseOrder + VITAL_STATUS_CRITICAL_ORDER_OFFSET,
+    };
+  } else if (absDelta >= PLAYER_TEMPERATURE_WARN_DELTA_C) {
+    status = {
+      label: delta > 0 ? "Hot" : "Cold",
+      tone: "warn",
+      order: baseOrder + VITAL_STATUS_WARN_ORDER_OFFSET,
+    };
+  }
+  setStatusTileState(temperatureStatusRoot, status.tone, status.order);
+  temperatureStatusText.textContent = status.label;
+}
+
+function updateMainIssueTile() {
+  if (!mainIssueRoot || !mainIssueText) return;
+  const issue = getMainIssueStatus();
+  setStatusTileState(mainIssueRoot, issue.tone, 98);
+  mainIssueText.textContent = issue.label;
+}
+
+function getMainIssueStatus() {
+  const pressureKpa = getCabinPressureKpa();
+  if (pressureKpa < PRESSURE_DAMAGE_THRESHOLD_KPA && !isHelmetProtecting()) {
+    return { label: "Can't Breathe", tone: "critical" };
+  }
+
+  if (
+    (playerRestroom / PLAYER_RESTROOM_MAX) * 100 <
+    PLAYER_RESTROOM_WARNING_PERCENT
+  ) {
+    return { label: "Restroom Dire", tone: "critical" };
+  }
+
+  if (playerThirst / PLAYER_THIRST_MAX < 0.2) {
+    return { label: "Dehydrated", tone: "critical" };
+  }
+
+  const temperatureDelta = playerTemperatureC - PLAYER_TEMPERATURE_IDEAL_C;
+  if (Math.abs(temperatureDelta) >= PLAYER_TEMPERATURE_CRITICAL_DELTA_C) {
+    return {
+      label: temperatureDelta > 0 ? "Overheated" : "Freezing",
+      tone: "critical",
+    };
+  }
+
+  if ((playerFood / PLAYER_FOOD_MAX) * 100 < PLAYER_FOOD_WARNING_PERCENT) {
+    return { label: "Hungry", tone: "warn" };
+  }
+
+  if ((playerThirst / PLAYER_THIRST_MAX) * 100 < PLAYER_THIRST_WARNING_PERCENT) {
+    return { label: "Thirsty", tone: "warn" };
+  }
+
+  if (Math.abs(temperatureDelta) >= PLAYER_TEMPERATURE_WARN_DELTA_C) {
+    return {
+      label: temperatureDelta > 0 ? "Hot" : "Cold",
+      tone: "warn",
+    };
+  }
+
+  if (
+    (playerComfort / PLAYER_COMFORT_MAX) * 100 <
+    PLAYER_COMFORT_WARNING_PERCENT
+  ) {
+    return { label: "Uncomfortable", tone: "warn" };
+  }
+
+  return { label: "None", tone: "good" };
+}
+
+function getOxygenStatusLevel(pressureKpa, helmetProtected) {
+  const baseOrder = VITAL_STATUS_ORDERS.oxygen;
+  if (helmetProtected || pressureKpa > PRESSURE_YELLOW_THRESHOLD_KPA) {
+    return { label: "Good", tone: "good", order: baseOrder };
+  }
+  if (pressureKpa >= PRESSURE_DAMAGE_THRESHOLD_KPA) {
+    return {
+      label: "Bad",
+      tone: "warn",
+      order: baseOrder + VITAL_STATUS_WARN_ORDER_OFFSET,
+    };
+  }
+  return {
+    label: "Critical",
+    tone: "critical",
+    order: baseOrder + VITAL_STATUS_CRITICAL_ORDER_OFFSET,
+  };
+}
+
+function setStatusTileState(root, tone, order) {
+  root.classList.toggle("good", tone === "good");
+  root.classList.toggle("warn", tone === "warn");
+  root.classList.toggle("critical", tone === "critical");
+  root.style.order = String(order);
+}
+
+function updateNearDeathPulse() {
+  if (!nearDeathPulse) return;
+  const health = clamp(playerHealth, 0, PLAYER_HEALTH_MAX);
+  const danger =
+    health < NEAR_DEATH_HEALTH_THRESHOLD
+      ? 1 - health / NEAR_DEATH_HEALTH_THRESHOLD
       : 0;
-    oxygenMeterFill.style.width = `${Math.max(0, Math.min(oxygenPercent, 1)) * 100}%`;
-  }
+  const intensity = playerDead ? 0 : 0.08 + danger * 0.42;
+  nearDeathPulse.style.setProperty(
+    "--near-death-intensity",
+    danger > 0 ? intensity.toFixed(3) : "0",
+  );
+}
+
+function getCabinPressureKpa() {
+  const pressureRatio =
+    CABIN_PRESSURE_INITIAL_ATM > 0
+      ? cabinPressureAtm / CABIN_PRESSURE_INITIAL_ATM
+      : 0;
+  return Math.max(0, pressureRatio * PRESSURE_STANDARD_KPA);
+}
+
+function getOxygenPressureStatus(kpa) {
+  const pressure = Number(kpa) || 0;
+  if (pressure > PRESSURE_YELLOW_THRESHOLD_KPA) return "green";
+  if (pressure >= PRESSURE_DAMAGE_THRESHOLD_KPA) return "yellow";
+  return "red";
 }
 
 function getHatchOutflowDirection(interaction) {
   const normal = interaction?.passage?.normal?.clone?.() ?? B.Axis.Z.clone();
   if (normal.lengthSquared() <= 0.000001) return B.Axis.Z.clone();
-  return normal.normalize();
+  normal.normalize();
+
+  const passageCenter = interaction?.passage?.center;
+  const platform = level?.platform?.physics;
+  if (passageCenter && platform) {
+    return getHatchHullOutflowDirection(passageCenter, platform, normal);
+  }
+
+  return normal;
+}
+
+function getHatchHullOutflowDirection(passageCenter, platform, fallback) {
+  const floorY = platform.floorY ?? passageCenter.y;
+  const ceilingY = platform.ceilingY ?? passageCenter.y;
+  const height = Math.max(ceilingY - floorY, 0.001);
+  const verticalFraction = clamp((passageCenter.y - floorY) / height, 0, 1);
+
+  if (verticalFraction >= 0.38) return B.Axis.Y.clone();
+  if (verticalFraction <= 0.08) return B.Axis.Y.scale(-1);
+
+  const minX = platform.minX ?? passageCenter.x;
+  const maxX = platform.maxX ?? passageCenter.x;
+  const minZ = platform.minZ ?? passageCenter.z;
+  const maxZ = platform.maxZ ?? passageCenter.z;
+  const candidates = [
+    {
+      distance: Math.abs(ceilingY - passageCenter.y),
+      direction: B.Axis.Y.clone(),
+    },
+    {
+      distance: Math.abs(passageCenter.y - floorY),
+      direction: B.Axis.Y.scale(-1),
+    },
+    {
+      distance: Math.abs(passageCenter.x - minX),
+      direction: B.Axis.X.scale(-1),
+    },
+    {
+      distance: Math.abs(maxX - passageCenter.x),
+      direction: B.Axis.X.clone(),
+    },
+    {
+      distance: Math.abs(passageCenter.z - minZ),
+      direction: B.Axis.Z.scale(-1),
+    },
+    {
+      distance: Math.abs(maxZ - passageCenter.z),
+      direction: B.Axis.Z.clone(),
+    },
+  ].filter(({ distance }) => Number.isFinite(distance));
+
+  candidates.sort((a, b) => a.distance - b.distance);
+  const nearest = candidates[0]?.direction?.clone?.();
+  if (nearest && nearest.lengthSquared() > 0.000001) {
+    return nearest.normalize();
+  }
+
+  const platformCenter = new B.Vector3(
+    ((platform.minX ?? passageCenter.x) + (platform.maxX ?? passageCenter.x)) *
+      0.5,
+    ((platform.floorY ?? passageCenter.y) +
+      (platform.ceilingY ?? passageCenter.y)) *
+      0.5,
+    ((platform.minZ ?? passageCenter.z) + (platform.maxZ ?? passageCenter.z)) *
+      0.5,
+  );
+  if (B.Vector3.Dot(fallback, passageCenter.subtract(platformCenter)) < 0) {
+    return fallback.scale(-1).normalize();
+  }
+  return fallback.normalize();
+}
+
+function getHatchSuctionDirection(interaction, fallbackDirection = null) {
+  const outflow =
+    fallbackDirection?.clone?.() ?? getHatchOutflowDirection(interaction);
+  if (outflow.lengthSquared() <= 0.000001) return B.Axis.Z.clone();
+  outflow.normalize();
+
+  const passage = interaction?.passage;
+  const playerPosition = getPlayerPlatformPosition();
+  if (!passage?.center || !playerPosition) return outflow;
+
+  const exitLead =
+    passage.outwardDepth ??
+    Math.max(HATCH_DECOMPRESSION_EXIT_LEAD, passage.inwardDepth ?? 0);
+  const exitPoint = passage.center.add(
+    outflow.scale(Math.max(exitLead, HATCH_DECOMPRESSION_EXIT_LEAD)),
+  );
+  const toExit = exitPoint.subtract(playerPosition);
+  if (B.Vector3.Dot(toExit, outflow) <= 0) return outflow;
+  if (toExit.lengthSquared() <= 0.000001) return outflow;
+  return toExit.normalize();
+}
+
+function getHatchSuctionDistanceBoost(interaction) {
+  const passage = interaction?.passage;
+  const playerPosition = getPlayerPlatformPosition();
+  if (!passage?.center || !playerPosition) return 1;
+
+  const distance = playerPosition.subtract(passage.center).length();
+  const platform = level?.platform?.physics;
+  const roomSpan = Math.max(
+    (platform?.maxX ?? 0) - (platform?.minX ?? 0),
+    (platform?.ceilingY ?? 0) - (platform?.floorY ?? 0),
+    (platform?.maxZ ?? 0) - (platform?.minZ ?? 0),
+    1,
+  );
+  return clamp(1 + distance / Math.max(roomSpan * 0.55, 0.001), 1, 1.85);
+}
+
+function getPlayerPlatformPosition() {
+  if (!camera) return null;
+  if (camera.parent === level?.platform?.root || !camera.parent) {
+    return camera.position.clone();
+  }
+
+  camera.computeWorldMatrix(true);
+  return worldPointToPlatformLocal(camera.globalPosition ?? camera.position);
 }
 
 function createHatchWindBurst(interaction, direction) {
@@ -1641,15 +2257,15 @@ async function equipHelmetItem(item) {
       animationFrame: 0,
       rotation: [0, 0, 0],
     });
-    root.position.set(0, -0.22, 0.075);
-    root.scaling.scaleInPlace(1.08);
+    root.position.set(0, -0.15, 0.06);
+    root.scaling.scaleInPlace(0.9);
     root.computeWorldMatrix(true);
 
     for (const mesh of getRootRenderableMeshes(root)) {
       mesh.isPickable = false;
       mesh.checkCollisions = false;
       if (mesh.material) {
-        mesh.material.backFaceCulling = true;
+        mesh.material.backFaceCulling = !isHelmetGlassMesh(mesh);
       }
     }
 
@@ -1660,7 +2276,7 @@ async function equipHelmetItem(item) {
       animationGroups: root.metadata?.importedAnimationGroups ?? [],
       visor: createHelmetVisorController(root),
     };
-    helmetOxygenSeconds = HELMET_OXYGEN_MAX_SECONDS;
+    helmetOxygenLiters = HELMET_OXYGEN_MAX_LITERS;
     setHelmetVisorOpen(false, true);
     updateHudButtons();
     renderClothingGrid();
@@ -1784,8 +2400,9 @@ function getAnimationGroupFrameRange(group) {
   return { from, to };
 }
 
-function initializeMountedHooks() {
+async function initializeMountedHooks() {
   const interactions = level.platform?.interactions ?? [];
+  const mounts = [];
   for (const interaction of interactions) {
     if (
       interaction.type !== "helmet-hook" ||
@@ -1796,8 +2413,11 @@ function initializeMountedHooks() {
     }
 
     interaction.initialMountResolved = true;
-    mountHelmetItemOnHook(interaction, { ...interaction.initialMountedItem });
+    mounts.push(
+      mountHelmetItemOnHook(interaction, { ...interaction.initialMountedItem }),
+    );
   }
+  await Promise.all(mounts);
 }
 
 function hangMountedHelmet(root) {
@@ -1835,42 +2455,137 @@ function addInventoryItemCount(item, count = 1) {
   if (amount <= 0) return true;
 
   const id = item.id ?? "item";
-  const existingEntry = findInventoryEntry(id);
-  if (existingEntry) {
-    existingEntry.count = (existingEntry.count ?? 1) + amount;
-    mergeItemMetadata(existingEntry, item);
-    hydrateInventoryPortrait(existingEntry, item);
-    return true;
+  const stackLimit = getItemStackLimit(item);
+  if (!canAddInventoryItemCount(item, amount)) return false;
+
+  let remaining = amount;
+  for (const entry of getInventoryEntriesById(id)) {
+    if (remaining <= 0) break;
+    const current = entry.count ?? 1;
+    const room = Number.isFinite(stackLimit)
+      ? Math.max(0, stackLimit - current)
+      : remaining;
+    if (room <= 0) continue;
+    const added = Math.min(room, remaining);
+    entry.count = current + added;
+    remaining -= added;
+    mergeItemMetadata(entry, item);
+    hydrateInventoryPortrait(entry, item);
   }
 
-  const slot = findEmptyInventorySlot();
-  if (!slot) return false;
+  while (remaining > 0) {
+    const slot = findEmptyInventorySlot();
+    if (!slot) return false;
+    const stackCount = Number.isFinite(stackLimit)
+      ? Math.min(remaining, stackLimit)
+      : remaining;
+    const entry = {
+      ...item,
+      id,
+      name: item.name ?? item.label ?? "Item",
+      count: stackCount,
+      portrait: item.portrait ?? null,
+    };
+    slot.items[slot.index] = entry;
+    hydrateInventoryPortrait(entry, item);
+    remaining -= stackCount;
+  }
 
-  const entry = {
-    ...item,
-    id,
-    name: item.name ?? item.label ?? "Item",
-    count: amount,
-    portrait: item.portrait ?? createItemPortrait(item),
-  };
-  slot.items[slot.index] = entry;
-  hydrateInventoryPortrait(entry, item);
+  return true;
+}
+
+function canAddInventoryItemCount(item, count = 1) {
+  const amount = Math.max(0, Math.floor(Number(count) || 0));
+  if (amount <= 0) return true;
+
+  const id = item.id ?? "item";
+  const stackLimit = getItemStackLimit(item);
+  if (!Number.isFinite(stackLimit)) {
+    return Boolean(findInventoryEntry(id) || findEmptyInventorySlot());
+  }
+
+  const existingRoom = getInventoryEntriesById(id).reduce(
+    (sum, entry) => sum + Math.max(0, stackLimit - (entry.count ?? 1)),
+    0,
+  );
+  const emptySlots = [...hotbarItems, ...inventoryItems].filter(
+    (entry) => !entry,
+  ).length;
+  return existingRoom + emptySlots * stackLimit >= amount;
+}
+
+function getItemStackLimit(item) {
+  return isFabricatorResourceItem(item)
+    ? FABRICATOR_RESOURCE_STACK_LIMIT
+    : Infinity;
+}
+
+function getInventoryEntriesById(id) {
+  return [...hotbarItems, ...inventoryItems].filter(
+    (entry) => entry?.id === id,
+  );
+}
+
+function getInventoryItemCount(id) {
+  return [...hotbarItems, ...inventoryItems].reduce(
+    (sum, entry) => sum + (entry?.id === id ? (entry.count ?? 1) : 0),
+    0,
+  );
+}
+
+function consumeInventoryItemCount(id, count) {
+  let remaining = Math.max(0, Math.floor(Number(count) || 0));
+  if (remaining <= 0) return true;
+  if (getInventoryItemCount(id) < remaining) return false;
+
+  for (const items of [hotbarItems, inventoryItems]) {
+    for (let index = 0; index < items.length && remaining > 0; index += 1) {
+      const entry = items[index];
+      if (entry?.id !== id) continue;
+
+      const amount = entry.count ?? 1;
+      if (amount > remaining) {
+        entry.count = amount - remaining;
+        remaining = 0;
+      } else {
+        items[index] = null;
+        remaining -= amount;
+      }
+    }
+  }
+  renderHotbars();
+  renderInventoryGrid();
   return true;
 }
 
 function canAddInventoryItemCounts(items) {
-  const existingIds = new Set(
-    [...hotbarItems, ...inventoryItems].filter(Boolean).map((entry) => entry.id),
-  );
-  const neededSlots = new Set();
+  const planned = new Map();
   for (const { item, count } of items) {
-    if (!item?.id || count <= 0 || existingIds.has(item.id)) continue;
-    neededSlots.add(item.id);
+    if (!item?.id || count <= 0) continue;
+    planned.set(item.id, {
+      item,
+      count: (planned.get(item.id)?.count ?? 0) + count,
+    });
   }
-  const emptySlots = [...hotbarItems, ...inventoryItems].filter(
+
+  let emptySlots = [...hotbarItems, ...inventoryItems].filter(
     (entry) => !entry,
   ).length;
-  return neededSlots.size <= emptySlots;
+  for (const { item, count } of planned.values()) {
+    const stackLimit = getItemStackLimit(item);
+    if (!Number.isFinite(stackLimit)) {
+      if (!findInventoryEntry(item.id)) emptySlots -= 1;
+      continue;
+    }
+
+    const existingRoom = getInventoryEntriesById(item.id).reduce(
+      (sum, entry) => sum + Math.max(0, stackLimit - (entry.count ?? 1)),
+      0,
+    );
+    const remaining = Math.max(0, count - existingRoom);
+    emptySlots -= Math.ceil(remaining / stackLimit);
+  }
+  return emptySlots >= 0;
 }
 
 function findHelmetInventorySlot() {
@@ -1961,6 +2676,8 @@ async function loadItemModelRoot(item, options = {}) {
     options.rotation ?? resolveItemRotation(item),
   );
   root.computeWorldMatrix(true);
+  enhanceImportedItemMaterials(root, item);
+  enhanceHelmetGlassMeshes(root, item);
 
   const excludeFromBounds = options.hologram || options.parent === camera;
   for (const mesh of getRootRenderableMeshes(root)) {
@@ -2002,6 +2719,305 @@ function freezeImportedItemAnimations(result, frame) {
   }
 }
 
+function configureImportedMaterialLighting(targetScene) {
+  if (!targetScene || targetScene.metadata?.importedMaterialLightingReady) {
+    return;
+  }
+  targetScene.metadata = {
+    ...(targetScene.metadata ?? {}),
+    importedMaterialLightingReady: true,
+  };
+
+  const fill = new B.HemisphericLight(
+    "imported-material-fill-light",
+    new B.Vector3(0, 1, 0),
+    targetScene,
+  );
+  fill.intensity = 0;
+  fill.diffuse = new B.Color3(0.48, 0.58, 0.68);
+  fill.groundColor = new B.Color3(0.11, 0.085, 0.055);
+  fill.specular = new B.Color3(0.42, 0.48, 0.56);
+
+  const rim = new B.DirectionalLight(
+    "imported-material-rim-light",
+    new B.Vector3(0.45, -0.32, 0.72),
+    targetScene,
+  );
+  rim.intensity = 0;
+  rim.diffuse = new B.Color3(0.52, 0.68, 1.0);
+  rim.specular = new B.Color3(0.9, 0.96, 1.0);
+
+  targetScene.metadata.importedMaterialLighting = {
+    fill,
+    fillIntensity: 0.18,
+    rim,
+    rimIntensity: 0.28,
+  };
+}
+
+function enhanceImportedItemMaterials(root, item) {
+  if (!root || !isFabricatorItem(item)) return;
+}
+
+function enhanceHelmetGlassMeshes(root, item) {
+  if (!root || !isHelmetItem(item)) return;
+  const material = getHelmetGlassMaterial();
+  for (const mesh of getRootRenderableMeshes(root)) {
+    if (!isHelmetGlassMesh(mesh)) continue;
+    mesh.material = material;
+    mesh.visibility = 1;
+    mesh.hasVertexAlpha = false;
+    mesh.renderingGroupId = 0;
+    mesh.disableEdgesRendering?.();
+  }
+}
+
+function isHelmetGlassMesh(mesh) {
+  const names = [];
+  let node = mesh;
+  while (node) {
+    names.push(node.name ?? "", node.id ?? "");
+    node = node.parent;
+  }
+  names.push(mesh?.material?.name ?? "");
+  return /helmet[_ -]?glass/i.test(names.join(" "));
+}
+
+function getHelmetGlassMaterial() {
+  const materialName = "helmet-smoked-glass-material";
+  const existing = scene.getMaterialByName?.(materialName);
+  if (existing) return existing;
+
+  const material = new B.PBRMaterial(materialName, scene);
+  material.albedoColor = new B.Color3(0.08, 0.16, 0.2);
+  material.emissiveColor = new B.Color3(0.005, 0.018, 0.028);
+  material.reflectivityColor = new B.Color3(0.5, 0.82, 1.0);
+  material.alpha = 0.42;
+  material.metallic = 0;
+  material.roughness = 0.045;
+  material.microSurface = 0.94;
+  material.indexOfRefraction = 1.5;
+  material.environmentIntensity = 1.2;
+  material.directIntensity = 1.0;
+  material.specularIntensity = 1.05;
+  material.backFaceCulling = false;
+  material.twoSidedLighting = true;
+  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+  material.alphaMode = B.Engine.ALPHA_COMBINE;
+  material.needDepthPrePass = true;
+  material.separateCullingPass = false;
+  return material;
+}
+
+function includeImportedMaterialLightingMeshes(meshes) {
+  const lighting = scene?.metadata?.importedMaterialLighting;
+  if (!lighting || !Array.isArray(meshes) || !meshes.length) return;
+
+  const included = new Set(lighting.fill.includedOnlyMeshes ?? []);
+  for (const mesh of meshes) {
+    included.add(mesh);
+  }
+  const includedMeshes = [...included].filter((mesh) => !mesh.isDisposed?.());
+  lighting.fill.includedOnlyMeshes = includedMeshes;
+  lighting.rim.includedOnlyMeshes = includedMeshes;
+  lighting.fill.intensity = lighting.fillIntensity;
+  lighting.rim.intensity = lighting.rimIntensity;
+}
+
+function refreshFabricatorReflectionProbe(root, item) {
+  if (!root || !isFabricatorItem(item)) return;
+}
+
+function getFabricatorReflectionProbe(root) {
+  if (!B.ReflectionProbe || !scene) return null;
+
+  let probe = scene.metadata?.fabricatorReflectionProbe;
+  if (!probe || probe.isDisposed?.()) {
+    probe = new B.ReflectionProbe(
+      "fabricator-reflection-probe",
+      FABRICATOR_REFLECTION_PROBE_SIZE,
+      scene,
+      true,
+    );
+    probe.refreshRate = 12;
+    scene.metadata = {
+      ...(scene.metadata ?? {}),
+      fabricatorReflectionProbe: probe,
+    };
+  }
+
+  root.computeWorldMatrix?.(true);
+  probe.position.copyFrom(root.getAbsolutePosition?.() ?? root.position);
+  probe.renderList = scene.meshes.filter(
+    (mesh) =>
+      mesh.isVisible !== false &&
+      mesh.visibility !== 0 &&
+      !mesh.metadata?.excludeFromBounds &&
+      !mesh.metadata?.fabricatorDisassemblyEffect,
+  );
+  return probe;
+}
+
+function enhanceFabricatorMeshMaterial(mesh, reflectionTexture) {
+  const material = mesh?.material;
+  if (!material || material.metadata?.fabricatorMaterialEnhanced) return;
+
+  if (material.subMaterials?.length) {
+    for (const subMaterial of material.subMaterials) {
+      enhanceFabricatorMaterial(subMaterial, reflectionTexture);
+    }
+    material.metadata = {
+      ...(material.metadata ?? {}),
+      fabricatorMaterialEnhanced: true,
+    };
+    return;
+  }
+
+  enhanceFabricatorMaterial(material, reflectionTexture);
+}
+
+function enhanceFabricatorMaterial(material, reflectionTexture) {
+  if (!material || material.metadata?.fabricatorMaterialEnhanced) return;
+
+  const mirrorLike = isMirrorLikeFabricatorMaterial(material);
+  material.metadata = {
+    ...(material.metadata ?? {}),
+    fabricatorMaterialEnhanced: true,
+  };
+  material.backFaceCulling = false;
+  material.twoSidedLighting = true;
+  material.maxSimultaneousLights = Math.max(
+    material.maxSimultaneousLights ?? 4,
+    6,
+  );
+
+  if (material.getClassName?.() === "PBRMaterial" || "metallic" in material) {
+    enhanceFabricatorPbrMaterial(material, reflectionTexture, mirrorLike);
+    return;
+  }
+
+  if (mirrorLike && "reflectionTexture" in material) {
+    material.reflectionTexture = null;
+  }
+  material.specularColor =
+    material.specularColor?.clone?.() ?? new B.Color3(0.62, 0.54, 0.42);
+  if (mirrorLike) {
+    material.diffuseColor = new B.Color3(0.11, 0.082, 0.058);
+    material.ambientColor = new B.Color3(0.018, 0.013, 0.009);
+    material.emissiveColor = B.Color3.Black();
+    material.specularColor.copyFromFloats(0.12, 0.095, 0.07);
+    material.specularPower = Math.min(material.specularPower ?? 34, 42);
+    return;
+  }
+  material.specularColor.r = Math.min(
+    Math.max(material.specularColor.r, 0.28),
+    0.42,
+  );
+  material.specularColor.g = Math.min(
+    Math.max(material.specularColor.g, 0.24),
+    0.36,
+  );
+  material.specularColor.b = Math.min(
+    Math.max(material.specularColor.b, 0.2),
+    0.32,
+  );
+  material.specularPower = Math.min(
+    Math.max(material.specularPower ?? 32, 42),
+    58,
+  );
+  if (reflectionTexture && "reflectionTexture" in material) {
+    material.reflectionTexture = reflectionTexture;
+  }
+}
+
+function isMirrorLikeFabricatorMaterial(material) {
+  return `${material?.name ?? ""}`.toLowerCase().includes("mirror");
+}
+
+function enhanceFabricatorPbrMaterial(
+  material,
+  reflectionTexture,
+  mirrorLike = false,
+) {
+  const name = `${material.name ?? ""}`.toLowerCase();
+  const metalLike =
+    mirrorLike ||
+    name.includes("metal") ||
+    name.includes("panel") ||
+    name.includes("gold");
+
+  if (mirrorLike) {
+    if ("reflectionTexture" in material) material.reflectionTexture = null;
+    material.environmentIntensity = 0.02;
+    material.directIntensity = Math.min(
+      Math.max(material.directIntensity ?? 0.86, 0.74),
+      0.95,
+    );
+    material.specularIntensity = 0.34;
+    material.metallic = 0;
+    material.roughness = Math.max(material.roughness ?? 0.52, 0.5);
+    material.microSurface = Math.min(material.microSurface ?? 0.48, 0.52);
+    if (material.albedoColor) {
+      material.albedoColor.copyFromFloats(0.11, 0.082, 0.058);
+    }
+    if (material.emissiveColor) {
+      material.emissiveColor.copyFromFloats(0, 0, 0);
+    }
+    if (material.reflectivityColor) {
+      material.reflectivityColor.copyFromFloats(0.055, 0.044, 0.033);
+    }
+    return;
+  }
+
+  if (reflectionTexture) {
+    material.reflectionTexture = reflectionTexture;
+  }
+  material.environmentIntensity = Math.min(
+    Math.max(material.environmentIntensity ?? 0.82, 0.68),
+    0.95,
+  );
+  material.directIntensity = Math.min(
+    Math.max(material.directIntensity ?? 0.9, 0.72),
+    1.0,
+  );
+  material.specularIntensity = Math.min(
+    Math.max(material.specularIntensity ?? 0.85, 0.55),
+    0.9,
+  );
+
+  if (metalLike) {
+    material.metallic = Math.min(
+      material.metallic ?? (mirrorLike ? 0.62 : 0.46),
+      mirrorLike ? 0.72 : 0.56,
+    );
+    material.roughness = Math.max(
+      material.roughness ?? (mirrorLike ? 0.34 : 0.52),
+      mirrorLike ? 0.28 : 0.48,
+    );
+    material.microSurface = Math.min(
+      material.microSurface ?? (mirrorLike ? 0.68 : 0.5),
+      mirrorLike ? 0.72 : 0.56,
+    );
+    if (material.reflectivityColor) {
+      material.reflectivityColor.r = Math.min(
+        Math.max(material.reflectivityColor.r, 0.2),
+        0.32,
+      );
+      material.reflectivityColor.g = Math.min(
+        Math.max(material.reflectivityColor.g, 0.17),
+        0.28,
+      );
+      material.reflectivityColor.b = Math.min(
+        Math.max(material.reflectivityColor.b, 0.13),
+        0.24,
+      );
+    }
+  } else {
+    material.roughness = Math.max(material.roughness ?? 0.62, 0.58);
+    material.microSurface = Math.min(material.microSurface ?? 0.38, 0.42);
+  }
+}
+
 function resolveItemRotation(item) {
   if (item.rotation) return item.rotation;
   if (item.rotationDegrees) {
@@ -2014,7 +3030,14 @@ function installPlacedItemMetadata(root, item) {
   root.metadata = {
     ...(root.metadata ?? {}),
     placedItem: sanitizeItemForSave(item),
+    glbPickupLabel: item.name ?? item.label ?? item.id ?? "Item",
+    glbPickupRange: GLB_PICKUP_PROMPT_RANGE,
+    glbPickupRoot: root,
+    glbPickupItem: { ...item },
   };
+  if (isBatteryItem(item)) {
+    initializeBatteryEnergy(root);
+  }
   unregisterPlacedItemCollisionMeshes(root);
   for (const mesh of getRootRenderableMeshes(root)) {
     const collisionMesh = isItemCollisionMesh(mesh);
@@ -2727,45 +3750,225 @@ function openFabricatorModal(root = activeInteraction?.root) {
   exitPointerLock();
 }
 
-function pulseFabricatorDisassembleButton() {
+function activateFabricatorPrimaryButton() {
+  const mode = getFabricatorMode(activeFabricatorRoot);
+  if (mode === "fabrication") {
+    fabricateSelectedRecipe(activeFabricatorRoot);
+    return;
+  }
   startFabricatorDisassembly(activeFabricatorRoot);
 }
 
 function renderFabricatorAnalysis() {
+  const mode = getFabricatorMode(activeFabricatorRoot);
   const mounted = activeFabricatorRoot?.metadata?.fabricatorMountedAsteroid;
   const yieldValues = getAsteroidYield(mounted?.composition);
   const hasYield = Boolean(yieldValues);
   const disassembly = activeFabricatorRoot?.metadata?.fabricatorDisassembly;
   const processing = Boolean(disassembly);
+  const battery = getFabricatorBatteryRoot(activeFabricatorRoot);
+  const energy = getBatteryEnergyState(battery);
+  const selectedRecipe = getSelectedFabricatorRecipe(activeFabricatorRoot);
+  const actionCost =
+    mode === "fabrication"
+      ? (selectedRecipe?.energyCost ?? 0)
+      : FABRICATOR_DISASSEMBLY_ENERGY_COST;
+  const canUseEnergy = energy.stored >= actionCost;
 
   if (fabricatorAnalysisStatus) {
     let statusText = "No asteroid loaded";
-    if (processing) {
+    if (!battery) {
+      statusText = "No battery connected";
+    } else if (processing) {
       statusText = `Disassembling ${Math.ceil(disassembly.remaining)}s`;
+    } else if (mode === "fabrication" && selectedRecipe) {
+      statusText = `Recipe selected · ${formatRecipeCost(selectedRecipe)}`;
     } else if (hasYield) {
       statusText = "Asteroid analyzed";
     }
     fabricatorAnalysisStatus.textContent = statusText;
   }
+  if (fabricatorModeDisassemblyButton) {
+    fabricatorModeDisassemblyButton.classList.toggle(
+      "active",
+      mode === "disassembly",
+    );
+  }
+  if (fabricatorModeFabricationButton) {
+    fabricatorModeFabricationButton.classList.toggle(
+      "active",
+      mode === "fabrication",
+    );
+  }
   if (fabricatorYieldIron) {
-    fabricatorYieldIron.textContent = hasYield ? String(yieldValues.iron) : "-";
+    fabricatorYieldIron.textContent =
+      mode === "fabrication"
+        ? String(getInventoryItemCount("iron"))
+        : hasYield
+          ? String(yieldValues.iron)
+          : "-";
   }
   if (fabricatorYieldCopper) {
-    fabricatorYieldCopper.textContent = hasYield
-      ? String(yieldValues.copper)
-      : "-";
+    fabricatorYieldCopper.textContent =
+      mode === "fabrication"
+        ? String(getInventoryItemCount("copper"))
+        : hasYield
+          ? String(yieldValues.copper)
+          : "-";
   }
   if (fabricatorYieldWater) {
     fabricatorYieldWater.textContent = hasYield
       ? String(yieldValues.water)
       : "-";
   }
+  if (fabricatorEnergyValue) {
+    fabricatorEnergyValue.textContent = battery
+      ? `${energy.stored}/${energy.max}`
+      : "No battery";
+  }
+  if (fabricatorEnergyBar) {
+    const fill =
+      battery && energy.max > 0 ? (energy.stored / energy.max) * 100 : 0;
+    fabricatorEnergyBar.style.setProperty(
+      "--energy-fill",
+      `${clamp(fill, 0, 100).toFixed(1)}%`,
+    );
+  }
+  if (fabricatorEnergyCost) {
+    fabricatorEnergyCost.textContent =
+      mode === "fabrication" && selectedRecipe
+        ? `${selectedRecipe.energyCost} energy`
+        : `${FABRICATOR_DISASSEMBLY_ENERGY_COST} energy`;
+  }
+  renderFabricatorRecipes(mode, selectedRecipe);
   if (fabricatorDisassembleButton) {
-    fabricatorDisassembleButton.disabled = !hasYield || processing;
+    const canFabricate =
+      mode === "fabrication" &&
+      selectedRecipe &&
+      canFabricateRecipe(selectedRecipe) &&
+      canUseEnergy &&
+      !processing;
+    const canDisassemble =
+      mode === "disassembly" && hasYield && canUseEnergy && !processing;
+    fabricatorDisassembleButton.disabled =
+      mode === "fabrication" ? !canFabricate : !canDisassemble;
     fabricatorDisassembleButton.textContent = processing
       ? "Disassembling"
-      : "Disassemble";
+      : mode === "fabrication"
+        ? "Fabricate"
+        : "Disassemble";
   }
+}
+
+function renderFabricatorRecipes(mode, selectedRecipe) {
+  if (!fabricatorRecipesPanel) return;
+  fabricatorRecipesPanel.hidden = mode !== "fabrication";
+  if (mode !== "fabrication") {
+    fabricatorRecipesPanel.replaceChildren();
+    return;
+  }
+
+  fabricatorRecipesPanel.replaceChildren(
+    ...fabricatorRecipes.map((recipe) => {
+      const button = document.createElement("button");
+      button.className = "fabricator-recipe-button";
+      button.classList.toggle("active", recipe.id === selectedRecipe?.id);
+      button.type = "button";
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setSelectedFabricatorRecipe(activeFabricatorRoot, recipe.id);
+      });
+
+      const name = document.createElement("span");
+      name.className = "fabricator-recipe-name";
+      name.textContent = recipe.name;
+
+      const cost = document.createElement("span");
+      cost.className = "fabricator-recipe-cost";
+      cost.textContent = formatRecipeCost(recipe);
+
+      button.append(name, cost);
+      return button;
+    }),
+  );
+}
+
+function setFabricatorMode(root, mode) {
+  if (!root) return;
+  root.metadata = {
+    ...(root.metadata ?? {}),
+    fabricatorMode: mode === "fabrication" ? "fabrication" : "disassembly",
+  };
+  if (!root.metadata.fabricatorSelectedRecipeId) {
+    root.metadata.fabricatorSelectedRecipeId = fabricatorRecipes[0]?.id;
+  }
+  renderFabricatorAnalysis();
+}
+
+function getFabricatorMode(root) {
+  return root?.metadata?.fabricatorMode === "fabrication"
+    ? "fabrication"
+    : "disassembly";
+}
+
+function setSelectedFabricatorRecipe(root, recipeId) {
+  if (!root) return;
+  root.metadata = {
+    ...(root.metadata ?? {}),
+    fabricatorSelectedRecipeId: recipeId,
+  };
+  renderFabricatorAnalysis();
+}
+
+function getSelectedFabricatorRecipe(root) {
+  const recipeId =
+    root?.metadata?.fabricatorSelectedRecipeId ?? fabricatorRecipes[0]?.id;
+  return (
+    fabricatorRecipes.find((recipe) => recipe.id === recipeId) ??
+    fabricatorRecipes[0] ??
+    null
+  );
+}
+
+function createFabricatorRecipe(
+  id,
+  name,
+  iron,
+  copper,
+  energyCost,
+  itemOverrides = {},
+) {
+  return {
+    id,
+    name,
+    ingredients: { iron, copper },
+    energyCost,
+    item: {
+      id,
+      name,
+      count: 1,
+      icon: name
+        .split(/\s+/)
+        .map((word) => word[0])
+        .join("")
+        .slice(0, 3),
+      swatch: "#7ea0a8",
+      ...itemOverrides,
+    },
+  };
+}
+
+function formatRecipeCost(recipe) {
+  if (!recipe) return "-";
+  return `${recipe.ingredients.iron} Fe · ${recipe.ingredients.copper} Cu · ${recipe.energyCost} E`;
+}
+
+function canFabricateRecipe(recipe) {
+  if (!recipe) return false;
+  return (
+    getInventoryItemCount("iron") >= recipe.ingredients.iron &&
+    getInventoryItemCount("copper") >= recipe.ingredients.copper
+  );
 }
 
 function startFabricatorDisassembly(root) {
@@ -2779,12 +3982,20 @@ function startFabricatorDisassembly(root) {
     return false;
   }
 
-  const rewards = createFabricatorRewards(yieldValues);
-  if (!canAddInventoryItemCounts(rewards)) {
-    updateInteractionPrompt({ prompt: "Inventory full" });
+  if (!consumeFabricatorEnergy(root, FABRICATOR_DISASSEMBLY_ENERGY_COST)) {
+    updateInteractionPrompt({ prompt: "Not enough battery energy" });
+    renderFabricatorAnalysis();
     return false;
   }
 
+  const rewards = createFabricatorRewards(yieldValues);
+  if (!canAddInventoryItemCounts(rewards)) {
+    updateInteractionPrompt({ prompt: "Inventory full" });
+    refundFabricatorEnergy(root, FABRICATOR_DISASSEMBLY_ENERGY_COST);
+    return false;
+  }
+
+  const meshData = createFabricatorDisassemblyMeshData(mounted.mesh);
   const job = {
     root,
     mounted,
@@ -2795,8 +4006,8 @@ function startFabricatorDisassembly(root) {
     duration: FABRICATOR_DISASSEMBLE_SECONDS,
     originalScaling: mounted.mesh.scaling.clone(),
     originalPosition: getNodePositionInPlatform(mounted.mesh),
-    meshData: createFabricatorDisassemblyMeshData(mounted.mesh),
-    effects: createFabricatorDisassemblyEffects(root, mounted.mesh),
+    meshData,
+    effects: createFabricatorDisassemblyEffects(root, mounted.mesh, meshData),
   };
   root.metadata = {
     ...(root.metadata ?? {}),
@@ -2813,12 +4024,118 @@ function startFabricatorDisassembly(root) {
   return true;
 }
 
+function fabricateSelectedRecipe(root) {
+  if (!root || root.metadata?.fabricatorDisassembly) return false;
+
+  const recipe = getSelectedFabricatorRecipe(root);
+  if (!recipe) {
+    updateInteractionPrompt({ prompt: "No recipe selected" });
+    return false;
+  }
+  if (!canFabricateRecipe(recipe)) {
+    updateInteractionPrompt({ prompt: "Missing iron or copper" });
+    renderFabricatorAnalysis();
+    return false;
+  }
+  if (!canAddInventoryItemCounts([{ item: recipe.item, count: 1 }])) {
+    updateInteractionPrompt({ prompt: "Inventory full" });
+    return false;
+  }
+  if (!consumeFabricatorEnergy(root, recipe.energyCost)) {
+    updateInteractionPrompt({ prompt: "Not enough battery energy" });
+    renderFabricatorAnalysis();
+    return false;
+  }
+
+  if (
+    !consumeInventoryItemCount("iron", recipe.ingredients.iron) ||
+    !consumeInventoryItemCount("copper", recipe.ingredients.copper)
+  ) {
+    refundFabricatorEnergy(root, recipe.energyCost);
+    updateInteractionPrompt({ prompt: "Missing iron or copper" });
+    renderFabricatorAnalysis();
+    return false;
+  }
+
+  addInventoryItemCount(recipe.item, 1);
+  renderFabricatorAnalysis();
+  updateInteractionPrompt({ prompt: `Fabricated ${recipe.name}` });
+  return true;
+}
+
 function createFabricatorRewards(yieldValues) {
   return [
     { item: fabricatorResourceItems.iron, count: yieldValues.iron },
     { item: fabricatorResourceItems.water, count: yieldValues.water },
     { item: fabricatorResourceItems.copper, count: yieldValues.copper },
   ].filter(({ count }) => count > 0);
+}
+
+function getFabricatorBatteryRoot(root) {
+  const linked = root?.metadata?.connectedBattery;
+  if (
+    isActivePlacedRoot(linked) &&
+    isBatteryItem(linked.metadata?.placedItem)
+  ) {
+    return linked;
+  }
+
+  const batteries = getPlacedItemRoots((item) => isBatteryItem(item));
+  return findClosestPlacedRoot(root, batteries) ?? null;
+}
+
+function getBatteryEnergyState(root) {
+  if (!root) return { stored: 0, max: BATTERY_MAX_ENERGY };
+  initializeBatteryEnergy(root);
+  return {
+    stored: Math.round(root.metadata.energyStored ?? 0),
+    max: Math.round(root.metadata.maxEnergy ?? BATTERY_MAX_ENERGY),
+  };
+}
+
+function initializeBatteryEnergy(root) {
+  if (!root || !isBatteryItem(root.metadata?.placedItem)) return;
+
+  const item = root.metadata.placedItem;
+  const maxEnergy = Number(item.maxEnergy ?? BATTERY_MAX_ENERGY);
+  const stored = Number(
+    item.energyStored ?? item.energy ?? BATTERY_DEFAULT_ENERGY,
+  );
+  root.metadata.maxEnergy = Number.isFinite(maxEnergy)
+    ? Math.max(0, maxEnergy)
+    : BATTERY_MAX_ENERGY;
+  if (!Number.isFinite(root.metadata.energyStored)) {
+    root.metadata.energyStored = Number.isFinite(stored)
+      ? clamp(stored, 0, root.metadata.maxEnergy)
+      : BATTERY_DEFAULT_ENERGY;
+  }
+  item.maxEnergy = root.metadata.maxEnergy;
+  item.energyStored = root.metadata.energyStored;
+}
+
+function consumeFabricatorEnergy(root, amount) {
+  const battery = getFabricatorBatteryRoot(root);
+  const cost = Math.max(0, Number(amount) || 0);
+  if (!battery) return cost <= 0;
+  initializeBatteryEnergy(battery);
+  if ((battery.metadata.energyStored ?? 0) < cost) return false;
+  battery.metadata.energyStored -= cost;
+  battery.metadata.placedItem.energyStored = battery.metadata.energyStored;
+  if (activeFabricatorRoot === root) renderFabricatorAnalysis();
+  return true;
+}
+
+function refundFabricatorEnergy(root, amount) {
+  const battery = getFabricatorBatteryRoot(root);
+  const refund = Math.max(0, Number(amount) || 0);
+  if (!battery || refund <= 0) return;
+  initializeBatteryEnergy(battery);
+  battery.metadata.energyStored = clamp(
+    (battery.metadata.energyStored ?? 0) + refund,
+    0,
+    battery.metadata.maxEnergy ?? BATTERY_MAX_ENERGY,
+  );
+  battery.metadata.placedItem.energyStored = battery.metadata.energyStored;
 }
 
 function updateFabricatorDisassembly(seconds) {
@@ -2861,17 +4178,13 @@ function completeFabricatorDisassembly(job) {
   }
   job.mesh?.dispose(false, true);
 
-  for (const { item, count } of job.rewards) {
-    addInventoryItemCount(item, count);
-  }
-  renderHotbars();
-  renderInventoryGrid();
+  const spawnedCount = spawnFabricatorResourceChunks(job.root, job.rewards);
   refreshPlacementPreview();
   if (activeFabricatorRoot === job.root) {
     renderFabricatorAnalysis();
   }
   updateInteractionPrompt({
-    prompt: `Disassembled · ${formatFabricatorRewards(job.rewards)}`,
+    prompt: `Disassembled · Ejected ${spawnedCount} resource chunks`,
   });
 }
 
@@ -2885,85 +4198,1042 @@ function cancelFabricatorDisassembly(job) {
 }
 
 function formatFabricatorRewards(rewards) {
-  return rewards
-    .map(({ item, count }) => `${count} ${item.name}`)
-    .join(" · ");
+  return rewards.map(({ item, count }) => `${count} ${item.name}`).join(" · ");
 }
 
-function createFabricatorDisassemblyEffects(root, asteroidMesh) {
+function spawnFabricatorResourceChunks(root, rewards) {
+  const frame = getFabricatorResourceEjectionFrame(root);
+  if (!frame || !Array.isArray(rewards)) return 0;
+
+  let spawned = 0;
+  const totalCount = rewards.reduce((sum, reward) => sum + reward.count, 0);
+  for (const reward of rewards) {
+    for (let index = 0; index < reward.count; index += 1) {
+      const offsetIndex = spawned - (totalCount - 1) * 0.5;
+      createFabricatorResourceChunk(root, reward.item, frame, offsetIndex);
+      spawned += 1;
+    }
+  }
+  return spawned;
+}
+
+function getFabricatorResourceEjectionFrame(root) {
+  const platformRoot = level?.platform?.root;
+  if (!root || !platformRoot) return null;
+
+  const bounds = getRootBoundsInPlatform(root);
+  if (!bounds) return null;
+
+  const center = bounds.min.add(bounds.max).scale(0.5);
+  const size = bounds.max.subtract(bounds.min);
+  const right = nodeLocalDirectionToPlatform(root, B.Axis.X);
+  const up = nodeLocalDirectionToPlatform(root, B.Axis.Y);
+  const forward = nodeLocalDirectionToPlatform(root, B.Axis.Z);
+  if (right.lengthSquared() <= 0.000001) right.copyFrom(B.Axis.X);
+  if (up.lengthSquared() <= 0.000001) up.copyFrom(B.Axis.Y);
+  if (forward.lengthSquared() <= 0.000001) forward.copyFrom(B.Axis.Z);
+  right.normalize();
+  up.normalize();
+  forward.normalize();
+
+  const sideDistance = Math.max(size.x, size.y, size.z) * 0.46 + 0.055;
+  const position = center
+    .add(right.scale(sideDistance))
+    .add(up.scale(-size.y * 0.08));
+  return { position, right, up, forward };
+}
+
+function createFabricatorResourceChunk(root, item, frame, offsetIndex) {
+  const mesh = createRoundedResourceChunkMesh(item);
+  const platformRoot = level?.platform?.root;
+  mesh.parent = platformRoot ?? root ?? null;
+  mesh.position.copyFrom(
+    frame.position
+      .add(frame.up.scale(offsetIndex * FABRICATOR_RESOURCE_CHUNK_SIZE * 0.35))
+      .add(
+        frame.forward.scale(
+          Math.sin(offsetIndex * 1.71) * FABRICATOR_RESOURCE_CHUNK_SIZE * 0.42,
+        ),
+      ),
+  );
+  mesh.rotationQuaternion = B.Quaternion.RotationYawPitchRoll(
+    Math.random() * Math.PI,
+    Math.random() * Math.PI,
+    Math.random() * Math.PI,
+  );
+  mesh.isPickable = true;
+  mesh.checkCollisions = false;
+  mesh.receiveShadows = true;
+  mesh.metadata = {
+    ...(mesh.metadata ?? {}),
+    resourceChunk: true,
+    resourceItem: { ...item },
+    excludeFromBounds: false,
+    excludeFromCollision: true,
+    interaction: {
+      type: "pickup",
+      range: GLB_PICKUP_PROMPT_RANGE,
+      item,
+      prompt: `Press E to pick up ${item.name}`,
+      activate: () => collectFabricatorResourceChunk(mesh),
+    },
+  };
+
+  const velocity = frame.right
+    .scale(FABRICATOR_RESOURCE_EJECT_SPEED)
+    .add(
+      frame.up.scale((Math.random() - 0.35) * FABRICATOR_RESOURCE_EJECT_SPREAD),
+    )
+    .add(
+      frame.forward.scale(
+        (Math.random() - 0.5) * FABRICATOR_RESOURCE_EJECT_SPREAD,
+      ),
+    );
+  registerAsteroidBody(mesh, {
+    radius: FABRICATOR_RESOURCE_CHUNK_RADIUS,
+    velocity,
+    angularVelocity: createAsteroidAngularVelocity().scale(1.7),
+  });
+  return mesh;
+}
+
+function collectFabricatorResourceChunk(mesh) {
+  unregisterAsteroidBody(mesh);
+  mesh?.dispose(false, true);
+  return true;
+}
+
+function createFabricatorResourceChunkPortrait(item) {
+  return createMeshModelPortrait(
+    `fabricator-resource-${item.id}`,
+    (previewScene) => createRoundedResourceChunkMesh(item, previewScene),
+    {
+      rotation: [-0.26, 0.72, -0.18],
+    },
+  );
+}
+
+function createRoundedResourceChunkMesh(item, targetScene = scene) {
+  const mesh = createRoundedCubeMesh(
+    `fabricator-${item.id}-resource-chunk`,
+    FABRICATOR_RESOURCE_CHUNK_SIZE,
+    10,
+    targetScene,
+  );
+  mesh.material = getFabricatorResourceChunkMaterial(item.id, targetScene);
+  return mesh;
+}
+
+function createRoundedCubeMesh(name, size, segments = 8, targetScene = scene) {
+  const positions = [];
+  const indices = [];
+  const rings = Math.max(segments, 6);
+  const exponent = 0.28;
+
+  for (let latIndex = 0; latIndex <= rings; latIndex += 1) {
+    const latitude = -Math.PI / 2 + (Math.PI * latIndex) / rings;
+    for (let lonIndex = 0; lonIndex <= rings * 2; lonIndex += 1) {
+      const longitude = -Math.PI + (Math.PI * 2 * lonIndex) / (rings * 2);
+      const cosLat = Math.cos(latitude);
+      const x =
+        signedPower(cosLat, exponent) *
+        signedPower(Math.cos(longitude), exponent);
+      const y = signedPower(Math.sin(latitude), exponent);
+      const z =
+        signedPower(cosLat, exponent) *
+        signedPower(Math.sin(longitude), exponent);
+      positions.push(x * size * 0.5, y * size * 0.5, z * size * 0.5);
+    }
+  }
+
+  const columns = rings * 2 + 1;
+  for (let latIndex = 0; latIndex < rings; latIndex += 1) {
+    for (let lonIndex = 0; lonIndex < rings * 2; lonIndex += 1) {
+      const a = latIndex * columns + lonIndex;
+      const b = a + 1;
+      const c = a + columns;
+      const d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+
+  const normals = [];
+  B.VertexData.ComputeNormals(positions, indices, normals);
+  const vertexData = new B.VertexData();
+  vertexData.positions = positions;
+  vertexData.indices = indices;
+  vertexData.normals = normals;
+
+  const mesh = new B.Mesh(name, targetScene);
+  vertexData.applyToMesh(mesh, true);
+  return mesh;
+}
+
+function signedPower(value, exponent) {
+  return Math.sign(value) * Math.pow(Math.abs(value), exponent);
+}
+
+function getFabricatorResourceChunkMaterial(id, targetScene = scene) {
+  const materialName = `fabricator-${id}-resource-chunk-material`;
+  const existing = targetScene.getMaterialByName?.(materialName);
+  if (existing) return existing;
+
+  if (id === "water") {
+    return createFabricatorIceChunkMaterial(materialName, targetScene);
+  }
+  return createFabricatorMetalChunkMaterial(materialName, id, targetScene);
+}
+
+function createFabricatorMetalChunkMaterial(name, id, targetScene = scene) {
+  const material = new B.PBRMaterial(name, targetScene);
+  const copper = id === "copper";
+  material.albedoColor = copper
+    ? new B.Color3(0.78, 0.36, 0.16)
+    : new B.Color3(0.52, 0.56, 0.57);
+  material.albedoTexture = createResourceChunkTexture(
+    name,
+    copper,
+    false,
+    targetScene,
+  );
+  material.metallic = copper ? 0.78 : 0.86;
+  material.roughness = copper ? 0.38 : 0.45;
+  material.microSurface = copper ? 0.58 : 0.52;
+  material.environmentIntensity = 0.44;
+  material.directIntensity = 0.9;
+  material.backFaceCulling = false;
+  return material;
+}
+
+function createFabricatorIceChunkMaterial(name, targetScene = scene) {
+  const material = new B.PBRMaterial(name, targetScene);
+  material.albedoColor = new B.Color3(0.58, 0.86, 1.0);
+  material.albedoTexture = createResourceChunkTexture(
+    name,
+    false,
+    true,
+    targetScene,
+  );
+  material.emissiveColor = new B.Color3(0.02, 0.08, 0.11);
+  material.metallic = 0;
+  material.roughness = 0.18;
+  material.microSurface = 0.74;
+  material.alpha = 0.58;
+  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+  material.alphaMode = B.Engine.ALPHA_COMBINE;
+  material.backFaceCulling = false;
+  material.twoSidedLighting = true;
+  return material;
+}
+
+function createResourceChunkTexture(
+  name,
+  copper = false,
+  ice = false,
+  targetScene = scene,
+) {
+  const texture = new B.DynamicTexture(
+    `${name}-texture`,
+    { width: 96, height: 96 },
+    targetScene,
+    false,
+  );
+  const context = texture.getContext();
+  const gradient = context.createLinearGradient(0, 0, 96, 96);
+  if (ice) {
+    gradient.addColorStop(0, "rgba(190,235,255,0.92)");
+    gradient.addColorStop(0.46, "rgba(88,176,218,0.5)");
+    gradient.addColorStop(1, "rgba(225,250,255,0.78)");
+  } else if (copper) {
+    gradient.addColorStop(0, "#d48045");
+    gradient.addColorStop(0.45, "#7f351c");
+    gradient.addColorStop(1, "#f0a05a");
+  } else {
+    gradient.addColorStop(0, "#9ca5a8");
+    gradient.addColorStop(0.46, "#3d464b");
+    gradient.addColorStop(1, "#c0c7c7");
+  }
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 96, 96);
+  context.globalAlpha = ice ? 0.34 : 0.28;
+  for (let index = 0; index < 34; index += 1) {
+    const x = Math.random() * 96;
+    const y = Math.random() * 96;
+    const length = 8 + Math.random() * 36;
+    context.strokeStyle = ice
+      ? "rgba(235,255,255,0.65)"
+      : copper
+        ? "rgba(255,211,160,0.42)"
+        : "rgba(230,242,246,0.38)";
+    context.lineWidth = Math.random() < 0.22 ? 2 : 1;
+    context.beginPath();
+    context.moveTo(x, y);
+    context.lineTo(x + length, y + (Math.random() - 0.5) * 8);
+    context.stroke();
+  }
+  context.globalAlpha = 1;
+  texture.update(false);
+  return texture;
+}
+
+function createFabricatorDisassemblyEffects(
+  root,
+  asteroidMesh,
+  meshData = null,
+) {
   const platformRoot = level?.platform?.root;
   if (!platformRoot || !asteroidMesh) return null;
 
-  const start = getFabricatorLaserSourcePoint(root);
+  const starts = getFabricatorLaserSourcePoints(root);
   const end = getNodePositionInPlatform(asteroidMesh);
-  const path = createFabricatorLaserPath(start, end, 0);
   const beamMaterial = createFabricatorLaserMaterial();
-  const beam = B.MeshBuilder.CreateTube(
-    "fabricator-blue-disassembly-laser",
+  const beamGlowMaterial = createFabricatorLaserGlowMaterial();
+  const beams = starts.map((start, index) => {
+    const path = createFabricatorLaserPath(start, end, 0);
+    const core = B.MeshBuilder.CreateTube(
+      `fabricator-red-fabrication-laser-${index}`,
+      {
+        path,
+        radius: FABRICATOR_LASER_CORE_RADIUS,
+        tessellation: 32,
+        cap: B.Mesh.CAP_ALL,
+        updatable: true,
+      },
+      scene,
+    );
+    const glow = B.MeshBuilder.CreateTube(
+      `fabricator-red-fabrication-laser-glow-${index}`,
+      {
+        path,
+        radius: FABRICATOR_LASER_GLOW_RADIUS,
+        tessellation: 32,
+        cap: B.Mesh.CAP_ALL,
+        updatable: true,
+      },
+      scene,
+    );
+    core.parent = platformRoot;
+    glow.parent = platformRoot;
+    core.material = beamMaterial;
+    glow.material = beamGlowMaterial;
+    core.isPickable = false;
+    glow.isPickable = false;
+    core.checkCollisions = false;
+    glow.checkCollisions = false;
+    const metadata = {
+      excludeFromBounds: true,
+      excludeFromCollision: true,
+      fabricatorDisassemblyEffect: true,
+    };
+    core.metadata = { ...(core.metadata ?? {}), ...metadata };
+    glow.metadata = { ...(glow.metadata ?? {}), ...metadata };
+    return { core, glow };
+  });
+
+  const scanLineMaterial = createFabricatorLaserMaterial(
+    "fabricator-red-hot-print-line-material",
+  );
+  const scanLines = starts.map((_, index) => {
+    const scanLine = B.MeshBuilder.CreateTube(
+      `fabricator-red-hot-print-line-${index}`,
+      {
+        path: [end, end.add(new B.Vector3(0.0001, 0, 0))],
+        radius: FABRICATOR_LASER_RADIUS * 1.25,
+        tessellation: 14,
+        cap: B.Mesh.CAP_ALL,
+        updatable: true,
+      },
+      scene,
+    );
+    scanLine.parent = platformRoot;
+    scanLine.material = scanLineMaterial;
+    scanLine.isPickable = false;
+    scanLine.checkCollisions = false;
+    scanLine.metadata = {
+      ...(scanLine.metadata ?? {}),
+      excludeFromBounds: true,
+      excludeFromCollision: true,
+      fabricatorDisassemblyEffect: true,
+    };
+    return scanLine;
+  });
+  const traceMaterial = createFabricatorTraceMaterial();
+  const traceGlowMaterial = createFabricatorTraceGlowMaterial();
+  const cutCapMaterial = createFabricatorCutCapMaterial(asteroidMesh);
+  const initialSliceProgress = meshData
+    ? getFabricatorLayerSliceProgress(meshData, 0)
+    : 0;
+  const initialTracePath = meshData
+    ? createFabricatorTraceRingPath(meshData, initialSliceProgress, 0, false, {
+        stable: true,
+      })
+    : createFabricatorTraceRingFallbackPath(end, 0.05, 0, true);
+  const traceRing = B.MeshBuilder.CreateTube(
+    "fabricator-red-materialization-trace",
     {
-      path,
-      radius: FABRICATOR_LASER_RADIUS,
-      tessellation: 12,
+      path: initialTracePath,
+      radius: FABRICATOR_LASER_RADIUS * 1.1,
+      tessellation: 14,
       cap: B.Mesh.CAP_ALL,
       updatable: true,
     },
     scene,
   );
-  beam.parent = platformRoot;
-  beam.material = beamMaterial;
-  beam.isPickable = false;
-  beam.checkCollisions = false;
-  beam.metadata = {
-    ...(beam.metadata ?? {}),
+  const traceGlow = B.MeshBuilder.CreateTube(
+    "fabricator-red-materialization-trace-glow",
+    {
+      path: initialTracePath,
+      radius: FABRICATOR_LASER_GLOW_RADIUS * 0.55,
+      tessellation: 14,
+      cap: B.Mesh.CAP_ALL,
+      updatable: true,
+    },
+    scene,
+  );
+  traceRing.parent = platformRoot;
+  traceGlow.parent = platformRoot;
+  traceRing.material = traceMaterial;
+  traceGlow.material = traceGlowMaterial;
+  traceRing.isPickable = false;
+  traceGlow.isPickable = false;
+  traceRing.checkCollisions = false;
+  traceGlow.checkCollisions = false;
+  const traceMetadata = {
     excludeFromBounds: true,
     excludeFromCollision: true,
     fabricatorDisassemblyEffect: true,
   };
+  traceRing.metadata = { ...(traceRing.metadata ?? {}), ...traceMetadata };
+  traceGlow.metadata = { ...(traceGlow.metadata ?? {}), ...traceMetadata };
+  const cutCap = createFabricatorCutCapMesh(
+    "fabricator-rock-cut-cap",
+    initialTracePath,
+    cutCapMaterial,
+  );
+  cutCap.parent = platformRoot;
+  cutCap.metadata = { ...(cutCap.metadata ?? {}), ...traceMetadata };
+  const cutCapLight = createFabricatorCutCapLight(cutCap, initialTracePath);
 
-  return { beam, beamMaterial };
+  return {
+    beams,
+    beamMaterial,
+    beamGlowMaterial,
+    scanLines,
+    scanLineMaterial,
+    traceRing,
+    traceGlow,
+    traceMaterial,
+    traceGlowMaterial,
+    cutCap,
+    cutCapMaterial,
+    cutCapLight,
+  };
 }
 
 function createFabricatorLaserPath(start, end, progress) {
   return [start, end];
 }
 
-function createFabricatorLaserMaterial() {
-  const material = new B.StandardMaterial(
-    "fabricator-blue-disassembly-laser-material",
+function createFabricatorCutCapMesh(name, path, material) {
+  const mesh = new B.Mesh(name, scene);
+  mesh.material = material;
+  mesh.isPickable = false;
+  mesh.checkCollisions = false;
+  mesh.receiveShadows = true;
+  updateFabricatorCutCapMesh(mesh, path);
+  return mesh;
+}
+
+function updateFabricatorCutCapMesh(mesh, path) {
+  if (!mesh || !Array.isArray(path) || path.length < 4) return;
+
+  const ring = path.slice(0, -1);
+  if (ring.length < 3) return;
+
+  const center = ring
+    .reduce((sum, point) => sum.addInPlace(point), B.Vector3.Zero())
+    .scaleInPlace(1 / ring.length);
+  const positions = [center.x, center.y - 0.0008, center.z];
+  const normals = [0, 1, 0];
+  const uvs = [0.5, 0.5];
+  const indices = [];
+  let maxRadius = 0.0001;
+
+  for (const point of ring) {
+    maxRadius = Math.max(
+      maxRadius,
+      Math.hypot(point.x - center.x, point.z - center.z),
+    );
+  }
+
+  for (const point of ring) {
+    positions.push(point.x, point.y - 0.0008, point.z);
+    normals.push(0, 1, 0);
+    uvs.push(
+      0.5 + (point.x - center.x) / (maxRadius * 2),
+      0.5 + (point.z - center.z) / (maxRadius * 2),
+    );
+  }
+
+  for (let index = 1; index <= ring.length; index += 1) {
+    const next = index === ring.length ? 1 : index + 1;
+    indices.push(0, index, next);
+  }
+
+  const vertexData = new B.VertexData();
+  vertexData.positions = positions;
+  vertexData.normals = normals;
+  vertexData.uvs = uvs;
+  vertexData.indices = indices;
+  vertexData.applyToMesh(mesh, true);
+  mesh.refreshBoundingInfo?.();
+}
+
+function createFabricatorCutCapLight(cutCap, path) {
+  if (!cutCap) return null;
+  const light = new B.PointLight(
+    "fabricator-rock-cut-cap-light",
+    B.Vector3.Zero(),
     scene,
   );
-  material.diffuseColor = new B.Color3(0.12, 0.55, 1);
-  material.emissiveColor = new B.Color3(0.18, 0.75, 1);
-  material.specularColor = new B.Color3(0.65, 0.9, 1);
+  light.diffuse = new B.Color3(0.58, 0.55, 0.48);
+  light.specular = new B.Color3(0.08, 0.07, 0.055);
+  light.intensity = 0.34;
+  light.range = 0.45;
+  light.includedOnlyMeshes = [cutCap];
+  updateFabricatorCutCapLight(light, path);
+  return light;
+}
+
+function updateFabricatorCutCapLight(light, path) {
+  if (!light || !Array.isArray(path) || path.length < 4) return;
+
+  const ring = path.slice(0, -1);
+  const center = ring
+    .reduce((sum, point) => sum.addInPlace(point), B.Vector3.Zero())
+    .scaleInPlace(1 / ring.length);
+  const platformRoot = level?.platform?.root;
+  if (platformRoot) {
+    platformRoot.computeWorldMatrix?.(true);
+    light.position.copyFrom(
+      B.Vector3.TransformCoordinates(
+        center.add(new B.Vector3(0, 0.12, 0)),
+        platformRoot.getWorldMatrix(),
+      ),
+    );
+  } else {
+    light.position.copyFrom(center.add(new B.Vector3(0, 0.12, 0)));
+  }
+}
+
+function createFabricatorTraceRingFallbackPath(
+  center,
+  radius,
+  elapsed,
+  stable = false,
+) {
+  const path = [];
+  for (let index = 0; index <= FABRICATOR_TRACE_RING_POINTS; index += 1) {
+    const t = index / FABRICATOR_TRACE_RING_POINTS;
+    const angle = t * Math.PI * 2;
+    const ripple = stable ? 1 : 1 + Math.sin(angle * 5 + elapsed * 7) * 0.08;
+    path.push(
+      new B.Vector3(
+        center.x + Math.cos(angle) * radius * ripple,
+        center.y,
+        center.z + Math.sin(angle) * radius * ripple,
+      ),
+    );
+  }
+  return path;
+}
+
+function createFabricatorTraceRingPath(
+  data,
+  progress,
+  elapsed,
+  wideGlow = false,
+  options = {},
+) {
+  const min = data.platformMin;
+  const max = data.platformMax;
+  const stable = Boolean(options.stable);
+  if (!min || !max) {
+    return createFabricatorTraceRingFallbackPath(
+      B.Vector3.Zero(),
+      0.05,
+      elapsed,
+      stable,
+    );
+  }
+
+  const center = min.add(max).scale(0.5);
+  const width = Math.max(data.platformWidth ?? max.x - min.x, 0.0001);
+  const height = Math.max(data.platformHeight ?? max.y - min.y, 0.0001);
+  const depth = Math.max(data.platformDepth ?? max.z - min.z, 0.0001);
+  const clampedProgress = clamp(progress, 0, 0.999999);
+  const y = max.y - height * clampedProgress;
+  const contour = createFabricatorMeshSliceContourPath(
+    data,
+    center,
+    y,
+    elapsed,
+    wideGlow,
+    stable,
+  );
+  if (contour.length >= 4) return contour;
+
+  const normalizedY = clamp(
+    (y - center.y) / Math.max(height * 0.5, 0.0001),
+    -1,
+    1,
+  );
+  const sliceScale = Math.max(
+    0.18,
+    Math.sqrt(Math.max(0, 1 - normalizedY * normalizedY)),
+  );
+  return createFabricatorTraceRingFallbackPath(
+    new B.Vector3(center.x, y, center.z),
+    Math.max(width, depth) * 0.5 * sliceScale,
+    elapsed,
+    stable,
+  );
+}
+
+function createFabricatorMeshSliceContourPath(
+  data,
+  center,
+  y,
+  elapsed,
+  wideGlow,
+  stable = false,
+) {
+  const positions = data.platformPositions;
+  const indices = data.sourceIndices;
+  if (!positions?.length || !indices?.length) return [];
+
+  const points = [];
+  for (let index = 0; index < indices.length; index += 3) {
+    const triangle = [
+      getPlatformVertex(positions, indices[index]),
+      getPlatformVertex(positions, indices[index + 1]),
+      getPlatformVertex(positions, indices[index + 2]),
+    ];
+    appendFabricatorSliceIntersections(points, triangle, y);
+  }
+
+  if (points.length < 8) return [];
+
+  const bins = new Array(FABRICATOR_TRACE_RING_POINTS).fill(null);
+  for (const point of points) {
+    const angle = Math.atan2(point.z - center.z, point.x - center.x);
+    const normalized = (angle + Math.PI) / (Math.PI * 2);
+    const bin = Math.min(
+      FABRICATOR_TRACE_RING_POINTS - 1,
+      Math.max(0, Math.floor(normalized * FABRICATOR_TRACE_RING_POINTS)),
+    );
+    const radiusSq =
+      (point.x - center.x) * (point.x - center.x) +
+      (point.z - center.z) * (point.z - center.z);
+    if (!bins[bin] || radiusSq > bins[bin].radiusSq) {
+      bins[bin] = { point, radiusSq };
+    }
+  }
+
+  const filledBins = fillFabricatorContourBins(bins);
+  if (!filledBins) return [];
+
+  const glowScale = wideGlow ? 1.035 : 1;
+  const path = filledBins.map(({ point }, index) => {
+    const x = center.x + (point.x - center.x) * glowScale;
+    const z = center.z + (point.z - center.z) * glowScale;
+    const angle = (index / FABRICATOR_TRACE_RING_POINTS) * Math.PI * 2;
+    const lift = stable ? 0 : Math.sin(angle * 7 + elapsed * 8) * 0.0015;
+    return new B.Vector3(x, point.y + lift, z);
+  });
+  path.push(path[0].clone());
+  return path;
+}
+
+function fillFabricatorContourBins(bins) {
+  const populated = bins
+    .map((entry, index) => (entry ? { ...entry, index } : null))
+    .filter(Boolean);
+  if (populated.length < 8) return null;
+
+  return bins.map((entry, index) => {
+    if (entry) return entry;
+
+    const before = findNearestFabricatorContourBin(populated, index, -1);
+    const after = findNearestFabricatorContourBin(populated, index, 1);
+    if (!before && !after) return populated[0];
+    if (!before) return after.entry;
+    if (!after) return before.entry;
+
+    const span = before.distance + after.distance;
+    const amount = span > 0 ? before.distance / span : 0;
+    return {
+      point: B.Vector3.Lerp(before.entry.point, after.entry.point, amount),
+      radiusSq: lerp(before.entry.radiusSq, after.entry.radiusSq, amount),
+    };
+  });
+}
+
+function findNearestFabricatorContourBin(populated, targetIndex, direction) {
+  let best = null;
+  for (const entry of populated) {
+    const rawDistance =
+      direction < 0
+        ? (targetIndex - entry.index + FABRICATOR_TRACE_RING_POINTS) %
+          FABRICATOR_TRACE_RING_POINTS
+        : (entry.index - targetIndex + FABRICATOR_TRACE_RING_POINTS) %
+          FABRICATOR_TRACE_RING_POINTS;
+    if (rawDistance === 0) continue;
+    if (!best || rawDistance < best.distance) {
+      best = { entry, distance: rawDistance };
+    }
+  }
+  return best;
+}
+
+function getPlatformVertex(positions, vertexIndex) {
+  const index = vertexIndex * 3;
+  return new B.Vector3(
+    positions[index],
+    positions[index + 1],
+    positions[index + 2],
+  );
+}
+
+function appendFabricatorSliceIntersections(points, triangle, y) {
+  const intersections = [];
+  for (let index = 0; index < 3; index += 1) {
+    const a = triangle[index];
+    const b = triangle[(index + 1) % 3];
+    const da = a.y - y;
+    const db = b.y - y;
+    if (Math.abs(da) < 0.000001) intersections.push(a);
+    if (da * db < 0) {
+      const amount = da / (da - db);
+      intersections.push(
+        new B.Vector3(
+          a.x + (b.x - a.x) * amount,
+          y,
+          a.z + (b.z - a.z) * amount,
+        ),
+      );
+    }
+  }
+  if (intersections.length < 2) return;
+  points.push(intersections[0], intersections[1]);
+}
+
+function createFabricatorLaserMaterial(
+  name = "fabricator-red-fabrication-laser-material",
+) {
+  const material = new B.StandardMaterial(name, scene);
+  material.diffuseColor = new B.Color3(1, 0.12, 0.06);
+  material.emissiveColor = new B.Color3(3.2, 0.28, 0.08);
+  material.specularColor = new B.Color3(1, 0.4, 0.22);
   material.alpha = 0.72;
+  material.disableLighting = true;
+  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+  material.alphaMode = B.Engine.ALPHA_ADD;
+  material.needDepthPrePass = true;
   return material;
+}
+
+function createFabricatorLaserGlowMaterial(
+  name = "fabricator-red-fabrication-laser-glow-material",
+) {
+  const material = new B.StandardMaterial(name, scene);
+  material.diffuseColor = new B.Color3(1, 0.02, 0.01);
+  material.emissiveColor = new B.Color3(2.2, 0.08, 0.025);
+  material.specularColor = B.Color3.Black();
+  material.alpha = 0.24;
+  material.disableLighting = true;
+  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+  material.alphaMode = B.Engine.ALPHA_ADD;
+  material.backFaceCulling = false;
+  return material;
+}
+
+function createFabricatorTraceMaterial(
+  name = "fabricator-red-materialization-trace-material",
+) {
+  const material = new B.StandardMaterial(name, scene);
+  material.diffuseColor = new B.Color3(1, 0.18, 0.08);
+  material.emissiveColor = new B.Color3(3.4, 0.34, 0.12);
+  material.specularColor = new B.Color3(1, 0.45, 0.24);
+  material.alpha = 0.88;
+  material.disableLighting = true;
+  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+  material.alphaMode = B.Engine.ALPHA_ADD;
+  return material;
+}
+
+function createFabricatorTraceGlowMaterial(
+  name = "fabricator-red-materialization-trace-glow-material",
+) {
+  const material = new B.StandardMaterial(name, scene);
+  material.diffuseColor = new B.Color3(1, 0.04, 0.01);
+  material.emissiveColor = new B.Color3(2.2, 0.12, 0.04);
+  material.specularColor = B.Color3.Black();
+  material.alpha = 0.22;
+  material.disableLighting = true;
+  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+  material.alphaMode = B.Engine.ALPHA_ADD;
+  material.backFaceCulling = false;
+  return material;
+}
+
+function createFabricatorCutCapMaterial(asteroidMesh) {
+  const material = new B.StandardMaterial(
+    "fabricator-rock-cut-cap-material",
+    scene,
+  );
+  const sourceMaterial = asteroidMesh?.material;
+  const sourceDiffuse = getFabricatorCutCapBaseColor(asteroidMesh);
+  material.diffuseColor = sourceDiffuse.scale(0.96);
+  material.diffuseTexture = null;
+  material.bumpTexture = null;
+  material.invertNormalMapY = false;
+  material.specularColor =
+    sourceMaterial?.specularColor?.clone?.().scaleInPlace(0.55) ??
+    new B.Color3(0.024, 0.022, 0.019);
+  material.specularPower = sourceMaterial?.specularPower ?? 30;
+  material.roughness = sourceMaterial?.roughness ?? 0.82;
+  material.ambientColor = sourceDiffuse.scale(0.55);
+  material.emissiveColor = sourceDiffuse.scale(0.12);
+  material.disableLighting = false;
+  material.maxSimultaneousLights = Math.max(
+    sourceMaterial?.maxSimultaneousLights ?? 4,
+    4,
+  );
+  material.backFaceCulling = false;
+  material.twoSidedLighting = true;
+  material.transparencyMode = B.Material.MATERIAL_OPAQUE;
+  material.alphaMode = B.Engine.ALPHA_DISABLE;
+  material.needDepthPrePass = false;
+  material.disableDepthWrite = false;
+  return material;
+}
+
+function getFabricatorCutCapBaseColor(asteroidMesh) {
+  const material = asteroidMesh?.material;
+  const tint = asteroidMesh?.metadata?.asteroidColor;
+  const candidates = [
+    material?.diffuseColor,
+    material?.albedoColor,
+    material?.ambientColor,
+  ].filter(Boolean);
+
+  let color = candidates.find((candidate) => isUsableRockColor(candidate));
+  if (!color) {
+    color = new B.Color3(0.34, 0.33, 0.3);
+  } else {
+    color = color.clone();
+  }
+
+  if (Array.isArray(tint) && tint.length >= 3) {
+    color = new B.Color3(
+      color.r * tint[0],
+      color.g * tint[1],
+      color.b * tint[2],
+    );
+  }
+
+  const luminance = getColorLuminance(color);
+  if (luminance < 0.18) {
+    const lift = (0.18 - luminance) / 0.18;
+    color = B.Color3.Lerp(color, new B.Color3(0.42, 0.41, 0.37), lift);
+  }
+  return color;
+}
+
+function isUsableRockColor(color) {
+  return (
+    Number.isFinite(color?.r) &&
+    Number.isFinite(color?.g) &&
+    Number.isFinite(color?.b) &&
+    getColorLuminance(color) > 0.045
+  );
+}
+
+function getColorLuminance(color) {
+  return color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722;
+}
+
+function getFabricatorLayerSliceProgress(data, progress) {
+  const layerCount = Math.max(
+    Math.floor(data?.layerCount ?? FABRICATOR_PRINT_LAYER_COUNT),
+    1,
+  );
+  const clampedProgress = clamp(progress, 0, 0.999999);
+  const layerIndex = Math.min(
+    layerCount - 1,
+    Math.floor(clampedProgress * layerCount),
+  );
+  return clamp((layerIndex + 0.5) / layerCount, 0, 0.999999);
 }
 
 function updateFabricatorDisassemblyEffects(job, progress) {
   const pulse = 0.5 + 0.5 * Math.sin(job.elapsed * 18);
-  const raster = getFabricatorDisassemblyRasterState(job, progress);
-  const target = raster?.target;
-  if (job.effects?.beam && target) {
-    const start = getFabricatorLaserSourcePoint(job.root);
-    const path = createFabricatorLaserPath(start, target, progress);
+  if (job.effects?.beams?.length) {
+    const starts = getFabricatorLaserSourcePoints(job.root);
+    const laneCount = Math.max(job.effects.beams.length, 1);
+    job.effects.beams.forEach((beam, index) => {
+      const start = starts[index] ?? starts[0];
+      const raster = getFabricatorDisassemblyRasterState(
+        job,
+        progress,
+        index,
+        laneCount,
+      );
+      const target = raster?.target;
+      if (!beam?.core || !start || !target) return;
+      const path = createFabricatorLaserPath(start, target, progress);
+      B.MeshBuilder.CreateTube(
+        `fabricator-red-fabrication-laser-${index}`,
+        {
+          path,
+          radius: FABRICATOR_LASER_CORE_RADIUS * (0.82 + pulse * 0.18),
+          tessellation: 32,
+          cap: B.Mesh.CAP_ALL,
+          instance: beam.core,
+        },
+        scene,
+      );
+      if (beam.glow) {
+        B.MeshBuilder.CreateTube(
+          `fabricator-red-fabrication-laser-glow-${index}`,
+          {
+            path,
+            radius: FABRICATOR_LASER_GLOW_RADIUS * (0.86 + pulse * 0.2),
+            tessellation: 32,
+            cap: B.Mesh.CAP_ALL,
+            instance: beam.glow,
+          },
+          scene,
+        );
+      }
+    });
+  }
+  if (job.effects?.scanLines?.length) {
+    const laneCount = Math.max(job.effects.scanLines.length, 1);
+    job.effects.scanLines.forEach((scanLine, index) => {
+      const raster = getFabricatorDisassemblyRasterState(
+        job,
+        progress,
+        index,
+        laneCount,
+      );
+      const target = raster?.target;
+      if (!scanLine || !target) return;
+      const path = [
+        target,
+        target.add(new B.Vector3(0, FABRICATOR_LASER_RADIUS * 1.8, 0)),
+      ];
+      B.MeshBuilder.CreateTube(
+        `fabricator-red-hot-print-line-${index}`,
+        {
+          path,
+          radius: FABRICATOR_LASER_RADIUS * (0.7 + pulse * 0.28),
+          tessellation: 14,
+          cap: B.Mesh.CAP_ALL,
+          instance: scanLine,
+        },
+        scene,
+      );
+    });
+  }
+  if (job.effects?.traceRing && job.meshData) {
+    const sliceProgress = getFabricatorLayerSliceProgress(
+      job.meshData,
+      progress,
+    );
+    const path = createFabricatorTraceRingPath(
+      job.meshData,
+      sliceProgress,
+      job.elapsed,
+      false,
+      { stable: true },
+    );
     B.MeshBuilder.CreateTube(
-      "fabricator-blue-disassembly-laser",
+      "fabricator-red-materialization-trace",
       {
         path,
-        radius: FABRICATOR_LASER_RADIUS * (0.82 + pulse * 0.28),
-        tessellation: 12,
+        radius: FABRICATOR_LASER_RADIUS * (0.78 + pulse * 0.28),
+        tessellation: 14,
         cap: B.Mesh.CAP_ALL,
-        instance: job.effects.beam,
+        instance: job.effects.traceRing,
       },
       scene,
     );
+    if (job.effects.traceGlow) {
+      B.MeshBuilder.CreateTube(
+        "fabricator-red-materialization-trace-glow",
+        {
+          path: createFabricatorTraceRingPath(
+            job.meshData,
+            sliceProgress,
+            job.elapsed,
+            true,
+            { stable: true },
+          ),
+          radius: FABRICATOR_LASER_GLOW_RADIUS * (0.48 + pulse * 0.18),
+          tessellation: 14,
+          cap: B.Mesh.CAP_ALL,
+          instance: job.effects.traceGlow,
+        },
+        scene,
+      );
+    }
+    if (job.effects.cutCap) {
+      updateFabricatorCutCapMesh(job.effects.cutCap, path);
+    }
+    if (job.effects.cutCapLight) {
+      updateFabricatorCutCapLight(job.effects.cutCapLight, path);
+    }
   }
   if (job.effects?.beamMaterial) {
-    job.effects.beamMaterial.alpha = 0.68 + pulse * 0.2;
+    job.effects.beamMaterial.alpha = 0.62 + pulse * 0.22;
     job.effects.beamMaterial.emissiveColor.copyFromFloats(
-      0.12 + pulse * 0.12,
-      0.55 + pulse * 0.28,
-      1,
+      2.4 + pulse * 1.1,
+      0.14 + pulse * 0.2,
+      0.035 + pulse * 0.04,
+    );
+  }
+  if (job.effects?.beamGlowMaterial) {
+    job.effects.beamGlowMaterial.alpha = 0.16 + pulse * 0.16;
+    job.effects.beamGlowMaterial.emissiveColor.copyFromFloats(
+      1.65 + pulse * 0.95,
+      0.045 + pulse * 0.08,
+      0.014,
+    );
+  }
+  if (job.effects?.scanLineMaterial) {
+    job.effects.scanLineMaterial.alpha = 0.45 + pulse * 0.24;
+    job.effects.scanLineMaterial.emissiveColor.copyFromFloats(
+      2.2 + pulse * 0.8,
+      0.14 + pulse * 0.18,
+      0.035,
+    );
+  }
+  if (job.effects?.traceMaterial) {
+    job.effects.traceMaterial.alpha = 0.7 + pulse * 0.22;
+    job.effects.traceMaterial.emissiveColor.copyFromFloats(
+      2.7 + pulse * 1.1,
+      0.22 + pulse * 0.24,
+      0.06 + pulse * 0.05,
+    );
+  }
+  if (job.effects?.traceGlowMaterial) {
+    job.effects.traceGlowMaterial.alpha = 0.16 + pulse * 0.14;
+    job.effects.traceGlowMaterial.emissiveColor.copyFromFloats(
+      1.75 + pulse * 0.95,
+      0.065 + pulse * 0.1,
+      0.018,
     );
   }
   if (job.mesh && !job.mesh.isDisposed?.()) {
@@ -2971,45 +5241,244 @@ function updateFabricatorDisassemblyEffects(job, progress) {
   }
 }
 
-function getFabricatorDisassemblyRasterState(job, progress) {
+function getFabricatorDisassemblyRasterState(
+  job,
+  progress,
+  laneIndex = 0,
+  laneCount = 1,
+) {
   const mesh = job.mesh;
   const data = job.meshData;
   if (!mesh || mesh.isDisposed?.() || !data) return null;
 
-  const source = getFabricatorLaserSourcePoint(job.root);
-  const sourceLocal = platformPointToNodeLocal(mesh, source);
-  const z = sourceLocal.z >= data.center.z ? data.max.z : data.min.z;
-  const layerCount = data.layerCount;
   const clampedProgress = clamp(progress, 0, 0.999999);
-  const layerFloat = clampedProgress * layerCount;
-  const layerIndex = Math.min(layerCount - 1, Math.floor(layerFloat));
+  const safeLaneCount = Math.max(Math.floor(laneCount), 1);
+  const safeLaneIndex =
+    ((Math.floor(laneIndex) % safeLaneCount) + safeLaneCount) % safeLaneCount;
+  const layerFloat = clampedProgress * data.layerCount;
+  const layerIndex = Math.min(data.layerCount - 1, Math.floor(layerFloat));
   const layerProgress = layerFloat - layerIndex;
-  const forward = layerIndex % 2 === 0;
-  const scanProgress = forward ? layerProgress : 1 - layerProgress;
+  const laneLineCount = Math.max(
+    Math.ceil(data.linesPerLayer / safeLaneCount),
+    1,
+  );
+  const laneLineFloat = layerProgress * laneLineCount;
+  const laneLineIndex = Math.min(laneLineCount - 1, Math.floor(laneLineFloat));
+  const passProgress = laneLineFloat - laneLineIndex;
+  const lineIndex = Math.min(
+    data.linesPerLayer - 1,
+    safeLaneIndex + laneLineIndex * safeLaneCount,
+  );
+  const forward = (layerIndex + laneLineIndex + safeLaneIndex) % 2 === 0;
+  const scanProgress = forward ? passProgress : 1 - passProgress;
+
+  if (data.platformPositions?.length) {
+    const platformY =
+      data.platformMax.y - (layerIndex + 0.5) * data.platformLayerHeight;
+    const platformZ =
+      data.platformMin.z + (lineIndex + 0.5) * data.platformLineDepth;
+    const startX = forward ? data.platformMin.x : data.platformMax.x;
+    const endX = forward ? data.platformMax.x : data.platformMin.x;
+    const target = getFabricatorRasterPlatformPoint(
+      data,
+      startX + (endX - startX) * scanProgress,
+      platformY,
+      platformZ,
+    );
+
+    return {
+      target,
+      lineStart: new B.Vector3(startX, platformY, platformZ),
+      layerIndex,
+      lineIndex,
+      passProgress,
+      forward,
+      laneIndex: safeLaneIndex,
+    };
+  }
+
   const localY = data.max.y - (layerIndex + 0.5) * data.layerHeight;
+  const localZ = data.min.z + (lineIndex + 0.5) * data.lineDepth;
   const startX = forward ? data.min.x : data.max.x;
   const endX = forward ? data.max.x : data.min.x;
+  const lineStartPoint = new B.Vector3(startX, localY, localZ);
   const localTarget = getFabricatorRasterMeshPoint(
     data,
     startX + (endX - startX) * scanProgress,
     localY,
-    z,
+    localZ,
   );
 
   return {
     target: nodeLocalPointToPlatform(mesh, localTarget),
+    lineStart: nodeLocalPointToPlatform(mesh, lineStartPoint),
     layerIndex,
-    layerProgress,
+    lineIndex,
+    passProgress,
     forward,
+    laneIndex: safeLaneIndex,
   };
 }
 
 function updateFabricatorAsteroidReversePrintMesh(job, progress) {
   if (!job.meshData) return;
 
-  const indices = getFabricatorRemainingTriangleIndices(job.meshData, progress);
-  job.mesh.setIndices(indices);
+  const sliceProgress = getFabricatorLayerSliceProgress(job.meshData, progress);
+  if (job.lastAsteroidSliceProgress === sliceProgress) return;
+  job.lastAsteroidSliceProgress = sliceProgress;
+  updateFabricatorAsteroidClippedMesh(job.mesh, job.meshData, sliceProgress);
   job.mesh.refreshBoundingInfo?.();
+}
+
+function updateFabricatorAsteroidClippedMesh(mesh, data, sliceProgress) {
+  if (!mesh || !data?.positions?.length || !data.sourceIndices?.length) return;
+
+  const planeY = data.platformPositions?.length
+    ? data.platformMax.y - data.platformHeight * sliceProgress
+    : data.max.y - data.height * sliceProgress;
+  const vertexData = createFabricatorClippedAsteroidVertexData(data, planeY);
+  vertexData.applyToMesh(mesh, true);
+}
+
+function createFabricatorClippedAsteroidVertexData(data, planeY) {
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const colors = [];
+  const indices = [];
+  const hasNormals = Boolean(data.normals?.length);
+  const hasUvs = Boolean(data.uvs?.length);
+  const hasColors = Boolean(data.colors?.length);
+
+  for (let index = 0; index < data.sourceIndices.length; index += 3) {
+    const clipped = clipFabricatorTriangleToSlice(
+      [
+        createFabricatorClipVertex(data, data.sourceIndices[index]),
+        createFabricatorClipVertex(data, data.sourceIndices[index + 1]),
+        createFabricatorClipVertex(data, data.sourceIndices[index + 2]),
+      ],
+      planeY,
+    );
+    if (clipped.length < 3) continue;
+
+    const firstIndex = positions.length / 3;
+    for (const vertex of clipped) {
+      positions.push(vertex.position.x, vertex.position.y, vertex.position.z);
+      if (hasNormals) {
+        normals.push(vertex.normal.x, vertex.normal.y, vertex.normal.z);
+      }
+      if (hasUvs) {
+        uvs.push(vertex.uv.x, vertex.uv.y);
+      }
+      if (hasColors) {
+        colors.push(
+          vertex.color.r,
+          vertex.color.g,
+          vertex.color.b,
+          vertex.color.a,
+        );
+      }
+    }
+
+    for (
+      let triangleIndex = 1;
+      triangleIndex < clipped.length - 1;
+      triangleIndex += 1
+    ) {
+      indices.push(
+        firstIndex,
+        firstIndex + triangleIndex,
+        firstIndex + triangleIndex + 1,
+      );
+    }
+  }
+
+  const vertexData = new B.VertexData();
+  vertexData.positions = positions;
+  vertexData.indices = indices;
+  if (hasNormals) {
+    vertexData.normals = normals;
+  } else {
+    B.VertexData.ComputeNormals(positions, indices, normals);
+    vertexData.normals = normals;
+  }
+  if (hasUvs) vertexData.uvs = uvs;
+  if (hasColors) vertexData.colors = colors;
+  return vertexData;
+}
+
+function createFabricatorClipVertex(data, vertexIndex) {
+  const positionIndex = vertexIndex * 3;
+  const uvIndex = vertexIndex * 2;
+  const colorIndex = vertexIndex * 4;
+  const clipPositions = data.platformPositions?.length
+    ? data.platformPositions
+    : data.positions;
+
+  return {
+    position: new B.Vector3(
+      data.positions[positionIndex],
+      data.positions[positionIndex + 1],
+      data.positions[positionIndex + 2],
+    ),
+    clipY: clipPositions[positionIndex + 1],
+    normal: data.normals?.length
+      ? new B.Vector3(
+          data.normals[positionIndex],
+          data.normals[positionIndex + 1],
+          data.normals[positionIndex + 2],
+        )
+      : B.Vector3.Up(),
+    uv: data.uvs?.length
+      ? new B.Vector2(data.uvs[uvIndex], data.uvs[uvIndex + 1])
+      : B.Vector2.Zero(),
+    color: data.colors?.length
+      ? new B.Color4(
+          data.colors[colorIndex],
+          data.colors[colorIndex + 1],
+          data.colors[colorIndex + 2],
+          data.colors[colorIndex + 3] ?? 1,
+        )
+      : new B.Color4(1, 1, 1, 1),
+  };
+}
+
+function clipFabricatorTriangleToSlice(vertices, planeY) {
+  const clipped = [];
+  for (let index = 0; index < vertices.length; index += 1) {
+    const current = vertices[index];
+    const previous = vertices[(index + vertices.length - 1) % vertices.length];
+    const currentInside = current.clipY <= planeY;
+    const previousInside = previous.clipY <= planeY;
+
+    if (currentInside !== previousInside) {
+      clipped.push(interpolateFabricatorClipVertex(previous, current, planeY));
+    }
+    if (currentInside) clipped.push(current);
+  }
+  return clipped;
+}
+
+function interpolateFabricatorClipVertex(from, to, planeY) {
+  const span = to.clipY - from.clipY;
+  const amount = Math.abs(span) > 0.000001 ? (planeY - from.clipY) / span : 0;
+  const normal = B.Vector3.Lerp(from.normal, to.normal, amount);
+  if (normal.lengthSquared() > 0.000001) normal.normalize();
+  return {
+    position: B.Vector3.Lerp(from.position, to.position, amount),
+    clipY: planeY,
+    normal,
+    uv: new B.Vector2(
+      lerp(from.uv.x, to.uv.x, amount),
+      lerp(from.uv.y, to.uv.y, amount),
+    ),
+    color: new B.Color4(
+      lerp(from.color.r, to.color.r, amount),
+      lerp(from.color.g, to.color.g, amount),
+      lerp(from.color.b, to.color.b, amount),
+      lerp(from.color.a, to.color.a, amount),
+    ),
+  };
 }
 
 function getFabricatorRasterMeshPoint(data, x, y, z) {
@@ -3033,8 +5502,35 @@ function getFabricatorRasterMeshPoint(data, x, y, z) {
   );
 }
 
+function getFabricatorRasterPlatformPoint(data, x, y, z) {
+  let bestIndex = 0;
+  let bestScore = Infinity;
+  const positions = data.platformPositions ?? [];
+  for (let index = 0; index < positions.length; index += 3) {
+    const dx = positions[index] - x;
+    const dy = positions[index + 1] - y;
+    const dz = positions[index + 2] - z;
+    const score = dx * dx + dy * dy + dz * dz * 0.35;
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+
+  return new B.Vector3(
+    positions[bestIndex],
+    positions[bestIndex + 1],
+    positions[bestIndex + 2],
+  );
+}
+
 function createFabricatorDisassemblyMeshData(mesh) {
-  const positions = mesh.getVerticesData?.(B.VertexBuffer.PositionKind)?.slice();
+  const positions = mesh
+    .getVerticesData?.(B.VertexBuffer.PositionKind)
+    ?.slice();
+  const normals = mesh.getVerticesData?.(B.VertexBuffer.NormalKind)?.slice();
+  const uvs = mesh.getVerticesData?.(B.VertexBuffer.UVKind)?.slice();
+  const colors = mesh.getVerticesData?.(B.VertexBuffer.ColorKind)?.slice();
   const sourceIndices = mesh.getIndices?.()?.slice();
   if (!positions?.length || !sourceIndices?.length) return null;
 
@@ -3049,53 +5545,187 @@ function createFabricatorDisassemblyMeshData(mesh) {
     max.z = Math.max(max.z, positions[index + 2]);
   }
 
-  const layerCount = 42;
+  const layerCount = FABRICATOR_PRINT_LAYER_COUNT;
+  const linesPerLayer = FABRICATOR_PRINT_LINES_PER_LAYER;
   const layerHeight = Math.max((max.y - min.y) / layerCount, 0.0001);
-  return {
+  const lineDepth = Math.max((max.z - min.z) / linesPerLayer, 0.0001);
+  const platformGeometry = createFabricatorPlatformGeometryData(
+    mesh,
     positions,
     sourceIndices,
+    layerCount,
+    linesPerLayer,
+  );
+  const triangleCentroids = [];
+  for (let index = 0; index < sourceIndices.length; index += 3) {
+    const a = sourceIndices[index];
+    const b = sourceIndices[index + 1];
+    const c = sourceIndices[index + 2];
+    triangleCentroids.push(getTriangleCentroid(positions, a, b, c));
+  }
+  return {
+    positions,
+    normals,
+    uvs,
+    colors,
+    sourceIndices,
+    triangleCentroids,
     min,
     max,
     center: min.add(max).scale(0.5),
+    width: Math.max(max.x - min.x, 0.0001),
+    height: Math.max(max.y - min.y, 0.0001),
+    depth: Math.max(max.z - min.z, 0.0001),
     layerCount,
+    linesPerLayer,
+    totalPasses: layerCount * linesPerLayer,
     layerHeight,
+    lineDepth,
+    ...platformGeometry,
   };
 }
 
-function getFabricatorRemainingTriangleIndices(data, progress) {
+function createFabricatorPlatformGeometryData(
+  mesh,
+  positions,
+  sourceIndices,
+  layerCount,
+  linesPerLayer,
+) {
+  const platformRoot = level?.platform?.root;
+  if (!mesh || !platformRoot) return {};
+
+  mesh.computeWorldMatrix?.(true);
+  platformRoot.computeWorldMatrix?.(true);
+  const meshWorld = mesh.getWorldMatrix();
+  const inversePlatform = platformRoot.getWorldMatrix().clone().invert();
+  const platformPositions = [];
+  const platformMin = new B.Vector3(Infinity, Infinity, Infinity);
+  const platformMax = new B.Vector3(-Infinity, -Infinity, -Infinity);
+
+  for (let index = 0; index < positions.length; index += 3) {
+    const worldPoint = B.Vector3.TransformCoordinates(
+      new B.Vector3(
+        positions[index],
+        positions[index + 1],
+        positions[index + 2],
+      ),
+      meshWorld,
+    );
+    const platformPoint = B.Vector3.TransformCoordinates(
+      worldPoint,
+      inversePlatform,
+    );
+    platformPositions.push(platformPoint.x, platformPoint.y, platformPoint.z);
+    platformMin.x = Math.min(platformMin.x, platformPoint.x);
+    platformMin.y = Math.min(platformMin.y, platformPoint.y);
+    platformMin.z = Math.min(platformMin.z, platformPoint.z);
+    platformMax.x = Math.max(platformMax.x, platformPoint.x);
+    platformMax.y = Math.max(platformMax.y, platformPoint.y);
+    platformMax.z = Math.max(platformMax.z, platformPoint.z);
+  }
+
+  if (!platformPositions.length) return {};
+
+  const platformTriangleCentroids = [];
+  for (let index = 0; index < sourceIndices.length; index += 3) {
+    const a = sourceIndices[index];
+    const b = sourceIndices[index + 1];
+    const c = sourceIndices[index + 2];
+    platformTriangleCentroids.push(
+      getTriangleCentroid(platformPositions, a, b, c),
+    );
+  }
+
+  const platformHeight = Math.max(platformMax.y - platformMin.y, 0.0001);
+  const platformWidth = Math.max(platformMax.x - platformMin.x, 0.0001);
+  const platformDepth = Math.max(platformMax.z - platformMin.z, 0.0001);
+  return {
+    platformPositions,
+    platformTriangleCentroids,
+    platformMin,
+    platformMax,
+    platformWidth,
+    platformHeight,
+    platformDepth,
+    platformLayerHeight: platformHeight / layerCount,
+    platformLineDepth: platformDepth / linesPerLayer,
+  };
+}
+
+function getFabricatorRemainingTriangleIndices(data, progress, laneCount = 1) {
   if (progress >= 0.9999) return [];
 
   const clampedProgress = clamp(progress, 0, 0.9999);
-  const layerFloat = clampedProgress * data.layerCount;
-  const layerIndex = Math.min(data.layerCount - 1, Math.floor(layerFloat));
-  const layerProgress = layerFloat - layerIndex;
-  const forward = layerIndex % 2 === 0;
-  const currentLayerTop = data.max.y - layerIndex * data.layerHeight;
-  const currentLayerBottom = currentLayerTop - data.layerHeight;
-  const scanX = forward
-    ? data.min.x + (data.max.x - data.min.x) * layerProgress
-    : data.max.x - (data.max.x - data.min.x) * layerProgress;
+  const centroids = data.platformTriangleCentroids ?? data.triangleCentroids;
   const remaining = [];
 
   for (let index = 0; index < data.sourceIndices.length; index += 3) {
-    const a = data.sourceIndices[index];
-    const b = data.sourceIndices[index + 1];
-    const c = data.sourceIndices[index + 2];
-    const centroid = getTriangleCentroid(data.positions, a, b, c);
-    if (isFabricatorTriangleDisassembled(
-      centroid,
-      currentLayerTop,
-      currentLayerBottom,
-      scanX,
-      forward,
-    )) {
+    const centroid = centroids[index / 3];
+    const traceProgress = data.platformTriangleCentroids
+      ? getFabricatorTraceProgressForPlatformPoint(data, centroid, laneCount)
+      : getFabricatorTopDownProgressForLocalPoint(data, centroid);
+    if (traceProgress <= clampedProgress) {
       continue;
     }
 
-    remaining.push(a, b, c);
+    remaining.push(
+      data.sourceIndices[index],
+      data.sourceIndices[index + 1],
+      data.sourceIndices[index + 2],
+    );
   }
 
   return remaining;
+}
+
+function getFabricatorTraceProgressForPlatformPoint(
+  data,
+  point,
+  laneCount = 1,
+) {
+  const safeLaneCount = Math.max(Math.floor(laneCount), 1);
+  const min = data.platformMin;
+  const max = data.platformMax;
+  if (!min || !max) return 1;
+
+  const width = Math.max(data.platformWidth ?? max.x - min.x, 0.0001);
+  const height = Math.max(data.platformHeight ?? max.y - min.y, 0.0001);
+  const depth = Math.max(data.platformDepth ?? max.z - min.z, 0.0001);
+  const layerCount = Math.max(
+    data.layerCount ?? FABRICATOR_PRINT_LAYER_COUNT,
+    1,
+  );
+  const linesPerLayer = Math.max(
+    data.linesPerLayer ?? FABRICATOR_PRINT_LINES_PER_LAYER,
+    1,
+  );
+  const yProgress = clamp((max.y - point.y) / height, 0, 0.999999);
+  const zProgress = clamp((point.z - min.z) / depth, 0, 0.999999);
+  const xProgress = clamp((point.x - min.x) / width, 0, 1);
+  const layerIndex = Math.min(
+    layerCount - 1,
+    Math.floor(yProgress * layerCount),
+  );
+  const lineIndex = Math.min(
+    linesPerLayer - 1,
+    Math.floor(zProgress * linesPerLayer),
+  );
+  const laneIndex = lineIndex % safeLaneCount;
+  const laneLineIndex = Math.floor(lineIndex / safeLaneCount);
+  const laneLineCount = Math.max(Math.ceil(linesPerLayer / safeLaneCount), 1);
+  const forward = (layerIndex + laneLineIndex + laneIndex) % 2 === 0;
+  const scanProgress = forward ? xProgress : 1 - xProgress;
+  return clamp(
+    (layerIndex + (laneLineIndex + scanProgress) / laneLineCount) / layerCount,
+    0,
+    1,
+  );
+}
+
+function getFabricatorTopDownProgressForLocalPoint(data, point) {
+  const height = Math.max(data.height ?? data.max.y - data.min.y, 0.0001);
+  return clamp((data.max.y - point.y) / height, 0, 1);
 }
 
 function getTriangleCentroid(positions, a, b, c) {
@@ -3105,19 +5735,8 @@ function getTriangleCentroid(positions, a, b, c) {
   return {
     x: (positions[ai] + positions[bi] + positions[ci]) / 3,
     y: (positions[ai + 1] + positions[bi + 1] + positions[ci + 1]) / 3,
+    z: (positions[ai + 2] + positions[bi + 2] + positions[ci + 2]) / 3,
   };
-}
-
-function isFabricatorTriangleDisassembled(
-  centroid,
-  currentLayerTop,
-  currentLayerBottom,
-  scanX,
-  forward,
-) {
-  if (centroid.y > currentLayerTop) return true;
-  if (centroid.y <= currentLayerBottom) return false;
-  return forward ? centroid.x <= scanX : centroid.x >= scanX;
 }
 
 function getNodePositionInPlatform(node) {
@@ -3165,11 +5784,124 @@ function setNodePositionInPlatform(node, position) {
 }
 
 function getFabricatorLaserSourcePoint(root) {
+  return getFabricatorLaserSourcePoints(root)[0];
+}
+
+function getFabricatorLaserSourcePoints(root) {
+  const nubPoints = getFabricatorTopNubLaserPoints(root);
+  if (nubPoints.length) return nubPoints;
+
   const bounds = getRootBoundsInPlatform(root);
-  if (!bounds) return getWireAnchorPoint(root, "fabricator");
+  if (!bounds) return [getWireAnchorPoint(root, "fabricator")];
 
   const center = bounds.min.add(bounds.max).scale(0.5);
-  return new B.Vector3(center.x, bounds.max.y + 0.12, center.z);
+  const halfSpacing = Math.max(
+    bounds.max.subtract(bounds.min).x * 0.22,
+    0.0001,
+  );
+  return [
+    new B.Vector3(center.x - halfSpacing, bounds.max.y + 0.12, center.z),
+    new B.Vector3(center.x + halfSpacing, bounds.max.y + 0.12, center.z),
+  ];
+}
+
+function getFabricatorTopNubLaserPoints(root) {
+  const platformRoot = level?.platform?.root;
+  if (!root || !platformRoot) return [];
+
+  const rootBounds = getRootBoundsInPlatform(root);
+  const meshes = getRootRenderableMeshes(root);
+  if (!rootBounds || !meshes.length) return [];
+
+  const rootCenter = rootBounds.min.add(rootBounds.max).scale(0.5);
+  const rootSize = rootBounds.max.subtract(rootBounds.min);
+  const inversePlatform = platformRoot.getWorldMatrix().clone().invert();
+  const candidates = [];
+
+  for (const mesh of meshes) {
+    const bounds = getMeshesBoundsInMatrix([mesh], inversePlatform);
+    if (!bounds) continue;
+
+    const size = bounds.max.subtract(bounds.min);
+    const center = bounds.min.add(bounds.max).scale(0.5);
+    const topDistance = Math.abs(bounds.max.y - rootBounds.max.y);
+    const topScore =
+      1 - clamp(topDistance / Math.max(rootSize.y * 0.22, 0.0001), 0, 1);
+    const smallFootprint =
+      1 -
+      clamp(
+        Math.max(
+          size.x / Math.max(rootSize.x, 0.0001),
+          size.z / Math.max(rootSize.z, 0.0001),
+        ) * 5.5,
+        0,
+        1,
+      );
+    const verticalNub =
+      clamp(size.y / Math.max(Math.max(size.x, size.z), 0.0001), 0, 2) / 2;
+    const frontPenalty = clamp(
+      (center.z - rootCenter.z) / Math.max(rootSize.z * 0.5, 0.0001),
+      0,
+      1,
+    );
+    const score =
+      topScore * 3 + smallFootprint * 2 + verticalNub - frontPenalty;
+
+    if (
+      topScore > 0.12 &&
+      smallFootprint > 0.18 &&
+      size.y > rootSize.y * 0.025
+    ) {
+      candidates.push({ bounds, center, score });
+    }
+  }
+
+  if (!candidates.length) return [];
+
+  candidates.sort((a, b) => b.score - a.score);
+  const selected = [];
+  const minLateralSeparation = Math.max(rootSize.x * 0.16, 0.0001);
+
+  for (const candidate of candidates) {
+    const separated = selected.every(
+      (other) =>
+        Math.abs(candidate.center.x - other.center.x) >= minLateralSeparation,
+    );
+    if (separated) selected.push(candidate);
+    if (selected.length >= 2) break;
+  }
+  if (selected.length < 2) {
+    for (const candidate of candidates) {
+      if (!selected.includes(candidate)) selected.push(candidate);
+      if (selected.length >= 2) break;
+    }
+  }
+
+  const points = selected.slice(0, 2).map(({ bounds }) => {
+    const center = bounds.min.add(bounds.max).scale(0.5);
+    return new B.Vector3(
+      center.x,
+      bounds.min.y + FABRICATOR_LASER_NUB_Y_OFFSET,
+      center.z,
+    );
+  });
+
+  if (points.length === 1) {
+    const lateralOffset = points[0].x - rootCenter.x;
+    if (Math.abs(lateralOffset) > rootSize.x * 0.08) {
+      points.push(
+        new B.Vector3(rootCenter.x - lateralOffset, points[0].y, points[0].z),
+      );
+    } else {
+      const halfSpacing = Math.max(rootSize.x * 0.22, 0.0001);
+      points[0].x = rootCenter.x - halfSpacing;
+      points.push(
+        new B.Vector3(rootCenter.x + halfSpacing, points[0].y, points[0].z),
+      );
+    }
+  }
+
+  return points;
 }
 
 function nodeLocalPointToPlatform(node, localPoint) {
@@ -3186,6 +5918,26 @@ function nodeLocalPointToPlatform(node, localPoint) {
     worldPoint,
     platformRoot.getWorldMatrix().clone().invert(),
   );
+}
+
+function nodeLocalDirectionToPlatform(node, localDirection) {
+  const platformRoot = level?.platform?.root;
+  if (!node || !platformRoot) return localDirection.clone();
+
+  node.computeWorldMatrix?.(true);
+  platformRoot.computeWorldMatrix?.(true);
+  const worldDirection = B.Vector3.TransformNormal(
+    localDirection,
+    node.getWorldMatrix(),
+  );
+  const platformDirection = B.Vector3.TransformNormal(
+    worldDirection,
+    platformRoot.getWorldMatrix().clone().invert(),
+  );
+  if (platformDirection.lengthSquared() <= 0.000001) {
+    return localDirection.clone();
+  }
+  return platformDirection.normalize();
 }
 
 function platformPointToNodeLocal(node, platformPoint) {
@@ -3205,8 +5957,26 @@ function platformPointToNodeLocal(node, platformPoint) {
 }
 
 function cleanupFabricatorDisassemblyEffects(effects) {
+  for (const beam of effects?.beams ?? []) {
+    beam?.core?.dispose(false, true);
+    beam?.glow?.dispose(false, true);
+    beam?.dispose?.(false, true);
+  }
+  for (const scanLine of effects?.scanLines ?? []) {
+    scanLine?.dispose(false, true);
+  }
   effects?.beam?.dispose(false, true);
+  effects?.scanLine?.dispose(false, true);
+  effects?.traceRing?.dispose(false, true);
+  effects?.traceGlow?.dispose(false, true);
+  effects?.cutCap?.dispose(false, true);
+  effects?.cutCapLight?.dispose?.();
   effects?.beamMaterial?.dispose?.();
+  effects?.beamGlowMaterial?.dispose?.();
+  effects?.scanLineMaterial?.dispose?.();
+  effects?.traceMaterial?.dispose?.();
+  effects?.traceGlowMaterial?.dispose?.();
+  effects?.cutCapMaterial?.dispose?.();
 }
 
 function openHatchWarningModal(interaction) {
@@ -3214,7 +5984,7 @@ function openHatchWarningModal(interaction) {
   closePlayerModals();
   pendingHatchInteraction = interaction;
   hatchWarningActions.replaceChildren(
-    ...createHatchWarningButtons(Boolean(equippedHelmet)),
+    ...createHatchWarningButtons(isHelmetProtecting()),
   );
   hatchWarningModal.hidden = false;
   document.body.classList.add("ui-modal-open");
@@ -3261,6 +6031,7 @@ function closePlayerModals() {
   inventoryModal.hidden = true;
   notebookModal.hidden = true;
   if (fabricatorModal) fabricatorModal.hidden = true;
+  if (batteryModal) batteryModal.hidden = true;
   if (hatchWarningModal) hatchWarningModal.hidden = true;
   activeFabricatorRoot = null;
   pendingHatchInteraction = null;
@@ -3273,6 +6044,7 @@ function isUiModalOpen() {
     !inventoryModal.hidden ||
     !notebookModal.hidden ||
     Boolean(fabricatorModal && !fabricatorModal.hidden) ||
+    Boolean(batteryModal && !batteryModal.hidden) ||
     Boolean(hatchWarningModal && !hatchWarningModal.hidden)
   );
 }
@@ -3285,98 +6057,137 @@ function exitPointerLock() {
 
 async function startGameFromPath(path) {
   try {
+    if (gameStarted || gameBooting) return;
     setMenuBusy(true);
     const saveFile = await loadSaveFile(path);
     saveFile.path = path;
-    startGame(saveFile);
+    await startGame(saveFile);
   } catch (error) {
     setMenuBusy(false);
+    setLoadingScreen(false);
     showRuntimeError(error);
   }
 }
 
 async function startGameFromFile(file) {
   try {
+    if (gameStarted || gameBooting) return;
     setMenuBusy(true);
     const saveFile = JSON.parse(await file.text());
     saveFile.path = file.name;
-    startGame(saveFile);
+    await startGame(saveFile);
   } catch (error) {
     setMenuBusy(false);
+    setLoadingScreen(false);
     showRuntimeError(error);
   }
 }
 
-function startGame(saveFile) {
-  if (gameStarted) return;
-  gameStarted = true;
+async function startGame(saveFile) {
+  if (gameStarted || gameBooting) return;
+  gameBooting = true;
+  setLoadingScreen(true, "Preparing save");
   currentSaveFile = saveFile;
   stopMenuBackground();
   document.body.classList.remove("menu-open");
 
-  brownDwarfLevel = applySaveToLevel(baseBrownDwarfLevel, saveFile);
-  applySavedWorldPreload(brownDwarfLevel, saveFile.world);
-  engine = new B.Engine(canvas, true, {
-    antialias: true,
-    adaptToDeviceRatio: false,
-    powerPreference: "high-performance",
-  });
-  engine.setHardwareScalingLevel(1 / Math.min(devicePixelRatio, 1.5));
-  engine.metadata = { performance: {} };
-  scene = new B.Scene(engine);
-  scene.metadata = {
-    timeScale: 1,
-    profiler: createAssetProfiler(),
-  };
-  collisionDebugVisible = false;
-  performanceMonitor = createPerformanceMonitor(engine, metrics);
+  try {
+    brownDwarfLevel = applySaveToLevel(baseBrownDwarfLevel, saveFile);
+    applySavedWorldPreload(brownDwarfLevel, saveFile.world);
+    engine = new B.Engine(canvas, true, {
+      antialias: true,
+      adaptToDeviceRatio: false,
+      powerPreference: "high-performance",
+    });
+    engine.setHardwareScalingLevel(1 / Math.min(devicePixelRatio, 1.5));
+    engine.metadata = { performance: {} };
+    scene = new B.Scene(engine);
+    scene.metadata = {
+      timeScale: 1,
+      profiler: createAssetProfiler(),
+    };
+    playerDead = false;
+    playerHealth = PLAYER_HEALTH_MAX;
+    playerFood = PLAYER_FOOD_MAX;
+    playerThirst = PLAYER_THIRST_MAX;
+    playerRestroom = PLAYER_RESTROOM_MAX;
+    playerComfort = PLAYER_COMFORT_MAX;
+    playerTemperatureC = PLAYER_TEMPERATURE_IDEAL_C;
+    document.body.classList.remove("player-dead");
+    deathScreen?.setAttribute("aria-hidden", "true");
+    nearDeathPulse?.style.setProperty("--near-death-intensity", "0");
+    collisionDebugVisible = false;
+    performanceMonitor = createPerformanceMonitor(engine, metrics);
 
-  scene.clearColor.set(0, 0, 0, 1);
-  scene.imageProcessingConfiguration.toneMappingEnabled = true;
-  scene.imageProcessingConfiguration.exposure = 0.9;
-  configureObjectBoundsRenderer(scene);
+    scene.clearColor.set(0, 0, 0, 1);
+    scene.environmentIntensity = 1.15;
+    scene.imageProcessingConfiguration.toneMappingEnabled = true;
+    scene.imageProcessingConfiguration.exposure = 0.9;
+    scene.imageProcessingConfiguration.contrast = 1.06;
+    configureImportedMaterialLighting(scene);
+    configureObjectBoundsRenderer(scene);
 
-  camera = new B.UniversalCamera(
-    "player-camera",
-    B.Vector3.FromArray(brownDwarfLevel.spawn.position),
-    scene,
-  );
-  camera.fov = Math.PI / 3;
-  camera.minZ = 0.05;
-  camera.maxZ = 3000;
-  camera.speed = 0;
-  camera.angularSensibility = BASE_MOUSE_SENSIBILITY;
-  camera.inertia = 0.18;
-  camera.setTarget(B.Vector3.FromArray(brownDwarfLevel.spawn.target));
-  enforceUprightCamera(camera);
-  camera.attachControl(canvas, true);
-  playerPlaceholderRig = createPlayerPlaceholderRig(scene, camera);
+    camera = new B.UniversalCamera(
+      "player-camera",
+      B.Vector3.FromArray(brownDwarfLevel.spawn.position),
+      scene,
+    );
+    camera.fov = Math.PI / 3;
+    camera.minZ = 0.05;
+    camera.maxZ = 3000;
+    camera.speed = 0;
+    camera.angularSensibility = BASE_MOUSE_SENSIBILITY;
+    camera.inertia = 0.18;
+    camera.setTarget(B.Vector3.FromArray(brownDwarfLevel.spawn.target));
+    enforceUprightCamera(camera);
+    camera.attachControl(canvas, true);
+    playerPlaceholderRig = createPlayerPlaceholderRig(scene, camera);
 
-  canvas.addEventListener("pointerdown", handleCanvasPointerDown);
-  installBackgroundMusicUnlock(backgroundMusic);
+    canvas.addEventListener("pointerdown", handleCanvasPointerDown);
+    installBackgroundMusicUnlock(backgroundMusic);
 
-  level = buildLevel(scene, brownDwarfLevel);
-  installDebrisFieldPlayerCollision();
-  thirdPersonCamera = createThirdPersonCamera(scene, camera);
-  playerPhysics = {
-    verticalVelocity: 0,
-    grounded: Boolean(level.platform),
-    eyeHeight: level.platform?.physics?.eyeHeight ?? camera.position.y,
-    platformEyeHeight: level.platform?.physics?.eyeHeight ?? camera.position.y,
-  };
-  installHudControls();
-  restoreSavedWorldState(saveFile.world);
-  toolTipsVisible = true;
-  updateToolTipsVisibility();
-  refreshPlacementPreview();
-  installPlayerLoop();
+    updateLoadingStatus("Building level");
+    level = buildLevel(scene, brownDwarfLevel);
+    installDebrisFieldPlayerCollision();
+    thirdPersonCamera = createThirdPersonCamera(scene, camera);
+    playerPhysics = {
+      verticalVelocity: 0,
+      grounded: Boolean(level.platform),
+      eyeHeight: level.platform?.physics?.eyeHeight ?? camera.position.y,
+      platformEyeHeight:
+        level.platform?.physics?.eyeHeight ?? camera.position.y,
+    };
+    installHudControls();
 
-  engine.runRenderLoop(() => {
-    const frame = performanceMonitor.beginFrame();
-    scene.render();
-    performanceMonitor.endFrame(frame);
-  });
-  addEventListener("resize", () => engine?.resize());
+    engine.runRenderLoop(() => {
+      const frame = performanceMonitor.beginFrame();
+      scene.render();
+      performanceMonitor.endFrame(frame);
+    });
+    addEventListener("resize", () => engine?.resize());
+
+    await waitForInitialLevelAssets();
+    updateLoadingStatus("Restoring saved world");
+    await restoreSavedWorldState(saveFile.world);
+    await initializeMountedHooks();
+    updateLoadingStatus("Finalizing scene");
+    await waitForSceneReady(scene);
+
+    toolTipsVisible = true;
+    updateToolTipsVisibility();
+    refreshPlacementPreview();
+    installPlayerLoop();
+    gameStarted = true;
+    gameBooting = false;
+    setLoadingScreen(false);
+    setMenuBusy(false);
+  } catch (error) {
+    gameBooting = false;
+    cleanupFailedGameStart();
+    document.body.classList.add("menu-open");
+    startMenuBackground();
+    throw error;
+  }
 }
 
 function resolveDebrisFieldPlayerCollisions(seconds) {
@@ -3876,13 +6687,29 @@ function installHudControls() {
     hud.append(orbitStatus);
   }
 
-  const airPressureControl = createLifeSupportMeter("air-pressure", "Cabin");
-  airPressureMeter = airPressureControl.meter;
-  airPressureMeterText = airPressureControl.text;
-  const oxygenControl = createLifeSupportMeter("oxygen", "O2");
-  oxygenMeter = oxygenControl.meter;
-  oxygenMeterFill = oxygenControl.fill;
-  oxygenMeterText = oxygenControl.text;
+  const healthControl = createLifeSupportMeter("health", "health");
+  healthMeterRoot = healthControl.root;
+  healthMeter = healthControl.meter;
+  healthMeterFill = healthControl.fill;
+  const mainIssue = createStatusTile("main-issue", "Main Issue");
+  mainIssueRoot = mainIssue.root;
+  mainIssueText = mainIssue.value;
+  const oxygenStatus = createOxygenStatusBox();
+  const foodStatus = createStatusTile("food", "Food Status");
+  foodStatusRoot = foodStatus.root;
+  foodStatusText = foodStatus.value;
+  const thirstStatus = createStatusTile("thirst", "Thirst");
+  thirstStatusRoot = thirstStatus.root;
+  thirstStatusText = thirstStatus.value;
+  const restroomStatus = createStatusTile("restroom", "Restroom Status");
+  restroomStatusRoot = restroomStatus.root;
+  restroomStatusText = restroomStatus.value;
+  const comfortStatus = createStatusTile("comfort", "Comfort");
+  comfortStatusRoot = comfortStatus.root;
+  comfortStatusText = comfortStatus.value;
+  const temperatureStatus = createStatusTile("temperature", "Temperature");
+  temperatureStatusRoot = temperatureStatus.root;
+  temperatureStatusText = temperatureStatus.value;
   timeButton = createHudButton();
   flyButton = createHudButton();
   cameraButton = createHudButton();
@@ -3914,7 +6741,16 @@ function installHudControls() {
     event.stopPropagation();
     saveCurrentWorldState();
   });
-  vitals?.append(airPressureControl.root, oxygenControl.root);
+  vitals?.append(
+    oxygenStatus.root,
+    foodStatus.root,
+    thirstStatus.root,
+    restroomStatus.root,
+    comfortStatus.root,
+    temperatureStatus.root,
+    mainIssue.root,
+    healthControl.root,
+  );
   hud.append(
     timeButton,
     flyButton,
@@ -3926,13 +6762,62 @@ function installHudControls() {
   updateHudButtons();
 }
 
+function createOxygenStatusBox() {
+  const root = document.createElement("span");
+  root.className = "vital-status-tile oxygen";
+
+  const title = document.createElement("span");
+  title.className = "vital-status-title";
+  title.textContent = "Oxygen Status";
+
+  oxygenStatusText = document.createElement("span");
+  oxygenStatusText.className = "vital-status-value";
+
+  oxygenPressureText = document.createElement("span");
+  oxygenPressureText.className = "vital-status-detail";
+
+  const meter = document.createElement("span");
+  meter.className = "helmet-oxygen-meter";
+  meter.hidden = true;
+
+  const fill = document.createElement("span");
+  fill.className = "helmet-oxygen-fill";
+
+  const label = document.createElement("span");
+  label.className = "helmet-oxygen-label";
+
+  meter.append(fill, label);
+  root.append(title, oxygenStatusText, oxygenPressureText, meter);
+
+  oxygenStatusRoot = root;
+  helmetOxygenMeter = meter;
+  helmetOxygenFill = fill;
+  helmetOxygenText = label;
+  return { root };
+}
+
+function createStatusTile(kind, labelText) {
+  const root = document.createElement("span");
+  root.className = `vital-status-tile ${kind}`;
+
+  const title = document.createElement("span");
+  title.className = "vital-status-title";
+  title.textContent = labelText;
+
+  const value = document.createElement("span");
+  value.className = "vital-status-value";
+
+  root.append(title, value);
+  return { root, value };
+}
+
 function createLifeSupportMeter(kind, labelText) {
   const root = document.createElement("span");
   root.className = `hud-meter ${kind}`;
 
   const text = document.createElement("span");
   text.className = "hud-meter-text";
-  text.textContent = labelText;
+  text.append(createVitalIcon(labelText));
 
   const meter = document.createElement("span");
   meter.className = "hud-meter-track";
@@ -3944,6 +6829,21 @@ function createLifeSupportMeter(kind, labelText) {
 
   root.append(text, meter);
   return { root, meter, fill, text };
+}
+
+function createVitalIcon(type) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 64 64");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute(
+    "d",
+    type === "food"
+      ? "M42 6c6 4 8 12 3 19l-13 18c-3 4-7 5-11 3l-3 4c2 4 0 8-4 9-3 1-7-1-8-4-4 0-7-3-6-7 1-4 5-6 9-4l3-4c-3-3-3-8 0-12L25 10c5-7 12-8 17-4Zm-7 7c-3-2-6-1-9 3L15 31c-2 3-1 6 2 8 3 2 6 2 8-1l12-16c2-4 2-7-2-9Z"
+      : "M32 57C18 46 7 36 7 23 7 15 13 9 21 9c5 0 9 3 11 7 2-4 6-7 11-7 8 0 14 6 14 14 0 13-11 23-25 34Z",
+  );
+  svg.append(path);
+  return svg;
 }
 
 function createMouseSensitivityControl() {
@@ -4043,8 +6943,8 @@ function createWorldSaveState() {
       selectedHotbarIndex,
     },
     lifeSupport: {
-      cabinPressureAtm: Number(cabinPressureAtm.toFixed(3)),
-      helmetOxygenSeconds: Number(helmetOxygenSeconds.toFixed(1)),
+      cabinPressureKpa: Number(getCabinPressureKpa().toFixed(1)),
+      helmetOxygenLiters: Number(helmetOxygenLiters.toFixed(1)),
     },
     inventory: inventoryItems.map(sanitizeInventoryEntryForSave),
     hotbar: hotbarItems.map(sanitizeInventoryEntryForSave),
@@ -4052,9 +6952,6 @@ function createWorldSaveState() {
       collectedIds: getCollectedPickupIds(),
     },
     placedItems: getPlacedItemsForSave(),
-    asteroids: {
-      dropped: getDroppedAsteroidsForSave(),
-    },
     helmet: getHelmetStateForSave(),
     tether: {
       attached:
@@ -4099,53 +6996,20 @@ function getPlacedItemsForSave() {
   }
 
   for (const root of roots) {
+    const itemForSave = { ...root.metadata.placedItem };
+    if (isBatteryItem(itemForSave)) {
+      const energy = getBatteryEnergyState(root);
+      itemForSave.energyStored = energy.stored;
+      itemForSave.maxEnergy = energy.max;
+    }
     const placedItem = {
-      item: sanitizeItemForSave(root.metadata.placedItem),
+      item: sanitizeItemForSave(itemForSave),
       position: vectorToArray(root.position),
       rotationDegrees: vectorRadiansToDegrees(root.rotation),
     };
-    const mountedAsteroid = getFabricatorMountedAsteroidForSave(root);
-    if (mountedAsteroid) {
-      placedItem.fabricatorMountedAsteroid = mountedAsteroid;
-    }
     placed.push(placedItem);
   }
   return placed;
-}
-
-function getDroppedAsteroidsForSave() {
-  return [...asteroidBodies]
-    .filter((body) => isAsteroidBodyActive(body))
-    .map((body) => {
-      const mesh = body.mesh;
-      const rotation =
-        mesh.rotationQuaternion?.toEulerAngles?.() ?? mesh.rotation;
-      return {
-        position: vectorToArray(mesh.position),
-        rotationDegrees: vectorRadiansToDegrees(rotation),
-        scale: vectorToArray(mesh.scaling),
-        velocity: vectorToArray(body.velocity),
-        angularVelocity: vectorToArray(body.angularVelocity),
-        radius: Number(body.radius.toFixed(4)),
-        composition: cloneSave(mesh.metadata?.asteroidComposition ?? {}),
-        color: cloneSave(mesh.metadata?.asteroidColor ?? null),
-      };
-    });
-}
-
-function getFabricatorMountedAsteroidForSave(root) {
-  const mounted = root?.metadata?.fabricatorMountedAsteroid;
-  const mesh = mounted?.mesh;
-  if (!mesh || mesh.isDisposed?.()) return null;
-  const composition = mounted.composition ?? mesh.metadata?.asteroidComposition;
-  if (!composition) return null;
-
-  return {
-    composition: cloneSave(composition),
-    color: cloneSave(mesh.metadata?.asteroidColor ?? null),
-    radius: Number((mounted.radius ?? 0).toFixed(4)),
-    scale: vectorToArray(mesh.scaling),
-  };
 }
 
 function getHelmetStateForSave() {
@@ -4170,8 +7034,15 @@ function sanitizeInventoryEntryForSave(entry) {
 
 function sanitizeItemForSave(item) {
   if (!item) return null;
-  const { portrait, modelPortraitLoaded, visor, animationGroups, ...clean } =
-    item;
+  const {
+    portrait,
+    modelPortraitLoaded,
+    modelPortraitLoading,
+    modelPortraitFailed,
+    visor,
+    animationGroups,
+    ...clean
+  } = item;
   return cloneSave(clean);
 }
 
@@ -4180,16 +7051,15 @@ function applySavedWorldPreload(levelConfig, world) {
   levelConfig.platform.collectedPickupIds = world.pickups.collectedIds;
 }
 
-function restoreSavedWorldState(world) {
+async function restoreSavedWorldState(world) {
   if (!world) return;
 
   restorePlayerState(world.player);
   restoreSceneState(world.scene);
   restoreLifeSupportState(world.lifeSupport);
   restoreInventoryState(world);
-  restoreHelmetState(world.helmet, world.lifeSupport);
-  restorePlacedItems(world.placedItems);
-  restoreDroppedAsteroids(world.asteroids?.dropped);
+  await restoreHelmetState(world.helmet, world.lifeSupport);
+  await restorePlacedItems(world.placedItems);
   if (world.tether?.attached) {
     const hook = getHelmetHookInteraction();
     if (hook) {
@@ -4224,64 +7094,40 @@ function restoreSavedWorldState(world) {
 }
 
 function restoreLifeSupportState(lifeSupport) {
-  const savedPressure = Number(lifeSupport?.cabinPressureAtm);
-  cabinPressureAtm = Number.isFinite(savedPressure)
-    ? Math.max(0, Math.min(savedPressure, CABIN_PRESSURE_INITIAL_ATM))
-    : CABIN_PRESSURE_INITIAL_ATM;
+  const savedPressureKpa = Number(lifeSupport?.cabinPressureKpa);
+  const savedPressureAtm = Number(lifeSupport?.cabinPressureAtm);
+  if (Number.isFinite(savedPressureKpa)) {
+    cabinPressureAtm =
+      (Math.max(0, Math.min(savedPressureKpa, PRESSURE_STANDARD_KPA)) /
+        PRESSURE_STANDARD_KPA) *
+      CABIN_PRESSURE_INITIAL_ATM;
+  } else {
+    cabinPressureAtm = Number.isFinite(savedPressureAtm)
+      ? Math.max(0, Math.min(savedPressureAtm, CABIN_PRESSURE_INITIAL_ATM))
+      : CABIN_PRESSURE_INITIAL_ATM;
+  }
 
-  const savedOxygen = Number(lifeSupport?.helmetOxygenSeconds);
-  helmetOxygenSeconds = Number.isFinite(savedOxygen)
-    ? Math.max(0, Math.min(savedOxygen, HELMET_OXYGEN_MAX_SECONDS))
-    : HELMET_OXYGEN_MAX_SECONDS;
+  helmetOxygenLiters = resolveSavedHelmetOxygenLiters(lifeSupport);
   updateLifeSupportHud();
 }
 
-function restoreDroppedAsteroids(savedAsteroids) {
-  if (!Array.isArray(savedAsteroids)) return;
-  for (const asteroid of savedAsteroids) {
-    restoreDroppedAsteroid(asteroid);
+function resolveSavedHelmetOxygenLiters(lifeSupport) {
+  const savedLiters = Number(lifeSupport?.helmetOxygenLiters);
+  if (Number.isFinite(savedLiters)) {
+    return clamp(savedLiters, 0, HELMET_OXYGEN_MAX_LITERS);
   }
-}
 
-function restoreDroppedAsteroid(asteroid) {
-  if (!Array.isArray(asteroid?.position)) return;
-
-  const radius =
-    Number(asteroid.radius) || FABRICATOR_ASTEROID_MAX_RADIUS * 0.7;
-  const mesh = createAsteroidMeshFromSource(null, "dropped-asteroid", {
-    color: asteroid.color,
-  });
-  mesh.parent = level?.platform?.root ?? null;
-  mesh.position.copyFrom(B.Vector3.FromArray(asteroid.position));
-  mesh.scaling.copyFrom(
-    B.Vector3.FromArray(asteroid.scale ?? [radius, radius, radius]),
-  );
-  if (Array.isArray(asteroid.rotationDegrees)) {
-    mesh.rotation = B.Vector3.FromArray(
-      vectorDegreesToRadians(asteroid.rotationDegrees),
+  const savedSeconds = Number(lifeSupport?.helmetOxygenSeconds);
+  if (Number.isFinite(savedSeconds)) {
+    return clamp(
+      (savedSeconds / HELMET_OXYGEN_SECONDS_TO_EMPTY) *
+        HELMET_OXYGEN_MAX_LITERS,
+      0,
+      HELMET_OXYGEN_MAX_LITERS,
     );
   }
-  mesh.isPickable = true;
-  mesh.checkCollisions = false;
-  mesh.receiveShadows = true;
-  mesh.metadata = {
-    ...(mesh.metadata ?? {}),
-    excludeFromBounds: false,
-    excludeFromCollision: true,
-    heldAsteroid: false,
-    asteroidComposition: cloneSave(asteroid.composition ?? {}),
-    asteroidColor: cloneSave(asteroid.color ?? null),
-  };
-  installDroppedAsteroidInteraction(mesh);
-  registerAsteroidBody(mesh, {
-    radius,
-    velocity: Array.isArray(asteroid.velocity)
-      ? B.Vector3.FromArray(asteroid.velocity)
-      : B.Vector3.Zero(),
-    angularVelocity: Array.isArray(asteroid.angularVelocity)
-      ? B.Vector3.FromArray(asteroid.angularVelocity)
-      : createAsteroidAngularVelocity(),
-  });
+
+  return HELMET_OXYGEN_MAX_LITERS;
 }
 
 function restoreTetherParticles(savedParticles) {
@@ -4361,7 +7207,7 @@ function restoreItemArray(target, source) {
   }
 }
 
-function restoreHelmetState(helmet, lifeSupport) {
+async function restoreHelmetState(helmet, lifeSupport) {
   const hook = getHelmetHookInteraction();
   if (hook) {
     hook.initialMountResolved = true;
@@ -4370,33 +7216,26 @@ function restoreHelmetState(helmet, lifeSupport) {
     hook.mountedRoot = null;
     hook.mountedItem = null;
     if (helmet?.mountedItem) {
-      mountHelmetItemOnHook(hook, cloneSave(helmet.mountedItem));
+      await mountHelmetItemOnHook(hook, cloneSave(helmet.mountedItem));
     }
   }
 
   if (helmet?.equipped?.item) {
-    equipHelmetItem(cloneSave(helmet.equipped.item)).then((equipped) => {
-      const savedOxygen = Number(lifeSupport?.helmetOxygenSeconds);
-      if (equipped && Number.isFinite(savedOxygen)) {
-        helmetOxygenSeconds = Math.max(
-          0,
-          Math.min(savedOxygen, HELMET_OXYGEN_MAX_SECONDS),
-        );
-        updateLifeSupportHud();
-      }
-      if (equipped && helmet.equipped.visorOpen) {
-        setHelmetVisorOpen(true, true);
-        updateHudButtons();
-      }
-    });
+    const equipped = await equipHelmetItem(cloneSave(helmet.equipped.item));
+    if (equipped) {
+      helmetOxygenLiters = resolveSavedHelmetOxygenLiters(lifeSupport);
+      updateLifeSupportHud();
+    }
+    if (equipped && helmet.equipped.visorOpen) {
+      setHelmetVisorOpen(true, true);
+      updateHudButtons();
+    }
   }
 }
 
-function restorePlacedItems(placedItems) {
+async function restorePlacedItems(placedItems) {
   if (!Array.isArray(placedItems)) return;
-  for (const placed of placedItems) {
-    restorePlacedItem(placed);
-  }
+  await Promise.all(placedItems.map((placed) => restorePlacedItem(placed)));
 }
 
 async function restorePlacedItem(placed) {
@@ -4413,51 +7252,11 @@ async function restorePlacedItem(placed) {
       );
     }
     installPlacedItemMetadata(root, placed.item);
-    restoreFabricatorMountedAsteroid(root, placed.fabricatorMountedAsteroid);
+    refreshFabricatorReflectionProbe(root, placed.item);
     queueFabricatorBatteryWireRefresh();
   } catch (error) {
     console.error("Failed to restore placed item.", error);
   }
-}
-
-function restoreFabricatorMountedAsteroid(root, asteroid) {
-  if (!asteroid || !isFabricatorItem(root?.metadata?.placedItem)) return;
-
-  const radius =
-    Number(asteroid.radius) || FABRICATOR_ASTEROID_MAX_RADIUS * 0.7;
-  const mesh = createAsteroidMeshFromSource(
-    null,
-    "fabricator-mounted-asteroid",
-    {
-      color: asteroid.color,
-    },
-  );
-  mesh.scaling.copyFrom(
-    B.Vector3.FromArray(asteroid.scale ?? [radius, radius, radius]),
-  );
-  if (level?.platform?.root) {
-    mesh.parent = level.platform.root;
-  }
-  mesh.isPickable = false;
-  mesh.checkCollisions = false;
-  mesh.receiveShadows = true;
-  mesh.metadata = {
-    ...(mesh.metadata ?? {}),
-    excludeFromBounds: false,
-    excludeFromCollision: true,
-    fabricatorMountedAsteroid: true,
-    asteroidComposition: cloneSave(asteroid.composition ?? {}),
-    asteroidColor: cloneSave(asteroid.color ?? null),
-  };
-  positionAsteroidOnFabricator(mesh, root, radius);
-  root.metadata = {
-    ...(root.metadata ?? {}),
-    fabricatorMountedAsteroid: {
-      mesh,
-      composition: cloneSave(asteroid.composition ?? {}),
-      radius,
-    },
-  };
 }
 
 function queueFabricatorBatteryWireRefresh() {
@@ -4472,6 +7271,12 @@ function refreshFabricatorBatteryWires() {
 
   const fabricators = getPlacedItemRoots((item) => isFabricatorItem(item));
   const batteries = getPlacedItemRoots((item) => isBatteryItem(item));
+  for (const fabricator of fabricators) {
+    delete fabricator.metadata.connectedBattery;
+  }
+  for (const battery of batteries) {
+    initializeBatteryEnergy(battery);
+  }
   if (!fabricators.length || !batteries.length) return;
 
   const usedBatteries = new Set();
@@ -4479,6 +7284,7 @@ function refreshFabricatorBatteryWires() {
     const battery = findClosestPlacedRoot(fabricator, batteries, usedBatteries);
     if (!battery) continue;
     usedBatteries.add(battery);
+    fabricator.metadata.connectedBattery = battery;
     const wire = createFabricatorBatteryWire(fabricator, battery);
     if (wire) fabricatorBatteryWires.add(wire);
   }
@@ -4489,11 +7295,20 @@ function getPlacedItemRoots(predicate) {
   for (const mesh of scene?.meshes ?? []) {
     const root = mesh.metadata?.glbPickupRoot;
     const item = root?.metadata?.placedItem;
-    if (root && item && root.isEnabled?.() !== false && predicate(item)) {
+    if (isActivePlacedRoot(root) && item && predicate(item)) {
       roots.add(root);
     }
   }
   return [...roots];
+}
+
+function isActivePlacedRoot(root) {
+  return Boolean(
+    root &&
+    !root.isDisposed?.() &&
+    root.isEnabled?.() !== false &&
+    root.metadata?.placedItem,
+  );
 }
 
 function findClosestPlacedRoot(source, candidates, excluded = new Set()) {
@@ -4520,14 +7335,13 @@ function createFabricatorBatteryWire(fabricator, battery) {
   const batteryPoint = getWireAnchorPoint(battery, "battery");
   if (!fabricatorPoint || !batteryPoint) return null;
 
-  const midpoint = fabricatorPoint.add(batteryPoint).scale(0.5);
-  midpoint.y = Math.min(fabricatorPoint.y, batteryPoint.y) - 0.045;
+  const path = createFabricatorBatteryWirePath(fabricatorPoint, batteryPoint);
   const wire = B.MeshBuilder.CreateTube(
     "fabricator-battery-red-wire",
     {
-      path: [fabricatorPoint, midpoint, batteryPoint],
+      path,
       radius: FABRICATOR_BATTERY_WIRE_RADIUS,
-      tessellation: 10,
+      tessellation: 24,
       cap: B.Mesh.CAP_ALL,
     },
     scene,
@@ -4546,6 +7360,27 @@ function createFabricatorBatteryWire(fabricator, battery) {
   return wire;
 }
 
+function createFabricatorBatteryWirePath(start, end) {
+  const delta = end.subtract(start);
+  const horizontalDistance = Math.hypot(delta.x, delta.z);
+  const sag = clamp(horizontalDistance * 0.1, 0.018, 0.075);
+  const side = new B.Vector3(-delta.z, 0, delta.x);
+  if (side.lengthSquared() > 0.000001) {
+    side.normalize().scaleInPlace(Math.min(horizontalDistance * 0.035, 0.035));
+  }
+
+  const path = [];
+  for (let index = 0; index <= FABRICATOR_BATTERY_WIRE_SEGMENTS; index += 1) {
+    const t = index / FABRICATOR_BATTERY_WIRE_SEGMENTS;
+    const point = B.Vector3.Lerp(start, end, t);
+    const slack = Math.sin(Math.PI * t);
+    point.y -= sag * slack;
+    point.addInPlace(side.scale(Math.sin(Math.PI * t) * 0.42));
+    path.push(point);
+  }
+  return path;
+}
+
 function getWireAnchorPoint(root, type) {
   const bounds = getRootBoundsInPlatform(root);
   if (!bounds) return root.position.clone();
@@ -4562,11 +7397,14 @@ function getFabricatorBatteryWireMaterial() {
   const existing = scene.getMaterialByName?.(materialName);
   if (existing) return existing;
 
-  const material = new B.StandardMaterial(materialName, scene);
-  material.diffuseColor = new B.Color3(0.95, 0.04, 0.025);
-  material.emissiveColor = new B.Color3(0.28, 0.01, 0.006);
-  material.specularColor = new B.Color3(0.45, 0.08, 0.06);
-  material.specularPower = 48;
+  const material = new B.PBRMaterial(materialName, scene);
+  material.albedoColor = new B.Color3(0.62, 0.018, 0.012);
+  material.metallic = 0;
+  material.roughness = 0.58;
+  material.microSurface = 0.42;
+  material.reflectivityColor = new B.Color3(0.055, 0.018, 0.014);
+  material.emissiveColor = new B.Color3(0.012, 0, 0);
+  material.backFaceCulling = false;
   return material;
 }
 
@@ -4646,6 +7484,10 @@ function installPlayerLoop() {
   scene.onBeforeRenderObservable.add(() => {
     scene.metadata.profiler.measure("Player", () => {
       const seconds = Math.min(engine.getDeltaTime() / 1000, 0.05);
+      if (playerDead) {
+        updateLifeSupportHud();
+        return;
+      }
       const platformPhysics = level.platform?.physics;
       const zeroGravityMovement = Boolean(
         platformPhysics && zeroGravityMode && !flyMode,
@@ -4810,17 +7652,41 @@ function createGlbPickupPrompt(mesh) {
     const mounted = root?.metadata?.fabricatorMountedAsteroid;
     const yieldText = formatAsteroidComposition(mounted?.composition);
     const occupiedText = mounted && yieldText ? ` · Yield ${yieldText}` : "";
+    const battery = getFabricatorBatteryRoot(root);
+    const energy = getBatteryEnergyState(battery);
+    const energyText = battery
+      ? ` · Energy ${energy.stored}/${energy.max}`
+      : "";
     const heldPrompt = createHeldAsteroidFabricatorPrompt(root, label);
     return {
       type: "fabricator",
       range: mesh.metadata.glbPickupRange ?? GLB_PICKUP_PROMPT_RANGE,
       root,
       item,
+      activate: () => deactivateGlbPickupMesh(root),
       acceptsHeldAsteroid:
         Boolean(heldAsteroid) && canPlaceHeldAsteroidOnFabricator(root).ok,
       prompt: heldAsteroid
         ? heldPrompt
-        : `Press F to use ${label}${occupiedText}`,
+        : `Press E to pick up ${label} · F use${occupiedText}${energyText}`,
+    };
+  }
+
+  if (isBatteryItem(item)) {
+    const root = mesh.metadata?.glbPickupRoot ?? mesh;
+    const energy = getBatteryEnergyState(root);
+    const batteryItem = {
+      ...item,
+      energyStored: energy.stored,
+      maxEnergy: energy.max,
+    };
+    return {
+      type: "battery",
+      range: mesh.metadata.glbPickupRange ?? GLB_PICKUP_PROMPT_RANGE,
+      root,
+      item: batteryItem,
+      prompt: `Press E to pick up ${label} · F inspect energy ${energy.stored}/${energy.max}`,
+      activate: () => deactivateGlbPickupMesh(root),
     };
   }
 
@@ -4833,6 +7699,42 @@ function createGlbPickupPrompt(mesh) {
       : `Press E to pick up ${label}`,
     activate: () => deactivateGlbPickupMesh(mesh),
   };
+}
+
+function showBatteryEnergy(interaction) {
+  if (!batteryModal) return false;
+  const energy = getBatteryEnergyState(interaction?.root);
+  const fill = energy.max > 0 ? (energy.stored / energy.max) * 100 : 0;
+  closePlayerModals();
+  if (batteryEnergyValue) {
+    batteryEnergyValue.textContent = `${energy.stored}/${energy.max}`;
+  }
+  if (batteryEnergyFill) {
+    batteryEnergyFill.style.width = `${clamp(fill, 0, 100).toFixed(1)}%`;
+  }
+  batteryModal.hidden = false;
+  document.body.classList.add("ui-modal-open");
+  exitPointerLock();
+  updateInteractionPrompt(null);
+  return true;
+}
+
+function collectFabricatorInteraction(interaction) {
+  const root = interaction?.root;
+  if (!root) return false;
+  if (root.metadata?.fabricatorMountedAsteroid?.mesh) {
+    updateInteractionPrompt({ prompt: "Unload asteroid before pickup" });
+    return false;
+  }
+  if (root.metadata?.fabricatorDisassembly) {
+    updateInteractionPrompt({ prompt: "Fabricator is busy" });
+    return false;
+  }
+  return collectPickupInteraction({
+    type: "pickup",
+    item: interaction.item,
+    activate: interaction.activate,
+  });
 }
 
 function createHeldAsteroidFabricatorPrompt(root, label) {
@@ -4922,18 +7824,40 @@ function positionAsteroidOnFabricator(mesh, root, radius) {
   if (bounds && platformRoot) {
     const center = bounds.min.add(bounds.max).scale(0.5);
     const forward = getFabricatorAsteroidForwardDirection(bounds);
-    mesh.position.copyFrom(
-      new B.Vector3(
-        center.x,
-        bounds.min.y + radius + FABRICATOR_ASTEROID_BOTTOM_CLEARANCE,
-        center.z,
-      ).addInPlace(forward.scale(FABRICATOR_ASTEROID_FORWARD_OFFSET)),
+    const right = getFabricatorAsteroidRightDirection(forward);
+    const target = new B.Vector3(center.x, 0, center.z)
+      .addInPlace(forward.scale(FABRICATOR_ASTEROID_FORWARD_OFFSET))
+      .addInPlace(right.scale(FABRICATOR_ASTEROID_RIGHT_OFFSET));
+    target.y = mesh.position.y;
+    mesh.position.copyFrom(target);
+    settleAsteroidMeshOnFabricatorSurface(
+      mesh,
+      bounds.min.y + FABRICATOR_ASTEROID_BOTTOM_CLEARANCE,
     );
     return;
   }
 
   mesh.setParent(root ?? platformRoot ?? null);
-  mesh.position.set(0, radius + FABRICATOR_ASTEROID_BOTTOM_CLEARANCE, 0.075);
+  mesh.position.set(FABRICATOR_ASTEROID_RIGHT_OFFSET, radius, 0.075);
+  settleAsteroidMeshOnFabricatorSurface(
+    mesh,
+    FABRICATOR_ASTEROID_BOTTOM_CLEARANCE,
+  );
+}
+
+function settleAsteroidMeshOnFabricatorSurface(mesh, surfaceY) {
+  const platformRoot = level?.platform?.root;
+  if (!mesh || !platformRoot) return;
+
+  mesh.computeWorldMatrix(true);
+  platformRoot.computeWorldMatrix?.(true);
+  const bounds = getMeshesBoundsInMatrix(
+    [mesh],
+    platformRoot.getWorldMatrix().clone().invert(),
+  );
+  if (!bounds) return;
+  mesh.position.y += surfaceY - bounds.min.y;
+  mesh.computeWorldMatrix(true);
 }
 
 function getFabricatorAsteroidForwardDirection(bounds) {
@@ -4953,6 +7877,15 @@ function getFabricatorAsteroidForwardDirection(bounds) {
   ];
   nearestWalls.sort((a, b) => a.distance - b.distance);
   return nearestWalls[0]?.direction ?? B.Vector3.Zero();
+}
+
+function getFabricatorAsteroidRightDirection(forward) {
+  const direction = forward?.clone?.() ?? B.Vector3.Zero();
+  if (direction.lengthSquared?.() > 0.000001) {
+    direction.normalize();
+    return new B.Vector3(direction.z, 0, -direction.x);
+  }
+  return new B.Vector3(1, 0, 0);
 }
 
 function deactivateGlbPickupMesh(mesh) {
@@ -5570,7 +8503,7 @@ function updateInteractionPrompt(interaction) {
     return;
   }
 
-  interactionPrompt.hidden = !toolTipsVisible;
+  interactionPrompt.hidden = false;
   if (interaction.type === "helmet-hook") {
     interactionPrompt.textContent = getHelmetHookPrompt(interaction);
     return;
@@ -6132,6 +9065,47 @@ function setMenuBusy(isBusy) {
   menuError.textContent = isBusy ? "Loading..." : "";
 }
 
+function setLoadingScreen(isVisible, status = "Loading") {
+  document.body.classList.toggle("game-loading", isVisible);
+  loadingScreen?.setAttribute("aria-hidden", String(!isVisible));
+  if (isVisible) updateLoadingStatus(status);
+}
+
+function updateLoadingStatus(status) {
+  if (loadingStatus) loadingStatus.textContent = status;
+}
+
+async function waitForInitialLevelAssets() {
+  updateLoadingStatus("Loading ship");
+  await level?.platform?.readyPromise;
+  updateLoadingStatus("Loading starfield");
+  await level?.starfield?.metadata?.readyPromise;
+}
+
+function waitForSceneReady(targetScene) {
+  if (!targetScene) return Promise.resolve();
+  return new Promise((resolve) => {
+    targetScene.executeWhenReady(resolve);
+  });
+}
+
+function cleanupFailedGameStart() {
+  canvas.removeEventListener("pointerdown", handleCanvasPointerDown);
+  engine?.stopRenderLoop();
+  scene?.dispose();
+  engine?.dispose();
+  engine = null;
+  scene = null;
+  performanceMonitor = null;
+  camera = null;
+  thirdPersonCamera = null;
+  level = null;
+  playerPhysics = null;
+  playerPlaceholderRig = null;
+  currentSaveFile = null;
+  setLoadingScreen(false);
+}
+
 function showRuntimeError(error) {
   const message = error?.stack ?? error?.message ?? String(error);
   if (document.body.classList.contains("menu-open")) {
@@ -6225,6 +9199,14 @@ function updateToolTipsVisibility() {
   document.body.classList.toggle("tooltips-hidden", !toolTipsVisible);
 }
 
+function toggleToolTipsVisibility() {
+  toolTipsVisible = !toolTipsVisible;
+  updateToolTipsVisibility();
+  if (activeInteraction) {
+    updateInteractionPrompt(activeInteraction);
+  }
+}
+
 function toggleZeroGravityMode() {
   zeroGravityMode = !zeroGravityMode;
   zeroGravityVelocity.copyFromFloats(0, 0, 0);
@@ -6236,13 +9218,7 @@ function toggleZeroGravityMode() {
   updateQuickAccessButtons();
 }
 
-function updateQuickAccessButtons() {
-  if (!zeroGravityKeyButton) return;
-  zeroGravityKeyButton.title = zeroGravityMode
-    ? "Disable zero gravity (K)"
-    : "Enable zero gravity (K)";
-  zeroGravityKeyButton.setAttribute("aria-pressed", String(zeroGravityMode));
-}
+function updateQuickAccessButtons() {}
 
 function updatePlatformGravity(platform, seconds) {
   const standingSurface = getPlayerStandingSurface(platform);
@@ -6287,7 +9263,10 @@ function updateZeroGravityThrusters(thrustInput, platform, seconds) {
         seconds,
     );
     zeroGravityVelocity.addInPlace(thrust);
-    clampVectorLengthInPlace(zeroGravityVelocity, ZERO_G_MAX_SPEED);
+    clampVectorLengthInPlace(
+      zeroGravityVelocity,
+      hatchDecompression ? HATCH_DECOMPRESSION_MAX_SPEED : ZERO_G_MAX_SPEED,
+    );
   }
 
   const movement = zeroGravityVelocity.scale(seconds);
@@ -6458,6 +9437,19 @@ function movePlayerFreely(displacement, platform) {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function smoothstep(edge0, edge1, value) {
+  const t = clamp(
+    (value - edge0) / Math.max(edge1 - edge0, Number.EPSILON),
+    0,
+    1,
+  );
+  return t * t * (3 - 2 * t);
+}
+
+function lerp(from, to, amount) {
+  return from + (to - from) * amount;
 }
 
 function createAssetProfiler() {

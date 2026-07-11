@@ -88,6 +88,7 @@ function createObject(scene, object, glow) {
 function createStarfield(scene, sky) {
   const random = createRandom(sky.seed);
   const root = new B.TransformNode("starfield", scene);
+  const ready = [];
 
   for (const layer of sky.starLayers) {
     const cloud = new B.PointsCloudSystem(layer.name, layer.pointSize, scene);
@@ -125,12 +126,19 @@ function createStarfield(scene, sky) {
       );
     });
 
-    cloud.buildMeshAsync().then((mesh) => {
-      mesh.parent = root;
-      mesh.isPickable = false;
-      mesh.alwaysSelectAsActiveMesh = true;
-    });
+    ready.push(
+      cloud.buildMeshAsync().then((mesh) => {
+        mesh.parent = root;
+        mesh.isPickable = false;
+        mesh.alwaysSelectAsActiveMesh = true;
+      }),
+    );
   }
+
+  root.metadata = {
+    ...(root.metadata ?? {}),
+    readyPromise: Promise.all(ready),
+  };
 
   return root;
 }

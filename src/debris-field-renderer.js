@@ -719,29 +719,29 @@ function createRockGroups(scene, field, runtimeSeed) {
   const families = [
     {
       name: "carbonaceous",
-      color: [0.095, 0.088, 0.078],
-      highlight: [0.24, 0.22, 0.19],
+      color: [0.28, 0.27, 0.24],
+      highlight: [0.58, 0.56, 0.5],
       metallic: 0.015,
       weight: 0.46,
     },
     {
       name: "basalt",
-      color: [0.13, 0.12, 0.105],
-      highlight: [0.31, 0.285, 0.245],
+      color: [0.34, 0.33, 0.3],
+      highlight: [0.66, 0.64, 0.58],
       metallic: 0.025,
       weight: 0.28,
     },
     {
       name: "silicate",
-      color: [0.18, 0.15, 0.12],
-      highlight: [0.44, 0.39, 0.32],
+      color: [0.42, 0.405, 0.36],
+      highlight: [0.78, 0.755, 0.68],
       metallic: 0.035,
       weight: 0.18,
     },
     {
       name: "fractured",
-      color: [0.32, 0.3, 0.25],
-      highlight: [0.72, 0.68, 0.58],
+      color: [0.5, 0.48, 0.42],
+      highlight: [0.9, 0.86, 0.76],
       metallic: 0.08,
       weight: 0.08,
     },
@@ -803,7 +803,7 @@ function createRockGroup(scene, field, name, family, seed) {
   material.diffuseColor = B.Color3.White();
   material.diffuseTexture = textures.albedo;
   material.bumpTexture = textures.normal;
-  material.bumpTexture.level = field.rockNormalStrength ?? 1.35;
+  material.bumpTexture.level = field.rockNormalStrength ?? 2.15;
   material.invertNormalMapY = true;
   material.useParallax = field.rockUseParallax ?? false;
   material.useParallaxOcclusion =
@@ -816,7 +816,7 @@ function createRockGroup(scene, field, name, family, seed) {
     0.013 + family.metallic * 0.16,
     0.012 + family.metallic * 0.1,
   );
-  material.specularPower = 42;
+  material.specularPower = field.rockSpecularPower ?? 18;
   const ambientLift = field.rockAmbientLift ?? 0.028;
   material.ambientColor = new B.Color3(
     ambientLift,
@@ -851,17 +851,26 @@ function sculptAsteroidMesh(mesh, seed) {
   const axisB = randomDirection(random);
   const axisC = randomDirection(random);
   const axisD = randomDirection(random);
-  const craterCount = 16 + Math.floor(random() * 18);
+  const axisE = randomDirection(random);
+  const axisF = randomDirection(random);
+  const craterCount = 22 + Math.floor(random() * 18);
   const craters = Array.from({ length: craterCount }, () => ({
     direction: randomDirection(random),
-    radius: lerp(0.08, 0.38, random() ** 1.35),
-    depth: lerp(0.025, 0.16, random()),
-    rim: lerp(0.015, 0.065, random()),
+    radius: lerp(0.045, 0.32, random() ** 1.38),
+    depth: lerp(0.018, 0.125, random() ** 0.9),
+    rim: lerp(0.02, 0.075, random()),
   }));
   const chips = Array.from({ length: 5 + Math.floor(random() * 7) }, () => ({
     normal: randomDirection(random),
-    offset: lerp(0.42, 0.86, random()),
-    strength: lerp(0.05, 0.18, random()),
+    offset: lerp(0.54, 0.92, random()),
+    strength: lerp(0.035, 0.13, random()),
+    edge: lerp(0.18, 0.38, random()),
+  }));
+  const ridges = Array.from({ length: 5 + Math.floor(random() * 6) }, () => ({
+    normal: randomDirection(random),
+    offset: lerp(-0.42, 0.42, random()),
+    width: lerp(0.05, 0.16, random()),
+    height: lerp(0.008, 0.032, random()),
   }));
 
   for (let index = 0; index < positions.length; index += 3) {
@@ -871,55 +880,77 @@ function sculptAsteroidMesh(mesh, seed) {
       positions[index + 2],
     ).normalize();
     const facets =
-      Math.abs(B.Vector3.Dot(direction, axisA)) * 0.17 +
-      Math.abs(B.Vector3.Dot(direction, axisB)) * 0.13 +
-      Math.abs(B.Vector3.Dot(direction, axisC)) * 0.1 +
-      Math.abs(B.Vector3.Dot(direction, axisD)) * 0.07;
+      Math.pow(Math.abs(B.Vector3.Dot(direction, axisA)), 1.45) * 0.13 +
+      Math.pow(Math.abs(B.Vector3.Dot(direction, axisB)), 1.7) * 0.105 +
+      Math.pow(Math.abs(B.Vector3.Dot(direction, axisC)), 1.9) * 0.075 +
+      Math.pow(Math.abs(B.Vector3.Dot(direction, axisD)), 1.3) * 0.055 -
+      Math.pow(Math.abs(B.Vector3.Dot(direction, axisE)), 2.15) * 0.035 -
+      Math.pow(Math.abs(B.Vector3.Dot(direction, axisF)), 1.6) * 0.025;
     const ridged =
-      ridgedNoise(direction.x * 2.5 + seed * 0.001, direction.y * 2.5, direction.z * 2.5) * 0.18 +
-      ridgedNoise(direction.x * 7.4, direction.y * 7.4 + seed * 0.002, direction.z * 7.4) * 0.1 +
-      valueNoise3D(direction.x * 18.0, direction.y * 18.0, direction.z * 18.0 + seed) * 0.045;
-    let amount = 0.78 + facets + ridged;
+      ridgedNoise(direction.x * 2.0 + seed * 0.001, direction.y * 2.0, direction.z * 2.0) * 0.155 +
+      ridgedNoise(direction.x * 5.2, direction.y * 5.2 + seed * 0.002, direction.z * 5.2) * 0.075 +
+      ridgedNoise(direction.x * 11.0 + seed * 0.004, direction.y * 11.0, direction.z * 11.0) * 0.025 +
+      valueNoise3D(direction.x * 22.0, direction.y * 22.0, direction.z * 22.0 + seed) * 0.022;
+    let amount = 0.82 + facets + ridged;
     for (const chip of chips) {
       const cut = B.Vector3.Dot(direction, chip.normal) - chip.offset;
       if (cut > 0) {
-        amount -= smoothstep(0, 0.22, cut) * chip.strength;
+        amount -= smoothstep(0, chip.edge, cut) * chip.strength;
       }
+    }
+    for (const ridge of ridges) {
+      const distance = Math.abs(B.Vector3.Dot(direction, ridge.normal) - ridge.offset);
+      amount +=
+        (1 - smoothstep(0, ridge.width, distance)) *
+        ridge.height *
+        (ridgedNoise(direction.x * 18.0, direction.y * 18.0, direction.z * 18.0 + seed) * 0.55 + 0.45);
     }
     for (const crater of craters) {
       const angularDistance = Math.acos(clamp(B.Vector3.Dot(direction, crater.direction), -1, 1));
-      const depression = 1 - smoothstep(crater.radius * 0.3, crater.radius, angularDistance);
+      const depression = 1 - smoothstep(crater.radius * 0.18, crater.radius, angularDistance);
       const rim = smoothstep(crater.radius * 0.72, crater.radius, angularDistance) *
         (1 - smoothstep(crater.radius, crater.radius + crater.rim, angularDistance));
       amount -= depression * crater.depth;
-      amount += rim * crater.depth * 0.58;
+      amount += rim * crater.depth * 0.34;
     }
-    amount = clamp(amount, 0.46, 1.38);
+    amount = clamp(amount, 0.58, 1.34);
     positions[index] = direction.x * amount;
     positions[index + 1] = direction.y * amount;
     positions[index + 2] = direction.z * amount;
   }
-  smoothAsteroidNormals(positions, normals, seed);
+  roughAsteroidNormals(positions, normals, indices, seed);
   mesh.updateVerticesData(B.VertexBuffer.PositionKind, positions);
   mesh.updateVerticesData(B.VertexBuffer.NormalKind, normals);
 }
 
-function smoothAsteroidNormals(positions, normals, seed) {
+function roughAsteroidNormals(positions, normals, indices, seed) {
+  const computedNormals = new Array(normals.length).fill(0);
+  B.VertexData.ComputeNormals(positions, indices, computedNormals);
   for (let index = 0; index < positions.length; index += 3) {
     const direction = new B.Vector3(
       positions[index],
       positions[index + 1],
       positions[index + 2],
     ).normalize();
+    const surface = new B.Vector3(
+      computedNormals[index],
+      computedNormals[index + 1],
+      computedNormals[index + 2],
+    );
+    if (surface.lengthSquared() <= 0.000001) {
+      surface.copyFrom(direction);
+    } else {
+      surface.normalize();
+    }
     const detail = new B.Vector3(
-      valueNoise3D(direction.x * 11.0 + seed * 0.003, direction.y * 11.0, direction.z * 11.0) - 0.5,
-      valueNoise3D(direction.x * 11.0, direction.y * 11.0 + seed * 0.004, direction.z * 11.0) - 0.5,
-      valueNoise3D(direction.x * 11.0, direction.y * 11.0, direction.z * 11.0 + seed * 0.005) - 0.5,
-    ).scaleInPlace(0.12);
-    direction.addInPlace(detail).normalize();
-    normals[index] = direction.x;
-    normals[index + 1] = direction.y;
-    normals[index + 2] = direction.z;
+      valueNoise3D(direction.x * 17.0 + seed * 0.003, direction.y * 17.0, direction.z * 17.0) - 0.5,
+      valueNoise3D(direction.x * 17.0, direction.y * 17.0 + seed * 0.004, direction.z * 17.0) - 0.5,
+      valueNoise3D(direction.x * 17.0, direction.y * 17.0, direction.z * 17.0 + seed * 0.005) - 0.5,
+    ).scaleInPlace(0.09);
+    surface.scaleInPlace(0.5).addInPlace(direction.scale(0.5)).addInPlace(detail).normalize();
+    normals[index] = surface.x;
+    normals[index + 1] = surface.y;
+    normals[index + 2] = surface.z;
   }
 }
 
@@ -945,15 +976,15 @@ function createRockTextures(scene, name, seed, field = {}) {
   const normalImage = normalContext.createImageData(size, size);
   const heights = new Float32Array(size * size);
   const random = createRandom(seed ^ 0x9e3779b9);
-  const colorLift = field.rockTextureColorLift ?? field.rockColorLift ?? 0.035;
-  const veinCount = 4 + Math.floor(random() * 7);
+  const colorLift = field.rockTextureColorLift ?? field.rockColorLift ?? 0.02;
+  const veinCount = 5 + Math.floor(random() * 7);
   const veins = Array.from({ length: veinCount }, () => ({
     angle: random() * Math.PI * 2,
     offset: lerp(-0.9, 0.9, random()),
-    width: lerp(0.008, 0.026, random()),
-    strength: lerp(0.08, 0.34, random()),
+    width: lerp(0.006, 0.026, random()),
+    strength: lerp(0.06, 0.24, random()),
   }));
-  const craterCount = 42 + Math.floor(random() * 44);
+  const craterCount = 64 + Math.floor(random() * 52);
   const craters = Array.from({ length: craterCount }, () => ({
     u: random(),
     v: random(),
@@ -969,13 +1000,21 @@ function createRockTextures(scene, name, seed, field = {}) {
       const nx = u * 10.5;
       const ny = v * 10.5;
       const grain =
-        valueNoise3D(nx, ny, seed * 0.017) * 0.48 +
-        valueNoise3D(nx * 2.9 + 19.7, ny * 2.9, seed * 0.031) * 0.28 +
-        ridgedNoise(nx * 6.4, ny * 6.4, seed * 0.011) * 0.24;
+        valueNoise3D(nx, ny, seed * 0.017) * 0.42 +
+        valueNoise3D(nx * 2.9 + 19.7, ny * 2.9, seed * 0.031) * 0.25 +
+        ridgedNoise(nx * 6.4, ny * 6.4, seed * 0.011) * 0.33;
       const pebble =
-        ridgedNoise(nx * 22.0 + 4.0, ny * 22.0 - 8.0, seed * 0.023) * 0.65 +
-        valueNoise3D(nx * 48.0, ny * 48.0, seed * 0.037) * 0.35;
+        ridgedNoise(nx * 22.0 + 4.0, ny * 22.0 - 8.0, seed * 0.023) * 0.38 +
+        ridgedNoise(nx * 46.0 - 13.0, ny * 46.0 + 3.0, seed * 0.029) * 0.34 +
+        valueNoise3D(nx * 92.0, ny * 92.0, seed * 0.037) * 0.28;
       const pits = ridgedNoise(nx * 18.0 + 4.0, ny * 18.0 - 8.0, seed * 0.023);
+      const powder =
+        valueNoise3D(nx * 130.0, ny * 130.0, seed * 0.041) * 0.5 +
+        valueNoise3D(nx * 215.0 + 7.0, ny * 215.0 - 3.0, seed * 0.053) * 0.5;
+      const microPits = Math.pow(
+        clamp01(1 - ridgedNoise(nx * 74.0, ny * 74.0, seed * 0.061)),
+        5.0,
+      );
       let brightMineral = 0;
       let fractureDark = 0;
       for (const vein of veins) {
@@ -990,7 +1029,7 @@ function createRockTextures(scene, name, seed, field = {}) {
         fractureDark +=
           (1 - smoothstep(vein.width * 0.45, vein.width * 2.2, Math.abs(line + (veinNoise - 0.5) * 0.08))) *
           vein.strength *
-          0.46;
+          0.64;
       }
       let craterShadow = 0;
       let craterRim = 0;
@@ -1013,31 +1052,43 @@ function createRockTextures(scene, name, seed, field = {}) {
         craterRim += rim * 0.46;
         craterHeight += rim - bowl;
       }
-      const fleck = valueNoise3D(nx * 42.0, ny * 42.0, seed * 0.07) > 0.952 ? 0.48 : 0;
-      const shadowPits = Math.pow(clamp01(1 - pits), 3.0) * 0.2;
+      const fleckNoise = valueNoise3D(nx * 58.0, ny * 58.0, seed * 0.07);
+      const fleck = fleckNoise > 0.958 ? lerp(0.24, 0.62, fleckNoise) : 0;
+      const shadowPits = Math.pow(clamp01(1 - pits), 3.0) * 0.26;
+      const dustDark = microPits * 0.2 + (1 - powder) * 0.055;
       const amount = clamp01(
-        0.42 +
-          grain * 0.42 +
-          pebble * 0.16 +
-          brightMineral +
-          fleck +
+        0.36 +
+        grain * 0.34 +
+          pebble * 0.22 +
+          powder * 0.16 +
+          brightMineral * 0.35 +
+          fleck * 0.45 +
           craterRim -
           craterShadow -
           shadowPits -
+          dustDark -
           fractureDark,
       );
-      const tone = lerp(0.42, 0.92, amount) + colorLift;
-      const color = [tone, tone * 0.98, tone * 0.94];
+      const soot = clamp01(fractureDark + shadowPits + microPits * 0.55);
+      const tone = lerp(0.44, 0.86, amount) + colorLift;
+      const warmth = valueNoise3D(nx * 1.7 + 11.0, ny * 1.7 - 5.0, seed * 0.013);
+      const color = [
+        tone * lerp(0.95, 1.08, warmth) - soot * 0.075,
+        tone * lerp(0.945, 1.035, warmth) - soot * 0.08,
+        tone * lerp(0.91, 0.99, warmth) - soot * 0.085,
+      ];
       const offset = (y * size + x) * 4;
       albedoImage.data[offset] = Math.round(clamp01(color[0]) * 255);
       albedoImage.data[offset + 1] = Math.round(clamp01(color[1]) * 255);
       albedoImage.data[offset + 2] = Math.round(clamp01(color[2]) * 255);
       albedoImage.data[offset + 3] = 255;
       heights[y * size + x] =
-        grain * 0.22 +
-        pebble * 0.08 +
-        brightMineral * 0.06 -
-        fractureDark * 0.05 +
+        grain * 0.18 +
+        pebble * 0.16 +
+        powder * 0.025 +
+        brightMineral * 0.028 -
+        fractureDark * 0.075 -
+        microPits * 0.09 +
         craterHeight;
     }
   }
@@ -1049,7 +1100,7 @@ function createRockTextures(scene, name, seed, field = {}) {
     maximumHeight = Math.max(maximumHeight, height);
   }
   const heightRange = Math.max(maximumHeight - minimumHeight, 0.0001);
-  const normalStrength = 8.5;
+  const normalStrength = field.rockTextureNormalStrength ?? 10.5;
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
       const left = heights[y * size + ((x - 1 + size) % size)];
@@ -1143,20 +1194,21 @@ function createAsteroidComposition(random, sizeMeters, fragmentSizes) {
 
 function createAsteroidCompositionColor(composition, random) {
   const normalized = normalizeAsteroidComposition(composition);
-  const darkBasalt = [0.36, 0.34, 0.3];
-  const brightOrange = [1.32, 0.58, 0.2];
-  const moonRegolith = [0.84, 0.82, 0.76];
-  const shade = lerp(0.94, 1.06, random());
+  const darkBasalt = [0.58, 0.56, 0.51];
+  const warmChippedStone = [0.78, 0.75, 0.67];
+  const paleRegolith = [0.9, 0.88, 0.82];
+  const shade = lerp(0.88, 1.08, random());
+  const soot = random() ** 3 * 0.12;
   return [
     (darkBasalt[0] * normalized.iron +
-      brightOrange[0] * normalized.copper +
-      moonRegolith[0] * normalized.water) * shade,
+      warmChippedStone[0] * normalized.copper +
+      paleRegolith[0] * normalized.water) * shade - soot,
     (darkBasalt[1] * normalized.iron +
-      brightOrange[1] * normalized.copper +
-      moonRegolith[1] * normalized.water) * shade,
+      warmChippedStone[1] * normalized.copper +
+      paleRegolith[1] * normalized.water) * shade - soot,
     (darkBasalt[2] * normalized.iron +
-      brightOrange[2] * normalized.copper +
-      moonRegolith[2] * normalized.water) * shade,
+      warmChippedStone[2] * normalized.copper +
+      paleRegolith[2] * normalized.water) * shade - soot,
   ];
 }
 
