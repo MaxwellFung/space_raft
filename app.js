@@ -159,6 +159,9 @@ const OXYGEN_GENERATOR_PRESSURE_KPA_PER_SECOND = 1.25;
 const OXYGEN_GENERATOR_ENERGY_PER_SECOND = 0.08;
 const OXYGEN_GENERATOR_PRESSURIZED_MULTIPLIER = 0.1;
 const OXYGEN_GENERATOR_UPDATE_SECONDS = 0.2;
+const SOLAR_PANEL_ENERGY_PER_SECOND = 0.22;
+const SOLAR_PANEL_MIN_LIGHT_DOT = 0.05;
+const SOLAR_PANEL_OCCLUSION_OFFSET = 0.035;
 const ASTEROID_THROW_SPEED = 0.85;
 const ASTEROID_BOUNCE_RESTITUTION = 0.68;
 const ASTEROID_COLLISION_DAMPING = 0.985;
@@ -631,6 +634,12 @@ const fabricatorRecipes = [
     craftIcon: "solar-panel",
     description: "Generates charge when it can see stellar light.",
     silicon: 3,
+    modelUrl: "./assets/solar_panel.glb",
+    portraitModelUrl: "./assets/solar_panel.glb",
+    maxSize: 0.56,
+    placementSurface: "exterior",
+    stackLimit: 1,
+    solarEnergyPerSecond: SOLAR_PANEL_ENERGY_PER_SECOND,
   }),
   createFabricatorRecipe("drill", "Drill", 2, 1, 18, {
     category: "mining",
@@ -3318,6 +3327,17 @@ function isBatteryItem(entry) {
   );
 }
 
+function isSolarPanelItem(entry) {
+  const id = entry?.id?.toLowerCase?.() ?? "";
+  const name = entry?.name?.toLowerCase?.() ?? "";
+  const modelUrl = entry?.modelUrl?.toLowerCase?.() ?? "";
+  return (
+    id.includes("solar-panel") ||
+    name.includes("solar panel") ||
+    modelUrl.includes("solar_panel")
+  );
+}
+
 function isWireItem(entry) {
   const id = entry?.id?.toLowerCase?.() ?? "";
   const name = entry?.name?.toLowerCase?.() ?? "";
@@ -3871,6 +3891,9 @@ function getPlacementState(item, root) {
   const platform = level.platform?.physics;
   if (!platform || !root) return null;
 
+  if (getItemPlacementSurface(item) === "exterior") {
+    return getExteriorPlacementState(item, root, platform);
+  }
   if (getItemPlacementSurface(item) === "wall") {
     return getWallPlacementState(item, root, platform);
   }
@@ -3933,6 +3956,105 @@ function getWallPlacementState(item, root, platform) {
     surface: "wall",
     wall: hit.wall,
   };
+}
+
+function getExteriorPlacementState(item, root, platform) {
+  const hit = getExteriorPlacementHit(platform);
+  if (!hit) return null;
+
+  root.position.copyFrom(hit.point.add(hit.normal.scale(item.exteriorGap ?? 0.006)));
+  root.rotation.copyFrom(getSurfacePlacementRotation(hit.normal));
+  root.computeWorldMatrix(true);
+
+  const bounds = getRootBoundsInPlatform(root);
+  if (!bounds) return null;
+
+  return {
+    localPosition: root.position.clone(),
+    localRotation: root.rotation.clone(),
+    bounds,
+    valid: true,
+    surface: "exterior",
+    normal: hit.normal.clone(),
+  };
+}
+
+function getExteriorPlacementHit(platform) {
+  if (!scene || !level?.platform?.root) return null;
+
+  const ray = createCameraLookRay(PLACEMENT_RANGE);
+  const hits = scene.multiPickWithRay?.(ray, isExteriorPlacementMesh) ?? [];
+  if (!hits.length) return null;
+
+  const platformRoot = level.platform.root;
+  const inversePlatform = platformRoot.getWorldMatrix().clone().invert();
+  const modelBounds = platform.bounds ?? platform.interiorBounds;
+  const center = modelBounds
+    ? modelBounds.min.add(modelBounds.max).scale(0.5)
+    : B.Vector3.Zero();
+
+  for (const hit of hits.sort((a, b) => a.distance - b.distance)) {
+    if (!hit?.hit || !hit.pickedPoint || hit.distance > PLACEMENT_RANGE) {
+      continue;
+    }
+
+    const localNormal = getLocalPickNormal(hit, inversePlatform);
+    if (!localNormal || localNormal.lengthSquared() <= 0.000001) continue;
+
+    const point = B.Vector3.TransformCoordinates(
+      hit.pickedPoint,
+      inversePlatform,
+    );
+    const fromCenter = point.subtract(center);
+    if (fromCenter.lengthSquared() <= 0.000001) continue;
+    fromCenter.normalize();
+    if (B.Vector3.Dot(localNormal, fromCenter) < 0.18) continue;
+
+    return {
+      point,
+      normal: localNormal,
+      distance: hit.distance,
+    };
+  }
+
+  return null;
+}
+
+function isExteriorPlacementMesh(mesh) {
+  if (!mesh || mesh.isEnabled?.() === false || mesh.isVisible === false) {
+    return false;
+  }
+  if (mesh.visibility !== undefined && mesh.visibility <= 0) return false;
+  if (mesh.getTotalVertices?.() <= 0) return false;
+  if (mesh.metadata?.excludeFromBounds) return false;
+  if (mesh.metadata?.glbPickupRoot || mesh.metadata?.glbPickupLabel) {
+    return false;
+  }
+  if (isPolySurfaceHologram(mesh)) return false;
+  return isNodeDescendantOf(mesh, level?.platform?.deck);
+}
+
+function getSurfacePlacementRotation(normal) {
+  const yAxis = normal.clone();
+  if (yAxis.lengthSquared() <= 0.000001) return B.Vector3.Zero();
+  yAxis.normalize();
+
+  const cameraForward = camera?.getDirection?.(B.Axis.Z) ?? B.Axis.Z.clone();
+  const localForward = worldDirectionToPlatformLocal(cameraForward);
+  const zAxis = localForward.subtract(yAxis.scale(B.Vector3.Dot(localForward, yAxis)));
+  if (zAxis.lengthSquared() <= 0.000001) {
+    zAxis.copyFrom(Math.abs(yAxis.y) < 0.85 ? B.Axis.Y : B.Axis.Z);
+    zAxis.subtractInPlace(yAxis.scale(B.Vector3.Dot(zAxis, yAxis)));
+  }
+  zAxis.normalize();
+
+  const xAxis = B.Vector3.Cross(yAxis, zAxis);
+  if (xAxis.lengthSquared() <= 0.000001) return B.Vector3.Zero();
+  xAxis.normalize();
+  B.Vector3.CrossToRef(xAxis, yAxis, zAxis);
+  zAxis.normalize();
+
+  return B.Vector3.RotationFromAxis(xAxis, yAxis, zAxis);
 }
 
 function getFloorPlacementPoint(platform) {
@@ -5375,6 +5497,93 @@ function updateOxygenGenerators(seconds) {
   }
 }
 
+function updateSolarPanels(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return;
+  const panels = getPlacedItemRoots((item) => isSolarPanelItem(item));
+  for (const root of panels) {
+    updateSolarPanel(root, seconds);
+  }
+}
+
+function updateSolarPanel(root, seconds) {
+  const battery = getConnectedBatteryRoot(root);
+  const exposure = getSolarPanelLightExposure(root);
+  root.metadata = {
+    ...(root.metadata ?? {}),
+    solarPanelExposure: exposure,
+  };
+  if (!battery || exposure <= 0) return;
+
+  const item = root.metadata?.placedItem ?? {};
+  const rate = Math.max(
+    0,
+    Number(item.solarEnergyPerSecond ?? SOLAR_PANEL_ENERGY_PER_SECOND) ||
+      SOLAR_PANEL_ENERGY_PER_SECOND,
+  );
+  addBatteryEnergy(battery, rate * exposure * seconds);
+}
+
+function getSolarPanelLightExposure(root) {
+  if (!root || !level?.primaryMesh) return 0;
+
+  const panelPosition = getSolarPanelWorldPosition(root);
+  const lightPosition =
+    level.primaryMesh.getAbsolutePosition?.() ?? level.primaryMesh.position;
+  if (!panelPosition || !lightPosition) return 0;
+
+  const toLight = lightPosition.subtract(panelPosition);
+  const lightDistance = toLight.length();
+  if (lightDistance <= 0.0001) return 0;
+  toLight.scaleInPlace(1 / lightDistance);
+
+  const normal = getSolarPanelWorldNormal(root);
+  const facing = B.Vector3.Dot(normal, toLight);
+  const exposure = clamp(
+    (facing - SOLAR_PANEL_MIN_LIGHT_DOT) /
+      Math.max(1 - SOLAR_PANEL_MIN_LIGHT_DOT, 0.0001),
+    0,
+    1,
+  );
+  if (exposure <= 0) return 0;
+  if (isSolarPanelLightOccluded(root, panelPosition, normal, toLight, lightDistance)) {
+    return 0;
+  }
+  return exposure;
+}
+
+function getSolarPanelWorldPosition(root) {
+  const localPoint = getWireAnchorPoint(root, "solar-panel");
+  return platformLocalPointToWorld(localPoint);
+}
+
+function getSolarPanelWorldNormal(root) {
+  root.computeWorldMatrix?.(true);
+  const normal = B.Vector3.TransformNormal(B.Axis.Y, root.getWorldMatrix());
+  if (normal.lengthSquared() <= 0.000001) return B.Axis.Y.clone();
+  return normal.normalize();
+}
+
+function isSolarPanelLightOccluded(root, position, normal, direction, distance) {
+  if (!scene || distance <= SOLAR_PANEL_OCCLUSION_OFFSET * 2) return false;
+  const origin = position.add(normal.scale(SOLAR_PANEL_OCCLUSION_OFFSET));
+  const ray = new B.Ray(
+    origin,
+    direction,
+    Math.max(0, distance - SOLAR_PANEL_OCCLUSION_OFFSET * 2),
+  );
+  const hit = scene.pickWithRay(ray, (mesh) => {
+    if (!mesh || mesh.isEnabled?.() === false || mesh.isVisible === false) {
+      return false;
+    }
+    if (mesh.visibility !== undefined && mesh.visibility <= 0) return false;
+    if (mesh.metadata?.excludeFromBounds) return false;
+    if (isNodeDescendantOf(mesh, root)) return false;
+    if (isPolySurfaceHologram(mesh)) return false;
+    return isNodeDescendantOf(mesh, level?.platform?.deck);
+  });
+  return Boolean(hit?.hit);
+}
+
 function updateOxygenGenerator(root, seconds) {
   const state = initializeOxygenGeneratorState(root);
   if (!state) return;
@@ -5458,6 +5667,19 @@ function consumeBatteryEnergy(battery, amount) {
   battery.metadata.energyStored -= cost;
   battery.metadata.placedItem.energyStored = battery.metadata.energyStored;
   return true;
+}
+
+function addBatteryEnergy(battery, amount) {
+  const gain = Math.max(0, Number(amount) || 0);
+  if (gain <= 0 || !battery) return 0;
+  initializeBatteryEnergy(battery);
+  const max = Math.max(0, Number(battery.metadata.maxEnergy) || 0);
+  const before = clamp(Number(battery.metadata.energyStored) || 0, 0, max);
+  const after = clamp(before + gain, 0, max);
+  battery.metadata.energyStored = after;
+  battery.metadata.placedItem.energyStored = after;
+  battery.metadata.placedItem.maxEnergy = max;
+  return after - before;
 }
 
 function getOxygenGeneratorBatteryRoot(root) {
@@ -9225,14 +9447,14 @@ function refreshPowerConnectionWires() {
     initializeBatteryEnergy(battery);
   }
 
-  for (const machine of getPoweredMachineRoots()) {
-    const battery = getConnectedBatteryRoot(machine);
+  for (const endpoint of [...getPoweredMachineRoots(), ...getSolarPanelRoots()]) {
+    const battery = getConnectedBatteryRoot(endpoint);
     if (!battery) {
-      clearPowerWireConnection(machine);
+      clearPowerWireConnection(endpoint);
       continue;
     }
 
-    const wire = createPowerConnectionWire(machine, battery);
+    const wire = createPowerConnectionWire(endpoint, battery);
     if (wire) powerConnectionWires.add(wire);
   }
 }
@@ -9266,8 +9488,12 @@ function isPoweredMachineItem(item) {
   return isFabricatorItem(item) || isOxygenGeneratorItem(item);
 }
 
-function getConnectedBatteryRoot(machine) {
-  const linked = machine?.metadata?.connectedBattery;
+function getSolarPanelRoots() {
+  return getPlacedItemRoots((item) => isSolarPanelItem(item));
+}
+
+function getConnectedBatteryRoot(endpoint) {
+  const linked = endpoint?.metadata?.connectedBattery;
   if (
     isActivePlacedRoot(linked) &&
     isBatteryItem(linked.metadata?.placedItem)
@@ -9277,17 +9503,22 @@ function getConnectedBatteryRoot(machine) {
   return null;
 }
 
-function connectPowerWire(battery, machine, wireMeters = null) {
-  if (!isActivePlacedRoot(battery) || !isActivePlacedRoot(machine)) return false;
+function connectPowerWire(battery, endpoint, wireMeters = null) {
+  if (!isActivePlacedRoot(battery) || !isActivePlacedRoot(endpoint)) return false;
   if (!isBatteryItem(battery.metadata?.placedItem)) return false;
-  if (!isPoweredMachineItem(machine.metadata?.placedItem)) return false;
-  if (battery === machine) return false;
+  if (
+    !isPoweredMachineItem(endpoint.metadata?.placedItem) &&
+    !isSolarPanelItem(endpoint.metadata?.placedItem)
+  ) {
+    return false;
+  }
+  if (battery === endpoint) return false;
 
   initializeBatteryEnergy(battery);
   const connectionMeters = Number(wireMeters);
-  const measuredMeters = getPowerWireConnectionLengthMeters(battery, machine);
-  machine.metadata = {
-    ...(machine.metadata ?? {}),
+  const measuredMeters = getPowerWireConnectionLengthMeters(battery, endpoint);
+  endpoint.metadata = {
+    ...(endpoint.metadata ?? {}),
     connectedBattery: battery,
     powerWireMeters:
       Number.isFinite(connectionMeters) && connectionMeters > 0
@@ -9295,8 +9526,8 @@ function connectPowerWire(battery, machine, wireMeters = null) {
         : measuredMeters,
   };
   refreshPowerConnectionWires();
-  if (activeFabricatorRoot === machine) renderFabricatorAnalysis();
-  if (activeOxygenGeneratorRoot === machine) renderOxygenGeneratorPanel();
+  if (activeFabricatorRoot === endpoint) renderFabricatorAnalysis();
+  if (activeOxygenGeneratorRoot === endpoint) renderOxygenGeneratorPanel();
   return true;
 }
 
@@ -9311,20 +9542,21 @@ function removePowerConnectionsForRoot(root, options = {}) {
   refreshPowerConnectionWires();
 }
 
-function createPowerConnectionWire(machine, battery) {
+function createPowerConnectionWire(endpoint, battery) {
   const platformRoot = level?.platform?.root;
   if (!platformRoot) return null;
 
-  const machinePoint = getWireAnchorPoint(
-    machine,
-    getPowerWireAnchorType(machine),
+  const endpointPoint = getWireAnchorPoint(
+    endpoint,
+    getPowerWireAnchorType(endpoint),
   );
   const batteryPoint = getWireAnchorPoint(battery, "battery");
-  if (!machinePoint || !batteryPoint) return null;
+  if (!endpointPoint || !batteryPoint) return null;
 
-  const path = createPowerWirePath(machinePoint, batteryPoint);
+  const isSolarConnection = isSolarPanelItem(endpoint.metadata?.placedItem);
+  const path = createPowerWirePath(endpointPoint, batteryPoint);
   const wire = B.MeshBuilder.CreateTube(
-    "power-connection-red-wire",
+    isSolarConnection ? "power-connection-blue-wire" : "power-connection-red-wire",
     {
       path,
       radius: FABRICATOR_BATTERY_WIRE_RADIUS,
@@ -9334,7 +9566,7 @@ function createPowerConnectionWire(machine, battery) {
     scene,
   );
   wire.parent = platformRoot;
-  wire.material = getPowerWireMaterial();
+  wire.material = getPowerWireMaterial(isSolarConnection ? "solar" : "load");
   wire.isPickable = false;
   wire.checkCollisions = false;
   wire.receiveShadows = true;
@@ -9351,14 +9583,14 @@ function createPowerWirePath(start, end) {
   return [start, end];
 }
 
-function getPowerWireConnectionLengthMeters(battery, machine) {
+function getPowerWireConnectionLengthMeters(battery, endpoint) {
   const batteryPoint = getWireAnchorPoint(battery, "battery");
-  const machinePoint = getWireAnchorPoint(
-    machine,
-    getPowerWireAnchorType(machine),
+  const endpointPoint = getWireAnchorPoint(
+    endpoint,
+    getPowerWireAnchorType(endpoint),
   );
-  if (!batteryPoint || !machinePoint) return 0;
-  const path = createPowerWirePath(machinePoint, batteryPoint);
+  if (!batteryPoint || !endpointPoint) return 0;
+  const path = createPowerWirePath(endpointPoint, batteryPoint);
   let length = 0;
   for (let index = 1; index < path.length; index += 1) {
     length += B.Vector3.Distance(path[index - 1], path[index]);
@@ -9366,24 +9598,25 @@ function getPowerWireConnectionLengthMeters(battery, machine) {
   return length * WIRE_METERS_PER_WORLD_UNIT;
 }
 
-function getPowerWireConnectionStoredMeters(machine) {
-  const stored = Number(machine?.metadata?.powerWireMeters);
+function getPowerWireConnectionStoredMeters(endpoint) {
+  const stored = Number(endpoint?.metadata?.powerWireMeters);
   if (Number.isFinite(stored) && stored > 0) return stored;
-  const battery = getConnectedBatteryRoot(machine);
-  return battery ? getPowerWireConnectionLengthMeters(battery, machine) : 0;
+  const battery = getConnectedBatteryRoot(endpoint);
+  return battery ? getPowerWireConnectionLengthMeters(battery, endpoint) : 0;
 }
 
-function clearPowerWireConnection(machine) {
-  if (!machine?.metadata) return 0;
-  const meters = getPowerWireConnectionStoredMeters(machine);
-  delete machine.metadata.connectedBattery;
-  delete machine.metadata.powerWireMeters;
+function clearPowerWireConnection(endpoint) {
+  if (!endpoint?.metadata) return 0;
+  const meters = getPowerWireConnectionStoredMeters(endpoint);
+  delete endpoint.metadata.connectedBattery;
+  delete endpoint.metadata.powerWireMeters;
   return meters;
 }
 
 function getPowerWireAnchorType(root) {
   const item = root?.metadata?.placedItem;
   if (isFabricatorItem(item)) return "fabricator";
+  if (isSolarPanelItem(item)) return "solar-panel";
   if (isBatteryItem(item)) return "battery";
   return "machine";
 }
@@ -9399,34 +9632,55 @@ function getWireAnchorPoint(root, type) {
   if (type === "machine") {
     return new B.Vector3(center.x, bounds.min.y + 0.08, center.z);
   }
+  if (type === "solar-panel") {
+    return center;
+  }
   return new B.Vector3(center.x, center.y, center.z);
 }
 
-function getPowerWireMaterial() {
-  const materialName = "fabricator-battery-red-wire-material";
+function getPowerWireMaterial(kind = "load") {
+  const solar = kind === "solar";
+  const materialName = solar
+    ? "solar-panel-battery-blue-wire-material"
+    : "fabricator-battery-red-wire-material";
   const existing = scene.getMaterialByName?.(materialName);
   if (existing) return existing;
 
   const material = new B.PBRMaterial(materialName, scene);
-  material.albedoColor = new B.Color3(0.62, 0.018, 0.012);
+  material.albedoColor = solar
+    ? new B.Color3(0.06, 0.38, 0.88)
+    : new B.Color3(0.62, 0.018, 0.012);
   material.metallic = 0;
   material.roughness = 0.58;
   material.microSurface = 0.42;
-  material.reflectivityColor = new B.Color3(0.055, 0.018, 0.014);
-  material.emissiveColor = new B.Color3(0.012, 0, 0);
+  material.reflectivityColor = solar
+    ? new B.Color3(0.015, 0.08, 0.18)
+    : new B.Color3(0.055, 0.018, 0.014);
+  material.emissiveColor = solar
+    ? new B.Color3(0.012, 0.045, 0.12)
+    : new B.Color3(0.012, 0, 0);
   material.backFaceCulling = false;
   return material;
 }
 
-function getPowerWirePreviewMaterial() {
-  const materialName = "power-wire-preview-hologram-material";
+function getPowerWirePreviewMaterial(kind = "load") {
+  const solar = kind === "solar";
+  const materialName = solar
+    ? "solar-power-wire-preview-hologram-material"
+    : "power-wire-preview-hologram-material";
   const existing = scene.getMaterialByName?.(materialName);
   if (existing) return existing;
 
   const material = new B.PBRMaterial(materialName, scene);
-  material.albedoColor = new B.Color3(0.95, 0.04, 0.02);
-  material.emissiveColor = new B.Color3(0.45, 0.02, 0.01);
-  material.reflectivityColor = new B.Color3(1, 0.18, 0.08);
+  material.albedoColor = solar
+    ? new B.Color3(0.12, 0.52, 1)
+    : new B.Color3(0.95, 0.04, 0.02);
+  material.emissiveColor = solar
+    ? new B.Color3(0.04, 0.22, 0.58)
+    : new B.Color3(0.45, 0.02, 0.01);
+  material.reflectivityColor = solar
+    ? new B.Color3(0.16, 0.55, 1)
+    : new B.Color3(1, 0.18, 0.08);
   material.metallic = 0;
   material.roughness = 0.24;
   material.alpha = 0.42;
@@ -9460,7 +9714,10 @@ function handlePowerWireKey(interaction) {
     return false;
   }
 
-  if (root && (isBatteryItem(item) || isPoweredMachineItem(item))) {
+  if (
+    root &&
+    (isBatteryItem(item) || isPoweredMachineItem(item) || isSolarPanelItem(item))
+  ) {
     if (hasPowerWireConnection(root)) {
       return detachPowerWireFromNode(root);
     }
@@ -9490,9 +9747,7 @@ function startPowerWireExtension(source) {
   const activeLength = getPowerWirePreviewLength(sourcePoint, playerPoint);
   pendingPowerWire = {
     source,
-    sourceType: isBatteryItem(source.metadata?.placedItem)
-      ? "battery"
-      : "machine",
+    sourceType: getPowerWireEndpointType(source.metadata?.placedItem),
     previewMesh: null,
     particles: createTetherParticles(sourcePoint, playerPoint, activeLength),
     maxLength: activeLength,
@@ -9525,8 +9780,8 @@ function completePowerWireExtension(target) {
     return false;
   }
   const battery = pendingPowerWire.sourceType === "battery" ? source : target;
-  const machine = pendingPowerWire.sourceType === "battery" ? target : source;
-  const wireLength = getPowerWireConnectionLengthMeters(battery, machine);
+  const endpoint = pendingPowerWire.sourceType === "battery" ? target : source;
+  const wireLength = getPowerWireConnectionLengthMeters(battery, endpoint);
   if (getAvailableWireMeters() + 0.0001 < wireLength) {
     updateInteractionPrompt({
       prompt: `Need ${formatWireMeters(wireLength)} wire`,
@@ -9534,12 +9789,12 @@ function completePowerWireExtension(target) {
     });
     return false;
   }
-  if (connectPowerWire(battery, machine, wireLength)) {
+  if (connectPowerWire(battery, endpoint, wireLength)) {
     consumeWireMeters(wireLength);
-    const machineName = machine.metadata?.placedItem?.name ?? "machine";
+    const endpointName = endpoint.metadata?.placedItem?.name ?? "machine";
     cancelPowerWireExtension();
     updateInteractionPrompt({
-      prompt: `Wire connected to ${machineName} - ${formatWireMeters(
+      prompt: `Wire connected to ${endpointName} - ${formatWireMeters(
         wireLength,
       )}`,
       durationMs: 1200,
@@ -9600,22 +9855,23 @@ function detachPowerWireFromNode(root) {
 
 function removePowerConnectionsForNode(root, options = {}) {
   const refund = options.refund !== false;
-  const machines = new Set();
+  const endpoints = new Set();
   if (
-    isPoweredMachineItem(root?.metadata?.placedItem) &&
+    (isPoweredMachineItem(root?.metadata?.placedItem) ||
+      isSolarPanelItem(root?.metadata?.placedItem)) &&
     getConnectedBatteryRoot(root)
   ) {
-    machines.add(root);
+    endpoints.add(root);
   }
   if (isBatteryItem(root?.metadata?.placedItem)) {
-    for (const machine of getPoweredMachineRoots()) {
-      if (machine.metadata?.connectedBattery === root) {
-        machines.add(machine);
+    for (const endpoint of [...getPoweredMachineRoots(), ...getSolarPanelRoots()]) {
+      if (endpoint.metadata?.connectedBattery === root) {
+        endpoints.add(endpoint);
       }
     }
   }
-  const meters = [...machines].reduce(
-    (total, machine) => total + getPowerWireConnectionStoredMeters(machine),
+  const meters = [...endpoints].reduce(
+    (total, endpoint) => total + getPowerWireConnectionStoredMeters(endpoint),
     0,
   );
   if (refund && options.requireRefundSpace && !canAddWireMeters(meters)) {
@@ -9627,12 +9883,12 @@ function removePowerConnectionsForNode(root, options = {}) {
       inventoryFull: true,
     };
   }
-  for (const machine of machines) {
-    clearPowerWireConnection(machine);
+  for (const endpoint of endpoints) {
+    clearPowerWireConnection(endpoint);
   }
   const leftoverMeters = refund ? addWireMeters(meters) : meters;
   return {
-    count: machines.size,
+    count: endpoints.size,
     meters,
     refundedMeters: Math.max(0, meters - leftoverMeters),
     leftoverMeters,
@@ -9647,14 +9903,15 @@ function getPowerWireConnectionCount(root) {
   if (!root) return 0;
   let count = 0;
   if (
-    isPoweredMachineItem(root.metadata?.placedItem) &&
+    (isPoweredMachineItem(root.metadata?.placedItem) ||
+      isSolarPanelItem(root.metadata?.placedItem)) &&
     getConnectedBatteryRoot(root)
   ) {
     count += 1;
   }
   if (isBatteryItem(root.metadata?.placedItem)) {
-    for (const machine of getPoweredMachineRoots()) {
-      if (machine.metadata?.connectedBattery === root) count += 1;
+    for (const endpoint of [...getPoweredMachineRoots(), ...getSolarPanelRoots()]) {
+      if (endpoint.metadata?.connectedBattery === root) count += 1;
     }
   }
   return count;
@@ -9702,7 +9959,9 @@ function updatePowerWirePreview(seconds = 0) {
     scene,
   );
   preview.parent = level?.platform?.root ?? null;
-  preview.material = getPowerWirePreviewMaterial();
+  preview.material = getPowerWirePreviewMaterial(
+    pendingPowerWire.sourceType === "solar" ? "solar" : "load",
+  );
   preview.isPickable = false;
   preview.checkCollisions = false;
   preview.receiveShadows = false;
@@ -9799,20 +10058,32 @@ function getPowerWirePreviewLength(start, end) {
 function canCompletePowerWireAtRoot(root) {
   if (!pendingPowerWire || !root || root === pendingPowerWire.source) return false;
   const item = root.metadata?.placedItem;
-  if (pendingPowerWire.sourceType === "battery" && getConnectedBatteryRoot(root)) {
+  if (
+    pendingPowerWire.sourceType === "battery" &&
+    (isPoweredMachineItem(item) || isSolarPanelItem(item)) &&
+    getConnectedBatteryRoot(root)
+  ) {
     return false;
   }
   return pendingPowerWire.sourceType === "battery"
-    ? isPoweredMachineItem(item)
+    ? isPoweredMachineItem(item) || isSolarPanelItem(item)
     : isBatteryItem(item);
 }
 
 function getPowerWireTargetLabel() {
-  return pendingPowerWire?.sourceType === "machine" ? "a battery" : "a machine";
+  return pendingPowerWire?.sourceType === "battery"
+    ? "a machine or solar panel"
+    : "a battery";
 }
 
 function isPowerWireEndpointItem(item) {
-  return isBatteryItem(item) || isPoweredMachineItem(item);
+  return isBatteryItem(item) || isPoweredMachineItem(item) || isSolarPanelItem(item);
+}
+
+function getPowerWireEndpointType(item) {
+  if (isBatteryItem(item)) return "battery";
+  if (isSolarPanelItem(item)) return "solar";
+  return "machine";
 }
 
 function getPowerWireEndpointPoint(root) {
@@ -9968,6 +10239,7 @@ function installPlayerLoop() {
       updateOpenCabinPressureLeak();
       oxygenGeneratorUpdateElapsed += seconds;
       if (oxygenGeneratorUpdateElapsed >= OXYGEN_GENERATOR_UPDATE_SECONDS) {
+        updateSolarPanels(oxygenGeneratorUpdateElapsed);
         updateOxygenGenerators(oxygenGeneratorUpdateElapsed);
         oxygenGeneratorUpdateElapsed = 0;
       }
@@ -10171,6 +10443,34 @@ function createGlbPickupPrompt(mesh) {
     };
   }
 
+  if (isSolarPanelItem(item)) {
+    const root = mesh.metadata?.glbPickupRoot ?? mesh;
+    const battery = getConnectedBatteryRoot(root);
+    const exposure = getSolarPanelLightExposure(root);
+    root.metadata = {
+      ...(root.metadata ?? {}),
+      solarPanelExposure: exposure,
+    };
+    const rate = Math.max(
+      0,
+      Number(item.solarEnergyPerSecond ?? SOLAR_PANEL_ENERGY_PER_SECOND) ||
+        SOLAR_PANEL_ENERGY_PER_SECOND,
+    );
+    const output = rate * exposure;
+    const batteryText = battery ? "Battery linked" : "No battery";
+    return {
+      type: "solar-panel",
+      range: mesh.metadata.glbPickupRange ?? GLB_PICKUP_PROMPT_RANGE,
+      root,
+      item,
+      prompt: `Press E to pick up ${label} · ${getPowerWirePromptText(
+        root,
+        label,
+      )} · ${batteryText} · Light ${Math.round(exposure * 100)}% · +${output.toFixed(2)}/s`,
+      activate: () => deactivateGlbPickupMesh(root),
+    };
+  }
+
   return {
     type: "pickup",
     range: mesh.metadata.glbPickupRange ?? GLB_PICKUP_PROMPT_RANGE,
@@ -10195,6 +10495,7 @@ function getPowerWirePromptText(root, label = "machine") {
   }
   if (isBatteryItem(item)) return "Y start wire";
   if (isPoweredMachineItem(item)) return "Y start wire";
+  if (isSolarPanelItem(item)) return "Y start wire";
   return "Y wire";
 }
 

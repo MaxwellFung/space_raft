@@ -225,7 +225,7 @@
       {
         "id": "copper",
         "name": "Copper Ingot",
-        "count": 2,
+        "count": 5,
         "icon": "Cu",
         "swatch": "#c8753e",
         "portraitModelUrl": "./assets/raw_materials/copper_ingot.glb",
@@ -235,7 +235,19 @@
           -0.32
         ]
       },
-      null,
+      {
+        "id": "silicon",
+        "name": "Silicon",
+        "count": 4,
+        "icon": "Si",
+        "swatch": "#b8c7c4",
+        "portraitModelUrl": "./assets/raw_materials/silicon.glb",
+        "portraitRotation": [
+          0.18,
+          0.74,
+          -0.08
+        ]
+      },
       null,
       null,
       null,
