@@ -39,8 +39,8 @@
       -20.05,
       6.88
     ],
-    "nearFragmentCount": 720,
-    "maxActiveRocks": 520,
+    "nearFragmentCount": 440,
+    "maxActiveRocks": 320,
     "fabricatorSizedFragmentFraction": 0.5,
     "fabricatorSizedFragmentSizeMeters": [
       0.55,
@@ -54,12 +54,24 @@
     "rockClumpCount": 7,
     "rockClumpRadius": 14,
     "rockClumpDistance": 108,
+    "relativeDriftSpeed": 0.01125,
+    "fastRelativeDriftSpeed": 0.65,
+    "rockBackwardDriftSpeed": 0.3375,
+    "rockStreamCellDistance": 30,
+    "rockStreamCycleSeconds": 16,
+    "rockStreamReplacementFraction": 0.14,
+    "rockStreamSpawnMinDistance": 5.5,
+    "rockStreamLifetimeSeconds": [
+      60,
+      92
+    ],
     "interceptClumpCount": 7,
     "interceptClumpDistance": [
       6,
       94
     ],
     "shipGraceRadius": 2.2,
+    "shipGraceTrajectoryMargin": 0.45,
     "protectedSpawnRadius": 2.2,
     "initialRockGraceRadius": 2.2,
     "guaranteedFrontRock": true,
@@ -67,7 +79,7 @@
   },
   "platform": {
     "modelUrl": "./assets/ship_col.glb",
-    "modelMaxSize": 2.145,
+    "modelMaxSize": 2.68125,
     "physicsBoundsMode": "model",
     "playerSpawnMode": "inside",
     "initialCameraPosition": [
@@ -88,7 +100,10 @@
     "ignoredCollisionMeshNames": [
       "COL_front"
     ],
-    "windowShadowMapSize": 2048,
+    "doorInteractionProxyScale": 2.9,
+    "doorOpenInteractionProxyHeightScale": 1.15,
+    "doorInteractionProxyDepth": 0.28,
+    "windowShadowMapSize": 1024,
     "windowShadowBias": 0.00025,
     "windowShadowNormalBias": 0.006,
     "windowShadowMinOrthoSize": 2.2,
@@ -135,21 +150,21 @@
     },
     "player": {
       "position": [
-        -0.3146,
-        0.1454,
-        0.0855
+        0.1663,
+        0.0288,
+        0.8387
       ],
       "rotationDegrees": [
-        11.75,
-        -228.645,
+        39.069,
+        -237.616,
         0
       ],
       "flyMode": false,
       "zeroGravityMode": true,
       "zeroGravityVelocity": [
-        -0.0924,
-        0,
-        0.0089
+        0.0923,
+        -0.0451,
+        -0.0454
       ],
       "thirdPersonMode": false,
       "selectedHotbarIndex": 1
@@ -182,13 +197,30 @@
     ],
     "hotbar": [
       {
-        "id": "copper",
-        "name": "Copper",
-        "icon": "Cu",
-        "swatch": "#c8753e",
-        "count": 2
+        "id": "oxygen-generator",
+        "name": "Oxygen Generator",
+        "count": 1,
+        "icon": "O",
+        "swatch": "#9fd8e8",
+        "modelUrl": "./assets/oxygen_generator.glb",
+        "portraitModelUrl": "./assets/oxygen_generator.glb",
+        "maxSize": 0.32,
+        "placementSurface": "floor",
+        "stackLimit": 1
       },
-      null,
+      {
+        "id": "water",
+        "name": "Ice",
+        "count": 4,
+        "icon": "H2O",
+        "swatch": "#58b9e8",
+        "portraitModelUrl": "./assets/raw_materials/ice.glb",
+        "portraitRotation": [
+          0.12,
+          -0.62,
+          0
+        ]
+      },
       null,
       null,
       null,
@@ -204,36 +236,13 @@
     "placedItems": [
       {
         "item": {
-          "id": "battery",
-          "name": "Battery",
-          "count": 1,
-          "icon": "B",
-          "swatch": "#f0c65a",
-          "modelUrl": "./assets/battery.glb",
-          "maxSize": 0.22,
-          "energyStored": 108,
-          "maxEnergy": 120
-        },
-        "position": [
-          0.3061,
-          -0.4666,
-          -0.3348
-        ],
-        "rotationDegrees": [
-          0,
-          0,
-          0
-        ]
-      },
-      {
-        "item": {
           "id": "fabricator",
           "name": "Fabricator",
           "count": 1,
           "icon": "F",
           "swatch": "#7ea0a8",
           "modelUrl": "./assets/fabricator.glb",
-          "maxSize": 0.44,
+          "maxSize": 0.36,
           "placementSurface": "wall",
           "wallGap": 0.004,
           "wallRotationDegrees": [
@@ -243,1009 +252,40 @@
           ]
         },
         "position": [
-          0.3187,
-          -0.1913,
-          -0.622
+          0.4715,
+          -0.2338,
+          0.3536
         ],
         "rotationDegrees": [
           0,
           180,
           0
         ]
+      },
+      {
+        "item": {
+          "id": "battery",
+          "name": "Battery",
+          "count": 1,
+          "icon": "B",
+          "swatch": "#f0c65a",
+          "modelUrl": "./assets/battery.glb",
+          "maxSize": 0.22,
+          "energyStored": 216,
+          "maxEnergy": 240
+        },
+        "position": [
+          0.3163,
+          -0.5832,
+          0.6077
+        ],
+        "rotationDegrees": [
+          0,
+          0,
+          0
+        ]
       }
     ],
-    "asteroids": {
-      "dropped": [
-        {
-          "position": [
-            2.7765,
-            1.3204,
-            1.2998
-          ],
-          "rotationDegrees": [
-            -36.184,
-            134.033,
-            116.646
-          ],
-          "scale": [
-            0.0223,
-            0.0154,
-            0.0237
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0473,
-            0.0646,
-            -0.0309
-          ],
-          "radius": 0.0356,
-          "composition": {
-            "iron": 1,
-            "copper": 1,
-            "water": 0
-          },
-          "color": [
-            0.6044523356287529,
-            0.5780592302522412,
-            0.5094371562733104
-          ]
-        },
-        {
-          "position": [
-            -2.315,
-            -2.3459,
-            1.2314
-          ],
-          "rotationDegrees": [
-            6.575,
-            -129.754,
-            59.447
-          ],
-          "scale": [
-            0.0493,
-            0.0444,
-            0.0662
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0054,
-            0.0375,
-            -0.0417
-          ],
-          "radius": 0.0749,
-          "composition": {
-            "iron": 0,
-            "copper": 1,
-            "water": 1
-          },
-          "color": [
-            0.765481997466131,
-            0.7426757615948532,
-            0.6788183011552755
-          ]
-        },
-        {
-          "position": [
-            2.5957,
-            -2.523,
-            -4.3888
-          ],
-          "rotationDegrees": [
-            -49.313,
-            17.211,
-            45.716
-          ],
-          "scale": [
-            0.0345,
-            0.0263,
-            0.0569
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0037,
-            0.0037,
-            -0.023
-          ],
-          "radius": 0.0606,
-          "composition": {
-            "iron": 0,
-            "copper": 0,
-            "water": 2
-          },
-          "color": [
-            0.7672841554365798,
-            0.7485077702723189,
-            0.6921786147795362
-          ]
-        },
-        {
-          "position": [
-            1.4742,
-            7.0998,
-            0.5295
-          ],
-          "rotationDegrees": [
-            27.907,
-            -176.868,
-            -156.666
-          ],
-          "scale": [
-            0.0236,
-            0.0248,
-            0.0251
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            -0.0825,
-            0.0119,
-            -0.0238
-          ],
-          "radius": 0.0431,
-          "composition": {
-            "iron": 0,
-            "copper": 0,
-            "water": 2
-          },
-          "color": [
-            0.7335467255004536,
-            0.715558183129583,
-            0.6615925560169708
-          ]
-        },
-        {
-          "position": [
-            -0.2005,
-            -1.6607,
-            -3.5344
-          ],
-          "rotationDegrees": [
-            64.908,
-            36.625,
-            151.234
-          ],
-          "scale": [
-            0.1947,
-            0.1905,
-            0.2295
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            -0.0535,
-            0.0211,
-            0.0519
-          ],
-          "radius": 0.3321,
-          "composition": {
-            "iron": 3,
-            "copper": 1,
-            "water": 5
-          },
-          "color": [
-            0.672217669251789,
-            0.6534696548462848,
-            0.6011725620309307
-          ]
-        },
-        {
-          "position": [
-            6.4784,
-            0.3198,
-            -2.0451
-          ],
-          "rotationDegrees": [
-            35.302,
-            -124.551,
-            -157.329
-          ],
-          "scale": [
-            0.0434,
-            0.037,
-            0.0786
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0248,
-            -0.0325,
-            0.0172
-          ],
-          "radius": 0.0846,
-          "composition": {
-            "iron": 0,
-            "copper": 0,
-            "water": 2
-          },
-          "color": [
-            0.6988529577177786,
-            0.680941837784166,
-            0.627208477983328
-          ]
-        },
-        {
-          "position": [
-            -1.7517,
-            -5.4306,
-            3.7792
-          ],
-          "rotationDegrees": [
-            26.59,
-            -48.469,
-            46.474
-          ],
-          "scale": [
-            0.1328,
-            0.0933,
-            0.1326
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0012,
-            0.0266,
-            0.0108
-          ],
-          "radius": 0.1965,
-          "composition": {
-            "iron": 3,
-            "copper": 0,
-            "water": 1
-          },
-          "color": [
-            0.6053923037170438,
-            0.5846373048176063,
-            0.5301554327065829
-          ]
-        },
-        {
-          "position": [
-            8.046,
-            2.0292,
-            -0.3654
-          ],
-          "rotationDegrees": [
-            -62.349,
-            14.819,
-            -146.627
-          ],
-          "scale": [
-            0.3771,
-            0.3402,
-            0.5658
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            -0.0012,
-            0.0027,
-            -0.071
-          ],
-          "radius": 0.667,
-          "composition": {
-            "iron": 10,
-            "copper": 8,
-            "water": 3
-          },
-          "color": [
-            0.7492748078942499,
-            0.7238560452196061,
-            0.6567505117585463
-          ]
-        },
-        {
-          "position": [
-            5.4279,
-            4.6231,
-            -15.0545
-          ],
-          "rotationDegrees": [
-            -74.413,
-            -11.028,
-            -22.169
-          ],
-          "scale": [
-            0.0387,
-            0.037,
-            0.0458
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0438,
-            0.0118,
-            0.038
-          ],
-          "radius": 0.0642,
-          "composition": {
-            "iron": 1,
-            "copper": 1,
-            "water": 0
-          },
-          "color": [
-            0.6118695843179195,
-            0.5873663430534254,
-            0.5236579157657407
-          ]
-        },
-        {
-          "position": [
-            8.9938,
-            7.7912,
-            -18.8988
-          ],
-          "rotationDegrees": [
-            -57.836,
-            -144.268,
-            -58.88
-          ],
-          "scale": [
-            0.0758,
-            0.0874,
-            0.1213
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            -0.0463,
-            -0.0088,
-            -0.0259
-          ],
-          "radius": 0.1418,
-          "composition": {
-            "iron": 0,
-            "copper": 1,
-            "water": 1
-          },
-          "color": [
-            0.892834795409855,
-            0.8662623114230059,
-            0.7918593562598288
-          ]
-        },
-        {
-          "position": [
-            12.2351,
-            3.938,
-            -14.4489
-          ],
-          "rotationDegrees": [
-            -74.784,
-            -115.536,
-            174.447
-          ],
-          "scale": [
-            0.1766,
-            0.141,
-            0.2025
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0141,
-            -0.0067,
-            -0.0312
-          ],
-          "radius": 0.3279,
-          "composition": {
-            "iron": 4,
-            "copper": 3,
-            "water": 2
-          },
-          "color": [
-            0.693318072711205,
-            0.6705239866423675,
-            0.6097397571254671
-          ]
-        },
-        {
-          "position": [
-            12.4122,
-            3.489,
-            -15.0121
-          ],
-          "rotationDegrees": [
-            67.476,
-            124.252,
-            95.705
-          ],
-          "scale": [
-            0.255,
-            0.1974,
-            0.271
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.015,
-            0.001,
-            0.042
-          ],
-          "radius": 0.3978,
-          "composition": {
-            "iron": 5,
-            "copper": 0,
-            "water": 6
-          },
-          "color": [
-            0.7701693672423217,
-            0.7497202277307364,
-            0.693020340903159
-          ]
-        },
-        {
-          "position": [
-            14.5762,
-            8.765,
-            -13.9367
-          ],
-          "rotationDegrees": [
-            9.116,
-            79.539,
-            -37.743
-          ],
-          "scale": [
-            0.4999,
-            0.4917,
-            0.6207
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0216,
-            0.0125,
-            -0.0017
-          ],
-          "radius": 0.8867,
-          "composition": {
-            "iron": 10,
-            "copper": 9,
-            "water": 10
-          },
-          "color": [
-            0.7448321292686296,
-            0.7219478948811892,
-            0.6597847507242616
-          ]
-        },
-        {
-          "position": [
-            12.4418,
-            2.9494,
-            -16.1452
-          ],
-          "rotationDegrees": [
-            -47.475,
-            79.567,
-            -135.561
-          ],
-          "scale": [
-            0.4024,
-            0.3225,
-            0.5324
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0205,
-            0.0123,
-            -0.0178
-          ],
-          "radius": 0.6125,
-          "composition": {
-            "iron": 8,
-            "copper": 6,
-            "water": 5
-          },
-          "color": [
-            0.5951858273596445,
-            0.5740268592474189,
-            0.5172823538555412
-          ]
-        },
-        {
-          "position": [
-            13.9834,
-            3.5417,
-            -16.8459
-          ],
-          "rotationDegrees": [
-            -26.904,
-            -158.857,
-            -80.091
-          ],
-          "scale": [
-            0.0968,
-            0.0592,
-            0.1202
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0211,
-            0.0786,
-            0.0138
-          ],
-          "radius": 0.1415,
-          "composition": {
-            "iron": 0,
-            "copper": 2,
-            "water": 0
-          },
-          "color": [
-            0.6088391021113183,
-            0.5810865189660611,
-            0.507079630578709
-          ]
-        },
-        {
-          "position": [
-            10.3914,
-            -0.0482,
-            -14.9408
-          ],
-          "rotationDegrees": [
-            -23.657,
-            10.466,
-            -179.785
-          ],
-          "scale": [
-            0.0408,
-            0.0431,
-            0.0683
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            -0.0425,
-            0.0029,
-            -0.0415
-          ],
-          "radius": 0.0773,
-          "composition": {
-            "iron": 0,
-            "copper": 1,
-            "water": 1
-          },
-          "color": [
-            0.8153479345017445,
-            0.7910673591946582,
-            0.7230817483348172
-          ]
-        },
-        {
-          "position": [
-            12.9029,
-            0.2834,
-            -13.1095
-          ],
-          "rotationDegrees": [
-            -10.434,
-            -103.048,
-            2.608
-          ],
-          "scale": [
-            0.2828,
-            0.313,
-            0.3665
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            -0.0063,
-            -0.0318,
-            0.0133
-          ],
-          "radius": 0.5541,
-          "composition": {
-            "iron": 3,
-            "copper": 6,
-            "water": 8
-          },
-          "color": [
-            0.8119187251580434,
-            0.7879387878296888,
-            0.7213944617435055
-          ]
-        },
-        {
-          "position": [
-            12.3537,
-            0.3423,
-            -15.3227
-          ],
-          "rotationDegrees": [
-            14.242,
-            133.698,
-            -141.875
-          ],
-          "scale": [
-            0.0212,
-            0.0213,
-            0.0312
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            -0.0099,
-            -0.0247,
-            0.0104
-          ],
-          "radius": 0.0349,
-          "composition": {
-            "iron": 2,
-            "copper": 0,
-            "water": 0
-          },
-          "color": [
-            0.5407911903528955,
-            0.5221390514804509,
-            0.4755087042993393
-          ]
-        },
-        {
-          "position": [
-            14.238,
-            3.9799,
-            -7.6256
-          ],
-          "rotationDegrees": [
-            42.879,
-            -77.18,
-            -147.193
-          ],
-          "scale": [
-            0.2413,
-            0.1835,
-            0.3155
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            -0.0174,
-            -0.012,
-            -0.0046
-          ],
-          "radius": 0.4062,
-          "composition": {
-            "iron": 7,
-            "copper": 3,
-            "water": 2
-          },
-          "color": [
-            0.727239192314416,
-            0.7032925665701208,
-            0.6403218099832703
-          ]
-        },
-        {
-          "position": [
-            18.3531,
-            2.7993,
-            -12.6637
-          ],
-          "rotationDegrees": [
-            7.95,
-            -20.55,
-            35.46
-          ],
-          "scale": [
-            0.024,
-            0.0211,
-            0.0272
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            -0.0324,
-            -0.0177,
-            0.0214
-          ],
-          "radius": 0.0378,
-          "composition": {
-            "iron": 1,
-            "copper": 1,
-            "water": 0
-          },
-          "color": [
-            0.5953824927065532,
-            0.5696656674329668,
-            0.5028019217216421
-          ]
-        },
-        {
-          "position": [
-            15.7072,
-            -0.4235,
-            -13.7332
-          ],
-          "rotationDegrees": [
-            -35.65,
-            110.222,
-            60.773
-          ],
-          "scale": [
-            0.3065,
-            0.3582,
-            0.5962
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            -0.0074,
-            0.023,
-            -0.0016
-          ],
-          "radius": 0.6264,
-          "composition": {
-            "iron": 4,
-            "copper": 5,
-            "water": 10
-          },
-          "color": [
-            0.7055006590026136,
-            0.6844798329698314,
-            0.625817062645788
-          ]
-        },
-        {
-          "position": [
-            19.9019,
-            6.5755,
-            -12.0044
-          ],
-          "rotationDegrees": [
-            -2.274,
-            23.543,
-            -131.806
-          ],
-          "scale": [
-            0.0958,
-            0.0826,
-            0.1055
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0169,
-            0.0009,
-            -0.045
-          ],
-          "radius": 0.1406,
-          "composition": {
-            "iron": 1,
-            "copper": 1,
-            "water": 0
-          },
-          "color": [
-            0.6365988070245181,
-            0.6104005233619643,
-            0.5422849858393243
-          ]
-        },
-        {
-          "position": [
-            16.1993,
-            4.47,
-            -6.1867
-          ],
-          "rotationDegrees": [
-            6.048,
-            123.02,
-            70.634
-          ],
-          "scale": [
-            0.0567,
-            0.0441,
-            0.0862
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0822,
-            0.0108,
-            0.0125
-          ],
-          "radius": 0.0938,
-          "composition": {
-            "iron": 0,
-            "copper": 2,
-            "water": 0
-          },
-          "color": [
-            0.740141076115058,
-            0.7116726920483681,
-            0.6357570012038622
-          ]
-        },
-        {
-          "position": [
-            9.3334,
-            1.8929,
-            -2.3483
-          ],
-          "rotationDegrees": [
-            30.805,
-            -164.606,
-            -173.934
-          ],
-          "scale": [
-            0.2804,
-            0.2306,
-            0.4562
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            -0.0174,
-            0.065,
-            0.0434
-          ],
-          "radius": 0.5083,
-          "composition": {
-            "iron": 6,
-            "copper": 2,
-            "water": 7
-          },
-          "color": [
-            0.7251401620385787,
-            0.7040678480738145,
-            0.6461189846707126
-          ]
-        },
-        {
-          "position": [
-            13.0138,
-            -0.9011,
-            -3.233
-          ],
-          "rotationDegrees": [
-            -2.654,
-            78.778,
-            -46.651
-          ],
-          "scale": [
-            0.5454,
-            0.4447,
-            0.6311
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0061,
-            -0.0301,
-            0.055
-          ],
-          "radius": 0.8803,
-          "composition": {
-            "iron": 10,
-            "copper": 10,
-            "water": 8
-          },
-          "color": [
-            0.6905245405441082,
-            0.6650815000032605,
-            0.5964623906658229
-          ]
-        },
-        {
-          "position": [
-            11.0472,
-            -1.646,
-            -1.1617
-          ],
-          "rotationDegrees": [
-            -34.981,
-            92.029,
-            -134.134
-          ],
-          "scale": [
-            0.2047,
-            0.1771,
-            0.1998
-          ],
-          "velocity": [
-            0,
-            0,
-            0
-          ],
-          "angularVelocity": [
-            0.0208,
-            -0.0044,
-            0.0083
-          ],
-          "radius": 0.3314,
-          "composition": {
-            "iron": 2,
-            "copper": 7,
-            "water": 0
-          },
-          "color": [
-            0.6225338557680494,
-            0.5949260773362017,
-            0.5220415422761239
-          ]
-        }
-      ]
-    },
     "helmet": {
       "equipped": null,
       "mountedItem": null

@@ -26,6 +26,8 @@ Useful spatial controls:
 - `debrisField.nearFragmentCount` / `debrisField.maxActiveRocks`: asteroid
   density budget inside that ball.
 - `debrisField.shipGraceRadius`: no-rock bubble around the ship.
+- `debrisField.shipGraceTrajectoryMargin`: extra spawn-path clearance around
+  the no-rock bubble, used to reject asteroids that would later cross it.
 - `debrisField.rockFadeStart` / `debrisField.rockFadeEnd`: fade shell near the
   edge of the render ball.
 - `platform.modelRotationDegrees`: rotation of the imported ship model inside the

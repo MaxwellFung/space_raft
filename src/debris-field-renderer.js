@@ -3,6 +3,7 @@ import { addPolySurfaceHologram } from "./poly-surface-hologram.js";
 
 const B = window.BABYLON;
 const ROCK_TEXTURE_SIZE = 512;
+const INSTANCE_MATRIX = B.Matrix.Identity();
 
 export function createDebrisField(scene, debrisField, occluder) {
   const mist = createNebula(scene, debrisField, occluder);
@@ -61,6 +62,39 @@ function createRockField(scene, field) {
   const coOrbitFraction = field.coOrbitFraction ?? 0.78;
   const relativeDriftSpeed = field.relativeDriftSpeed ?? flowSpeed * 0.08;
   const fastDriftSpeed = field.fastRelativeDriftSpeed ?? flowSpeed * 0.65;
+  const backwardDriftSpeed = Math.max(
+    0,
+    field.rockBackwardDriftSpeed ?? Math.max(flowSpeed * 0.35, 1.2),
+  );
+  const streamCellDistance = Math.max(
+    4,
+    field.rockStreamCellDistance ?? Math.min(renderDistance * 0.16, 38),
+  );
+  const streamCycleSeconds = Math.max(2, field.rockStreamCycleSeconds ?? 16);
+  const streamReplacementFraction = clamp01(
+    field.rockStreamReplacementFraction ?? 0.14,
+  );
+  const streamSpawnMinDistance = Math.max(
+    protectedSpawnRadius + 0.5,
+    field.rockStreamSpawnMinDistance ?? 5.5,
+  );
+  const shipGraceTrajectoryMargin = Math.max(
+    0,
+    field.shipGraceTrajectoryMargin ?? 0.45,
+  );
+  const streamLifetimeSetting = field.rockStreamLifetimeSeconds ?? [60, 92];
+  const streamLifetimeMin = Math.max(
+    transitionSeconds * 2,
+    Array.isArray(streamLifetimeSetting)
+      ? (streamLifetimeSetting[0] ?? 60)
+      : streamLifetimeSetting,
+  );
+  const streamLifetimeMax = Math.max(
+    streamLifetimeMin,
+    Array.isArray(streamLifetimeSetting)
+      ? (streamLifetimeSetting[1] ?? streamLifetimeMin)
+      : streamLifetimeSetting,
+  );
   const interceptClumpCount = field.interceptClumpCount ?? 4;
   const interceptDistance = field.interceptClumpDistance ?? [8, 38];
   const densityUpdateInterval = Math.max(
@@ -76,11 +110,17 @@ function createRockField(scene, field) {
   const orbitNormal = B.Vector3.Up();
   const scratchRockPosition = B.Vector3.Zero();
   const scratchWorldPosition = B.Vector3.Zero();
+  const scratchStreamPosition = B.Vector3.Zero();
+  const scratchRetiringPosition = B.Vector3.Zero();
+  const scratchScale = B.Vector3.One();
+  const scratchAxisRotation = B.Quaternion.Identity();
+  const scratchDisplayRotation = B.Quaternion.Identity();
   let centerProvider = () => scene.activeCamera.globalPosition;
   let flowProvider = () => B.Axis.Z;
   let playerCollisionProvider = null;
   let lastCell = "";
   let simulationTime = 0;
+  let streamDistance = 0;
   let asteroidFrame = 0;
   let seeded = false;
   const groups = createRockGroups(scene, field, runtimeSeed);
@@ -104,7 +144,13 @@ function createRockField(scene, field) {
       const center = centerProvider();
       renderCenter.copyFrom(center);
       root.position.copyFrom(renderCenter);
-      flowDirection.copyFrom(flowProvider()).normalize();
+      flowDirection.copyFrom(flowProvider());
+      if (flowDirection.lengthSquared() > 0.0001) {
+        flowDirection.normalize();
+      } else {
+        flowDirection.copyFrom(B.Axis.Z);
+      }
+      streamDistance += seconds * backwardDriftSpeed;
       orbitRadial.copyFrom(renderCenter).subtractInPlace(fieldCenter);
       if (orbitRadial.lengthSquared() > 0.0001) {
         orbitRadial.normalize();
@@ -117,7 +163,12 @@ function createRockField(scene, field) {
       } else {
         orbitNormal.copyFrom(B.Axis.Y);
       }
-      const cell = makeCellKey(renderCenter, renderDistance * 0.38);
+      scratchStreamPosition.copyFrom(flowDirection)
+        .scaleInPlace(streamDistance)
+        .addInPlace(renderCenter);
+      const streamStep = Math.floor(simulationTime / streamCycleSeconds);
+      const cell =
+        `${makeCellKey(scratchStreamPosition, streamCellDistance)}:${streamStep}`;
       if (cell !== lastCell) {
         lastCell = cell;
         regenerateRocks(cell);
@@ -156,8 +207,11 @@ function createRockField(scene, field) {
 
   function regenerateRocks(cell) {
     const initialSeed = !seeded;
-    retireOuterRocks();
     const random = createRandom(hashString(`${field.seed}:${runtimeSeed}:${cell}`));
+    retireOuterRocks();
+    if (!initialSeed) {
+      retireStreamBatch(random);
+    }
     const densityThreshold = field.rockDensityThreshold ?? 0.08;
     const clumps = createClumps(
       random,
@@ -181,7 +235,7 @@ function createRockField(scene, field) {
           guaranteedFrontRockSize,
           random,
           {
-            relativeVelocity: B.Vector3.Zero(),
+            relativeVelocity: createBackwardDriftVelocity(),
             material: groups.pick(random),
             ignoreDensity: true,
           },
@@ -194,7 +248,10 @@ function createRockField(scene, field) {
       const local = clump
         .add(randomPointInSphere(random, clumpRadius * lerp(0.45, 1.35, random())));
       if (local.lengthSquared() > renderDistance * renderDistance) continue;
-      if (!initialSeed && local.lengthSquared() < stableDistance * stableDistance) {
+      if (
+        !initialSeed &&
+        local.lengthSquared() < streamSpawnMinDistance * streamSpawnMinDistance
+      ) {
         continue;
       }
       const bypassDensity =
@@ -229,6 +286,23 @@ function createRockField(scene, field) {
 
   function pushRock(local, sizeMeters, random, options = {}) {
     const rockRadius = baseRockRadius(sizeMeters);
+    const radius = estimateRockWorldRadius(sizeMeters);
+    const relativeVelocity =
+      options.relativeVelocity ?? createRelativeOrbitalVelocity(random);
+    const streamLifetime =
+      options.streamLifetime ??
+      lerp(streamLifetimeMin, streamLifetimeMax, random() ** 0.85);
+    if (
+      trajectoryIntersectsShipGraceBubble(
+        local,
+        relativeVelocity,
+        radius,
+        streamLifetime,
+      )
+    ) {
+      return false;
+    }
+
     const composition = createAsteroidComposition(random, sizeMeters, fragmentSizes);
     const color = createAsteroidCompositionColor(composition, random);
     rocks.push({
@@ -236,10 +310,10 @@ function createRockField(scene, field) {
       composition,
       color,
       base: local,
-      relativeVelocity:
-        options.relativeVelocity ?? createRelativeOrbitalVelocity(random),
+      relativeVelocity,
       ignoreDensity: options.ignoreDensity ?? false,
       age: 0,
+      streamLifetime,
       spinAxis: randomDirection(random),
       spinRate: lerp(
         field.minSpinRadiansPerSecond ?? 0.015,
@@ -256,10 +330,11 @@ function createRockField(scene, field) {
         random() * Math.PI * 2,
         random() * Math.PI * 2,
       ),
-      radius: estimateRockWorldRadius(sizeMeters),
+      radius,
       densityPhase: Math.floor(random() * densityUpdateInterval),
       cachedDensity: options.ignoreDensity ? 1 : undefined,
     });
+    return true;
   }
 
   function selectRockSize(random) {
@@ -301,6 +376,33 @@ function createRockField(scene, field) {
     return shipGraceRadius > 0 && local.length() < shipGraceRadius + rockRadius;
   }
 
+  function trajectoryIntersectsShipGraceBubble(
+    local,
+    velocity,
+    rockRadius,
+    lifetime,
+  ) {
+    if (shipGraceRadius <= 0) return false;
+
+    const protectedRadius =
+      shipGraceRadius + rockRadius + shipGraceTrajectoryMargin;
+    const protectedRadiusSquared = protectedRadius * protectedRadius;
+    if (local.lengthSquared() < protectedRadiusSquared) return true;
+
+    const velocityLengthSquared = velocity.lengthSquared();
+    if (velocityLengthSquared <= 0.000001) return false;
+
+    const closestTime = clamp(
+      -B.Vector3.Dot(local, velocity) / velocityLengthSquared,
+      0,
+      Math.max(lifetime, 0),
+    );
+    scratchWorldPosition.copyFrom(velocity)
+      .scaleInPlace(closestTime)
+      .addInPlace(local);
+    return scratchWorldPosition.lengthSquared() < protectedRadiusSquared;
+  }
+
   function getCameraForwardLocal(distance) {
     const camera = scene.activeCamera;
     root.computeWorldMatrix(true);
@@ -322,18 +424,36 @@ function createRockField(scene, field) {
       if (position.lengthSquared() < stableDistance * stableDistance) {
         continue;
       }
-      retiringRocks.push({
-        material: rock.material,
-        composition: rock.composition,
-        color: rock.color,
-        position: position.clone(),
-        age: 0,
-        spinAxis: rock.spinAxis,
-        spinRate: rock.spinRate,
-        scale: rock.scale,
-        rotation: rock.rotation,
+      retireRockAtIndex(index, position);
+    }
+  }
+
+  function retireStreamBatch(random) {
+    const retireCount = Math.ceil(maxActiveRocks * streamReplacementFraction);
+    if (retireCount <= 0 || rocks.length <= 0) return;
+
+    const candidates = [];
+    for (let index = 0; index < rocks.length; index += 1) {
+      const rock = rocks[index];
+      const position = getRockPositionToRef(rock, scratchRockPosition);
+      if (isInsideShipGraceBubble(position, rock.radius)) continue;
+      candidates.push({
+        index,
+        score:
+          rock.age / Math.max(rock.streamLifetime, 0.001) +
+          random() * 0.12,
       });
-      rocks.splice(index, 1);
+    }
+    candidates.sort((a, b) => b.score - a.score);
+
+    const selected = candidates.slice(0, retireCount)
+      .map((candidate) => candidate.index)
+      .sort((a, b) => b - a);
+    for (const index of selected) {
+      retireRockAtIndex(
+        index,
+        getRockPositionToRef(rocks[index], scratchRockPosition),
+      );
     }
   }
 
@@ -346,6 +466,10 @@ function createRockField(scene, field) {
       const rock = rocks[index];
       rock.age += seconds;
       const position = getRockPositionToRef(rock, scratchRockPosition);
+      if (rock.age >= rock.streamLifetime) {
+        retireRockAtIndex(index, position);
+        continue;
+      }
       if (isInsideShipGraceBubble(position, rock.radius)) {
         if ((rock.playerCollisionGraceSeconds ?? 0) <= 0) {
           rocks.splice(index, 1);
@@ -357,18 +481,7 @@ function createRockField(scene, field) {
         (rock.playerCollisionGraceSeconds ?? 0) - seconds,
       );
       if (position.lengthSquared() > renderDistance * renderDistance) {
-        retiringRocks.push({
-          material: rock.material,
-          composition: rock.composition,
-          color: rock.color,
-          position: position.clone(),
-          age: 0,
-          spinAxis: rock.spinAxis,
-          spinRate: rock.spinRate,
-          scale: rock.scale,
-          rotation: rock.rotation,
-        });
-        rocks.splice(index, 1);
+        retireRockAtIndex(index, position);
         continue;
       }
       let density = rock.cachedDensity ?? 1;
@@ -397,8 +510,12 @@ function createRockField(scene, field) {
       const birthFade = smoothstep(0, transitionSeconds, rock.age);
       const fade = clamp01(distanceFade * densityFade * birthFade);
       if (fade <= 0.015) continue;
-      const rotation = getRockDisplayRotation(rock);
-      const fadedScale = rock.scale.scale(lerp(fadeMinScale, 1, fade));
+      const rotation = getRockDisplayRotationToRef(rock, scratchDisplayRotation);
+      const fadedScale = getFadedRockScaleToRef(
+        rock,
+        fade,
+        scratchScale,
+      );
       pushInstance(
         matrices[rock.material],
         colors[rock.material],
@@ -416,18 +533,25 @@ function createRockField(scene, field) {
         retiringRocks.splice(index, 1);
         continue;
       }
-      const position = rock.position.clone();
+      const position = scratchRetiringPosition.copyFrom(rock.position);
+      if (rock.relativeVelocity) {
+        scratchWorldPosition.copyFrom(rock.relativeVelocity)
+          .scaleInPlace(rock.age);
+        position.addInPlace(scratchWorldPosition);
+      }
       const distanceFade = 1 - smoothstep(fadeStart, fadeEnd, position.length());
       const deathFade = 1 - smoothstep(0, transitionSeconds, rock.age);
       const fade = clamp01(distanceFade * deathFade);
       if (fade <= 0.015) continue;
-      const rotation = rock.rotation.multiply(
-        B.Quaternion.RotationAxis(
-          rock.spinAxis,
-          simulationTime * rock.spinRate,
-        ),
+      const rotation = getRetiringRockDisplayRotationToRef(
+        rock,
+        scratchDisplayRotation,
       );
-      const fadedScale = rock.scale.scale(lerp(fadeMinScale, 1, fade));
+      const fadedScale = getFadedRockScaleToRef(
+        rock,
+        fade,
+        scratchScale,
+      );
       pushInstance(
         matrices[rock.material],
         colors[rock.material],
@@ -467,6 +591,23 @@ function createRockField(scene, field) {
     setRockBaseFromCurrentPosition(rock, position);
   }
 
+  function retireRockAtIndex(index, position) {
+    const rock = rocks[index];
+    retiringRocks.push({
+      material: rock.material,
+      composition: rock.composition,
+      color: rock.color,
+      position: position.clone(),
+      age: 0,
+      spinAxis: rock.spinAxis,
+      spinRate: rock.spinRate,
+      scale: rock.scale,
+      rotation: rock.rotation,
+      relativeVelocity: rock.relativeVelocity.clone(),
+    });
+    rocks.splice(index, 1);
+  }
+
   function setRockBaseFromCurrentPosition(rock, position) {
     rock.base.copyFrom(position);
     if (rock.age > 0) {
@@ -481,13 +622,36 @@ function createRockField(scene, field) {
     return target;
   }
 
-  function getRockDisplayRotation(rock) {
-    return rock.rotation.multiply(
-      B.Quaternion.RotationAxis(
-        rock.spinAxis,
-        simulationTime * rock.spinRate,
-      ),
+  function getFadedRockScaleToRef(rock, fade, target) {
+    const amount = lerp(fadeMinScale, 1, fade);
+    return target.copyFrom(rock.scale).scaleInPlace(amount);
+  }
+
+  function getRockDisplayRotationToRef(rock, target) {
+    return getDisplayRotationToRef(
+      rock.rotation,
+      rock.spinAxis,
+      rock.spinRate,
+      target,
     );
+  }
+
+  function getRetiringRockDisplayRotationToRef(rock, target) {
+    return getDisplayRotationToRef(
+      rock.rotation,
+      rock.spinAxis,
+      rock.spinRate,
+      target,
+    );
+  }
+
+  function getDisplayRotationToRef(base, axis, spinRate, target) {
+    B.Quaternion.RotationAxisToRef(
+      axis,
+      simulationTime * spinRate,
+      scratchAxisRotation,
+    );
+    return base.multiplyToRef(scratchAxisRotation, target);
   }
 
   function resolveRocksAgainstPlayer(seconds) {
@@ -627,7 +791,10 @@ function createRockField(scene, field) {
   function extractAsteroidAtIndex(index) {
     const rock = rocks[index];
     const position = getRockPositionToRef(rock, scratchRockPosition).clone();
-    const displayRotation = getRockDisplayRotation(rock).clone();
+    const displayRotation = getRockDisplayRotationToRef(
+      rock,
+      scratchDisplayRotation,
+    ).clone();
     rocks.splice(index, 1);
     return {
       sourceMesh: groups[rock.material],
@@ -643,6 +810,7 @@ function createRockField(scene, field) {
   }
 
   function createRelativeOrbitalVelocity(random) {
+    const velocity = createBackwardDriftVelocity();
     if (random() < coOrbitFraction) {
       const speed = lerp(
         relativeDriftSpeed * 0.18,
@@ -650,8 +818,8 @@ function createRockField(scene, field) {
         random() ** 1.8,
       );
       const shearDirection = random() < 0.5 ? -1 : 1;
-      return flowDirection
-        .scale(speed * shearDirection)
+      return velocity
+        .addInPlace(flowDirection.scale(speed * shearDirection))
         .addInPlace(orbitRadial.scale(speed * lerp(-0.12, 0.12, random())))
         .addInPlace(orbitNormal.scale(speed * lerp(-0.08, 0.08, random())));
     }
@@ -664,10 +832,14 @@ function createRockField(scene, field) {
     // cross the observer's path with stronger radial and vertical components.
     // No sinusoidal reversal, so rocks drift like real neighboring orbits
     // instead of bobbing back and forth.
-    return flowDirection
-      .scale(speed * shearDirection)
+    return velocity
+      .addInPlace(flowDirection.scale(speed * shearDirection * 0.22))
       .addInPlace(orbitRadial.scale(speed * lerp(-0.65, 0.65, random())))
       .addInPlace(orbitNormal.scale(speed * lerp(-0.42, 0.42, random())));
+  }
+
+  function createBackwardDriftVelocity() {
+    return flowDirection.scale(-backwardDriftSpeed);
   }
 }
 
@@ -1236,8 +1408,15 @@ function pushInstance(
   color,
   alpha,
 ) {
-  const matrix = B.Matrix.Compose(scale, rotation, position);
-  matrix.copyToArray(matrixTarget, matrixTarget.length);
+  if (typeof B.Matrix.ComposeToRef === "function") {
+    B.Matrix.ComposeToRef(scale, rotation, position, INSTANCE_MATRIX);
+    INSTANCE_MATRIX.copyToArray(matrixTarget, matrixTarget.length);
+  } else {
+    B.Matrix.Compose(scale, rotation, position).copyToArray(
+      matrixTarget,
+      matrixTarget.length,
+    );
+  }
   colorTarget.push(
     finiteColorComponent(color?.[0], 1),
     finiteColorComponent(color?.[1], 1),

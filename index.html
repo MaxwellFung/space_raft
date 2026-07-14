@@ -79,11 +79,13 @@
       body.menu-open .metrics,
       body.menu-open .crosshair,
       body.menu-open .quick-access,
+      body.menu-open .inventory-toast-layer,
       body.game-loading .hud,
       body.game-loading .vitals,
       body.game-loading .metrics,
       body.game-loading .crosshair,
-      body.game-loading .quick-access {
+      body.game-loading .quick-access,
+      body.game-loading .inventory-toast-layer {
         visibility: hidden;
       }
 
@@ -508,7 +510,7 @@
         align-content: center;
         width: 100%;
         height: 112px;
-        padding: 10px 12px;
+        padding: 8px 9px;
         border: 2px solid rgba(36, 26, 24, 0.92);
         border-radius: 0;
         background: rgba(55, 38, 30, 0.82);
@@ -562,7 +564,7 @@
       }
 
       .vital-status-title {
-        font-size: 11px;
+        font-size: 10px;
         letter-spacing: 0.04em;
         text-transform: uppercase;
       }
@@ -570,13 +572,13 @@
       .vital-status-value {
         margin-top: 5px;
         color: #fff8dd;
-        font-size: 17px;
+        font-size: 15px;
         font-weight: 900;
       }
 
       .vital-status-detail {
         margin-top: 5px;
-        font-size: 11px;
+        font-size: 10px;
         font-weight: 800;
       }
 
@@ -630,13 +632,15 @@
       }
 
       .vitals {
-        --vital-stack-width: calc(42px + 6px + 315px);
+        --vital-stack-width: 363px;
+        --vital-grid-gap: 6px;
+        --vital-tile-width: 117px;
         position: fixed;
         left: 17px;
         bottom: 17px;
         display: grid;
-        grid-template-columns: repeat(2, 178.5px);
-        gap: 6px;
+        grid-template-columns: repeat(3, var(--vital-tile-width));
+        gap: var(--vital-grid-gap);
         color: rgba(238, 245, 255, 0.82);
         font-size: 13px;
         pointer-events: none;
@@ -837,8 +841,8 @@
       }
 
       .slot-portrait {
-        width: 36px;
-        height: 36px;
+        width: 40px;
+        height: 40px;
         object-fit: contain;
         pointer-events: none;
       }
@@ -891,6 +895,69 @@
 
       .interaction-prompt[hidden] {
         display: none;
+      }
+
+      .inventory-toast-layer {
+        position: fixed;
+        left: 50%;
+        bottom: 116px;
+        display: grid;
+        gap: 5px;
+        justify-items: center;
+        transform: translateX(-50%);
+        pointer-events: none;
+        user-select: none;
+        z-index: 5;
+      }
+
+      .inventory-toast {
+        display: inline-grid;
+        grid-template-columns: auto 24px;
+        gap: 8px;
+        align-items: center;
+        min-width: 138px;
+        border: 1px solid rgba(224, 242, 255, 0.18);
+        border-radius: 4px;
+        background: rgba(3, 7, 12, 0.68);
+        color: rgba(238, 248, 255, 0.9);
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1;
+        padding: 6px 8px 6px 10px;
+        text-align: left;
+        animation: inventory-toast-enter 180ms ease-out both;
+      }
+
+      .inventory-toast.leaving {
+        animation: inventory-toast-leave 420ms ease-in both;
+      }
+
+      .inventory-toast-icon {
+        width: 24px;
+        height: 24px;
+        object-fit: contain;
+      }
+
+      @keyframes inventory-toast-enter {
+        from {
+          opacity: 0;
+          transform: translateY(5px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes inventory-toast-leave {
+        from {
+          opacity: 1;
+          transform: translateY(0);
+        }
+        to {
+          opacity: 0;
+          transform: translateY(-6px);
+        }
       }
 
       .modal-backdrop {
@@ -952,7 +1019,10 @@
       }
 
       .fabricator-modal {
-        width: min(430px, calc(100vw - 32px));
+        width: min(640px, calc(100vw - 32px));
+        border-color: #4e3218;
+        background: #80613a;
+        box-shadow: 0 14px 28px rgba(0, 0, 0, 0.28);
       }
 
       .battery-modal {
@@ -1002,27 +1072,424 @@
       }
 
       .fabricator-panel {
+        padding: 6px;
+      }
+
+      .fabricator-title {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+      }
+
+      .fabricator-workbench {
+        display: grid;
+        grid-template-columns: minmax(240px, 1fr) minmax(210px, 0.95fr);
+        gap: 6px;
+        align-items: start;
+      }
+
+      .fabricator-workbench.craft-mode {
+        grid-template-columns: 110px minmax(220px, 1fr) minmax(210px, 0.95fr);
+      }
+
+      .fabricator-workbench.disassembly-mode {
+        grid-template-columns: minmax(260px, 380px);
+      }
+
+      .fabricator-category-rail,
+      .fabricator-craft-items-panel,
+      .fabricator-craft-items,
+      .fabricator-detail {
+        border: 2px solid #4e3218;
+        border-radius: 3px;
+        background: #927044;
+        box-shadow: none;
+      }
+
+      .fabricator-section-title {
+        margin: 0;
+        color: #261505;
+        font-size: 11px;
+        font-weight: 900;
+        letter-spacing: 0.05em;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+
+      .fabricator-subsection-title {
+        margin: 0;
+        color: #321d08;
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: 0.04em;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+
+      .fabricator-category-button,
+      .fabricator-craft-button {
+        border: 2px solid #57391d;
+        border-radius: 3px;
+        background: #b48b50;
+        color: #2b1705;
+        cursor: pointer;
+        font: inherit;
+        box-shadow: none;
+      }
+
+      .fabricator-category-button {
+        display: grid;
+        grid-template-columns: 30px 1fr;
+        gap: 5px;
+        align-items: center;
+        width: 94px;
+        height: 42px;
+        padding: 0 6px;
+      }
+
+      .fabricator-category-button.active,
+      .fabricator-craft-button.active {
+        border-color: #3b240e;
+        background: #d0aa68;
+        color: #1d1004;
+      }
+
+      .fabricator-category-button:focus-visible,
+      .fabricator-craft-button:focus-visible,
+      .fabricator-disassemble:focus-visible {
+        outline: 2px solid rgba(255, 230, 147, 0.68);
+        outline-offset: 1px;
+      }
+
+      .fabricator-icon {
+        display: block;
+        width: 28px;
+        height: 28px;
+        fill: currentColor;
+        stroke: currentColor;
+        stroke-width: 4;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .fabricator-category-rail {
         display: grid;
         gap: 6px;
         padding: 6px;
       }
 
-      .fabricator-title {
+      .fabricator-category-rail[hidden] {
+        display: none;
+      }
+
+      .fabricator-category-label {
+        color: currentColor;
+        font-size: 8px;
+        font-weight: 900;
+        letter-spacing: 0;
+        line-height: 1;
+        overflow: hidden;
+        text-align: left;
+        text-overflow: ellipsis;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .fabricator-craft-items-panel {
+        display: grid;
+        gap: 6px;
+        min-height: 226px;
+        padding: 8px;
+      }
+
+      .fabricator-craft-items-panel[hidden] {
+        display: none;
+      }
+
+      .fabricator-craft-items {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 6px;
+        min-height: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        box-shadow: none;
+      }
+
+      .fabricator-craft-button {
+        display: grid;
+        grid-template-columns: 44px 1fr;
+        gap: 8px;
+        align-items: center;
+        width: 100%;
+        min-height: 58px;
+        padding: 6px;
+        text-align: left;
+      }
+
+      .fabricator-craft-icon {
+        width: 36px;
+        height: 36px;
+        object-fit: contain;
+      }
+
+      .fabricator-craft-copy {
+        display: grid;
+        gap: 3px;
+        min-width: 0;
+      }
+
+      .fabricator-craft-name,
+      .fabricator-selected-copy strong {
+        color: #2b1908;
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: 0.03em;
+        line-height: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .fabricator-craft-description,
+      .fabricator-selected-copy p {
         margin: 0;
-        border: 2px solid var(--metal-edge-dark);
+        color: #3f270e;
+        font-size: 10px;
+        font-weight: 800;
+        line-height: 1.18;
+      }
+
+      .fabricator-detail {
+        display: grid;
+        gap: 8px;
+        min-height: 226px;
+        padding: 8px;
+      }
+
+      .fabricator-workbench.disassembly-mode .fabricator-detail {
+        min-height: 0;
+      }
+
+      .fabricator-selected-icon {
+        display: grid;
+        width: 58px;
+        height: 58px;
+        place-items: center;
+        border: 2px solid #57391d;
         border-radius: 3px;
-        background: var(--metal-inset);
-        color: var(--metal-text);
-        box-shadow:
-          inset 2px 2px 0 rgba(4, 6, 10, 0.48),
-          inset -1px -1px 0 rgba(255, 228, 156, 0.18);
+        background: #b48b50;
+        color: #2b1705;
+      }
+
+      .fabricator-selected-icon .fabricator-icon,
+      .fabricator-selected-icon img {
+        width: 42px;
+        height: 42px;
+        object-fit: contain;
+      }
+
+      .fabricator-selected-copy {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+
+      .fabricator-selected-copy p {
+        color: #3f270e;
+      }
+
+      .fabricator-requirements {
+        display: grid;
+        gap: 4px;
+      }
+
+      .fabricator-output-panel {
+        display: grid;
+        gap: 5px;
+      }
+
+      .fabricator-output-panel[hidden] {
+        display: none;
+      }
+
+      .fabricator-output-list {
+        display: grid;
+        gap: 4px;
+      }
+
+      .fabricator-output-row {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) auto;
+        gap: 6px;
+        align-items: center;
+        min-height: 36px;
+        border: 1px solid #5f4d22;
+        border-radius: 2px;
+        background: #9e874c;
+        padding: 4px 7px 4px 5px;
+      }
+
+      .fabricator-output-icon {
+        display: grid;
+        width: 30px;
+        height: 30px;
+        place-items: center;
+      }
+
+      .fabricator-output-icon img {
+        width: 28px;
+        height: 28px;
+        object-fit: contain;
+      }
+
+      .fabricator-output-name,
+      .fabricator-output-empty {
+        color: #2b1908;
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: 0.02em;
+        line-height: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .fabricator-output-count {
+        color: #241404;
         font-size: 18px;
         font-weight: 900;
-        letter-spacing: 0.08em;
         line-height: 1;
-        padding: 14px 16px 12px;
+      }
+
+      .fabricator-output-empty {
+        min-height: 32px;
+        border: 1px solid #684520;
+        border-radius: 2px;
+        background: #a77f49;
+        display: grid;
+        place-items: center;
+        padding: 5px;
         text-align: center;
+      }
+
+      .fabricator-requirement {
+        display: grid;
+        grid-template-columns: minmax(34px, auto) 1fr 24px;
+        gap: 6px;
+        align-items: center;
+        min-height: 36px;
+        border: 1px solid #684520;
+        border-radius: 2px;
+        background: #a77f49;
+        padding: 4px 5px;
+      }
+
+      .fabricator-requirement.missing {
+        background: #aa6041;
+        color: #2a1206;
+      }
+
+      .fabricator-requirement.output {
+        background: #9e874c;
+      }
+
+      .fabricator-requirement-icon {
+        display: flex;
+        width: max-content;
+        min-width: 30px;
+        height: 30px;
+        align-items: center;
+        gap: 4px;
+        place-items: center;
+      }
+
+      .fabricator-requirement-icon img,
+      .fabricator-requirement-icon .fabricator-icon {
+        flex: 0 0 auto;
+        width: 28px;
+        height: 28px;
+        object-fit: contain;
+      }
+
+      .fabricator-requirement-rate {
+        color: rgba(36, 20, 4, 0.78);
+        font-size: 8px;
+        font-weight: 900;
+        letter-spacing: 0.02em;
+        line-height: 1;
+        white-space: nowrap;
+      }
+
+      .fabricator-requirement-count {
+        color: #241404;
+        font-size: 18px;
+        font-weight: 900;
+        line-height: 1;
+        text-align: right;
+      }
+
+      .fabricator-requirement-status {
+        display: grid;
+        width: 20px;
+        height: 20px;
+        place-items: center;
+        border-radius: 50%;
+        background: #486f32;
+        color: #f2ffd9;
+        font-size: 13px;
+        font-weight: 900;
+        line-height: 1;
+      }
+
+      .fabricator-requirement.missing .fabricator-requirement-status {
+        background: #7d2818;
+        color: #ffe4d8;
+      }
+
+      .fabricator-status {
+        min-height: 15px;
+        color: #2f1b08;
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: 0.04em;
+        line-height: 1.2;
         text-transform: uppercase;
+      }
+
+      .fabricator-energy-bar {
+        position: relative;
+        height: 18px;
+        border: 1px solid #57391d;
+        border-radius: 3px;
+        background: #6e4b27;
+        box-shadow: none;
+        overflow: hidden;
+      }
+
+      .fabricator-energy-fill {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: var(--energy-fill, 0%);
+        background: #ffd64d;
+        box-shadow: none;
+      }
+
+      .fabricator-energy-label {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: #1d1004;
+        font-size: 10px;
+        font-weight: 900;
+        line-height: 1;
+        text-shadow: none;
       }
 
       .fabricator-analysis {
@@ -1041,27 +1508,29 @@
       .fabricator-mode-toggle {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 4px;
+        gap: 6px;
+        margin-bottom: 6px;
       }
 
       .fabricator-mode-button {
-        min-height: 34px;
-        border: 1px solid rgba(139, 118, 84, 0.5);
+        min-height: 36px;
+        border: 2px solid #57391d;
         border-radius: 3px;
-        background: #2b241b;
-        color: var(--metal-muted);
+        background: #a67d47;
+        color: #2b1705;
         cursor: pointer;
         font: inherit;
         font-size: 10px;
         font-weight: 900;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.04em;
+        box-shadow: none;
         text-transform: uppercase;
       }
 
       .fabricator-mode-button.active {
-        border-color: var(--metal-edge);
-        background: #5b4225;
-        color: var(--metal-text);
+        border-color: #3b240e;
+        background: #d0aa68;
+        color: #1d1004;
       }
 
       .fabricator-status {
@@ -1132,10 +1601,10 @@
         position: relative;
         height: 24px;
         margin-top: 5px;
-        border: 1px solid rgba(244, 210, 93, 0.56);
+        border: 1px solid #57391d;
         border-radius: 3px;
-        background: rgba(4, 6, 10, 0.58);
-        box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.42);
+        background: #6e4b27;
+        box-shadow: none;
         overflow: hidden;
       }
 
@@ -1143,8 +1612,8 @@
         position: absolute;
         inset: 0 auto 0 0;
         width: var(--energy-fill, 0%);
-        background: linear-gradient(90deg, #8c620e, #ffd64d 58%, #fff3a8);
-        box-shadow: 0 0 12px rgba(255, 209, 64, 0.34);
+        background: #ffd64d;
+        box-shadow: none;
       }
 
       .fabricator-energy-label {
@@ -1199,33 +1668,36 @@
       }
 
       .fabricator-disassemble {
+        display: inline-grid;
+        grid-template-columns: 22px auto;
+        gap: 8px;
+        align-items: center;
+        justify-content: center;
         width: 100%;
-        min-height: 92px;
-        border: 2px solid var(--metal-edge);
+        min-height: 42px;
+        border: 2px solid #6f321d;
         border-radius: 3px;
-        background: var(--metal-active);
-        color: var(--metal-text);
-        box-shadow:
-          inset 0 1px 0 rgba(255, 247, 205, 0.42),
-          inset 0 -3px 0 rgba(19, 17, 15, 0.36),
-          inset 0 0 22px rgba(255, 219, 128, 0.12);
+        background: #bd5f3d;
+        color: #f9dfaa;
+        box-shadow: none;
         cursor: pointer;
         font: inherit;
-        font-size: 24px;
+        font-size: 13px;
         font-weight: 900;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.04em;
         text-transform: uppercase;
+      }
+
+      .fabricator-disassemble .fabricator-icon {
+        width: 22px;
+        height: 22px;
       }
 
       .fabricator-disassemble:hover,
       .fabricator-disassemble:focus-visible {
         outline: none;
-        background: var(--metal-hover);
-        box-shadow:
-          inset 0 1px 0 rgba(255, 247, 205, 0.46),
-          inset 0 -3px 0 rgba(19, 17, 15, 0.34),
-          0 0 0 1px rgba(216, 180, 92, 0.38),
-          0 0 18px rgba(255, 190, 93, 0.18);
+        background: #d1744f;
+        box-shadow: none;
       }
 
       .fabricator-disassemble:disabled {
@@ -1236,6 +1708,67 @@
 
       .fabricator-disassemble.activated {
         animation: fabricator-press 220ms ease-out;
+      }
+
+      .fabricator-detail .fabricator-status {
+        min-height: 15px;
+        color: #2f1b08;
+        font-size: 10px;
+        letter-spacing: 0.04em;
+        line-height: 1.2;
+      }
+
+      .fabricator-detail .fabricator-energy-bar {
+        height: 18px;
+        margin-top: 0;
+      }
+
+      .fabricator-detail .fabricator-energy-label {
+        font-size: 10px;
+      }
+
+      .oxygen-generator-modal {
+        width: min(560px, calc(100vw - 32px));
+      }
+
+      .oxygen-generator-workbench {
+        grid-template-columns: minmax(260px, 1fr);
+      }
+
+      .oxygen-generator-tanks {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .oxygen-generator-tank {
+        display: grid;
+        gap: 5px;
+        min-width: 0;
+        border: 1px solid #684520;
+        border-radius: 2px;
+        background: #a77f49;
+        padding: 6px;
+      }
+
+      .oxygen-generator-tank strong {
+        color: #2b1908;
+        font-size: 10px;
+        font-weight: 900;
+        letter-spacing: 0.04em;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+
+      .oxygen-generator-tank .fabricator-energy-bar {
+        height: 16px;
+      }
+
+      .oxygen-generator-output-value {
+        max-width: 130px;
+        font-size: 11px;
+        text-align: right;
+        white-space: normal;
       }
 
       .hatch-warning-modal {
@@ -1558,6 +2091,7 @@
       <span>Click + mouse look</span>
     </div>
     <div class="vitals" aria-label="Vitals"></div>
+    <div id="inventory-toast-layer" class="inventory-toast-layer"></div>
     <div id="interaction-prompt" class="interaction-prompt" hidden></div>
     <div class="quick-access" aria-label="Quick access">
       <div id="hotbar" class="hotbar" aria-label="Hotbar"></div>
@@ -1594,74 +2128,214 @@
           <h2 id="fabricator-title" class="fabricator-title">Fabricator</h2>
           <div class="fabricator-mode-toggle" aria-label="Fabricator mode">
             <button
-              id="fabricator-mode-disassembly"
-              class="fabricator-mode-button active"
-              type="button"
-            >
-              Disassembly
-            </button>
-            <button
               id="fabricator-mode-fabrication"
               class="fabricator-mode-button"
               type="button"
             >
-              Fabrication
+              Craft
+            </button>
+            <button
+              id="fabricator-mode-disassembly"
+              class="fabricator-mode-button active"
+              type="button"
+            >
+              Disassemble
             </button>
           </div>
-          <div class="fabricator-analysis" aria-live="polite">
-            <div
-              id="fabricator-analysis-status"
-              class="fabricator-status"
+          <div class="fabricator-workbench disassembly-mode">
+            <nav
+              id="fabricator-categories"
+              class="fabricator-category-rail"
+              aria-label="Fabricator categories"
+              hidden
             >
-              No asteroid loaded
-            </div>
-            <div class="fabricator-yield" aria-label="Processing yield">
-              <div class="fabricator-yield-item">
-                <strong>Iron</strong>
-                <span id="fabricator-yield-iron">-</span>
+              <h3 class="fabricator-section-title">Sections</h3>
+            </nav>
+            <section class="fabricator-craft-items-panel" hidden>
+              <h3
+                id="fabricator-items-title"
+                class="fabricator-section-title"
+              >
+                Craftables
+              </h3>
+              <div
+                id="fabricator-recipes"
+                class="fabricator-craft-items"
+                aria-label="Fabricator craftables"
+              ></div>
+            </section>
+            <div class="fabricator-detail" aria-live="polite">
+              <h3 class="fabricator-section-title">Details</h3>
+              <div
+                id="fabricator-selected-icon"
+                class="fabricator-selected-icon"
+                aria-hidden="true"
+              ></div>
+              <div class="fabricator-selected-copy">
+                <strong id="fabricator-selected-name"></strong>
+                <p id="fabricator-selected-description"></p>
               </div>
-              <div class="fabricator-yield-item">
-                <strong>Copper</strong>
-                <span id="fabricator-yield-copper">-</span>
-              </div>
-              <div class="fabricator-yield-item">
-                <strong>Water</strong>
-                <span id="fabricator-yield-water">-</span>
-              </div>
-            </div>
-            <div class="fabricator-energy-row">
-              <div class="fabricator-energy-card">
-                Energy
+              <h4 class="fabricator-subsection-title">Requires</h4>
+              <div
+                id="fabricator-requirements"
+                class="fabricator-requirements"
+                aria-label="Fabricator requirements"
+              ></div>
+              <section
+                id="fabricator-output-panel"
+                class="fabricator-output-panel"
+                aria-label="Materials gained"
+              >
+                <h4 class="fabricator-subsection-title">Materials Gained</h4>
                 <div
-                  id="fabricator-energy-bar"
-                  class="fabricator-energy-bar"
+                  id="fabricator-output-list"
+                  class="fabricator-output-list"
                 >
-                  <div class="fabricator-energy-fill"></div>
-                  <span
-                    id="fabricator-energy-value"
-                    class="fabricator-energy-label"
-                  >-</span>
+                  <div class="fabricator-output-empty">No asteroid loaded</div>
+                </div>
+              </section>
+              <div
+                id="fabricator-energy-bar"
+                class="fabricator-energy-bar"
+              >
+                <div class="fabricator-energy-fill"></div>
+                <span
+                  id="fabricator-energy-value"
+                  class="fabricator-energy-label"
+                >-</span>
+              </div>
+              <div
+                id="fabricator-analysis-status"
+                class="fabricator-status"
+              ></div>
+              <button
+                id="fabricator-disassemble-button"
+                class="fabricator-disassemble"
+                type="button"
+                aria-label="Disassemble loaded asteroid"
+              >
+                Disassemble
+              </button>
+            </div>
+          </div>
+        </section>
+      </section>
+    </div>
+    <div
+      id="oxygen-generator-modal"
+      class="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="oxygen-generator-title"
+      hidden
+    >
+      <section class="space-modal inventory-modal fabricator-modal oxygen-generator-modal">
+        <section class="fabricator-panel">
+          <h2 id="oxygen-generator-title" class="fabricator-title">
+            Oxygen Generator
+          </h2>
+          <div class="fabricator-workbench oxygen-generator-workbench">
+            <div class="fabricator-detail" aria-live="polite">
+              <h3 class="fabricator-section-title">Oxygen Generator</h3>
+              <div class="fabricator-selected-icon" aria-hidden="true">
+                <svg class="fabricator-icon" viewBox="0 0 64 64">
+                  <path d="M17 13h30v38H17Z"></path>
+                  <path d="M24 21h16M24 31h16M24 41h8"></path>
+                  <path
+                    d="M44 18c6 7 9 12 9 19a9 9 0 0 1-18 0c0-7 3-12 9-19Z"
+                    fill="currentColor"
+                  ></path>
+                </svg>
+              </div>
+              <div class="fabricator-selected-copy">
+                <strong>Cabin Pressurizer</strong>
+                <p id="oxygen-generator-status"></p>
+              </div>
+              <div class="oxygen-generator-tanks">
+                <div class="oxygen-generator-tank">
+                  <strong>Water</strong>
+                  <div
+                    id="oxygen-generator-water-bar"
+                    class="fabricator-energy-bar"
+                  >
+                    <div class="fabricator-energy-fill"></div>
+                    <span
+                      id="oxygen-generator-water-value"
+                      class="fabricator-energy-label"
+                    >0/100 L</span>
+                  </div>
+                </div>
+                <div class="oxygen-generator-tank">
+                  <strong>Hydrogen</strong>
+                  <div
+                    id="oxygen-generator-hydrogen-bar"
+                    class="fabricator-energy-bar"
+                  >
+                    <div class="fabricator-energy-fill"></div>
+                    <span
+                      id="oxygen-generator-hydrogen-value"
+                      class="fabricator-energy-label"
+                    >0/100 L</span>
+                  </div>
+                </div>
+                <div class="oxygen-generator-tank">
+                  <strong>Oxygen Store</strong>
+                  <div
+                    id="oxygen-generator-oxygen-bar"
+                    class="fabricator-energy-bar"
+                  >
+                    <div class="fabricator-energy-fill"></div>
+                    <span
+                      id="oxygen-generator-oxygen-value"
+                      class="fabricator-energy-label"
+                    >0/100 L</span>
+                  </div>
+                </div>
+                <div class="oxygen-generator-tank">
+                  <strong>Cabin Pressure</strong>
+                  <div
+                    id="oxygen-generator-pressure-bar"
+                    class="fabricator-energy-bar"
+                  >
+                    <div class="fabricator-energy-fill"></div>
+                    <span
+                      id="oxygen-generator-pressure-value"
+                      class="fabricator-energy-label"
+                    >0/100 kPa</span>
+                  </div>
+                </div>
+                <div class="oxygen-generator-tank">
+                  <strong>Battery</strong>
+                  <div
+                    id="oxygen-generator-energy-bar"
+                    class="fabricator-energy-bar"
+                  >
+                    <div class="fabricator-energy-fill"></div>
+                    <span
+                      id="oxygen-generator-energy-value"
+                      class="fabricator-energy-label"
+                    >No battery</span>
+                  </div>
                 </div>
               </div>
-              <div class="fabricator-energy-card">
-                Cost
-                <span id="fabricator-energy-cost">-</span>
-              </div>
+              <h4 class="fabricator-subsection-title">Requires</h4>
+              <div
+                id="oxygen-generator-requirements"
+                class="fabricator-requirements"
+                aria-label="Oxygen generator requirements"
+              ></div>
+              <section
+                class="fabricator-output-panel"
+                aria-label="Oxygen generator output"
+              >
+                <h4 class="fabricator-subsection-title">Output</h4>
+                <div
+                  id="oxygen-generator-output-list"
+                  class="fabricator-output-list"
+                ></div>
+              </section>
             </div>
-            <div
-              id="fabricator-recipes"
-              class="fabricator-recipes"
-              aria-label="Fabricator recipes"
-              hidden
-            ></div>
           </div>
-          <button
-            id="fabricator-disassemble-button"
-            class="fabricator-disassemble"
-            type="button"
-          >
-            Disassemble
-          </button>
         </section>
       </section>
     </div>

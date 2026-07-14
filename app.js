@@ -1,9 +1,7 @@
 import baseBrownDwarfLevel from "./levels/brown_dwarf/level.js";
-import {
-  createGlbModelPortrait,
-  createMeshModelPortrait,
-} from "./src/model-preview.js";
+import { createGlbModelPortrait } from "./src/model-preview.js";
 import { buildLevel } from "./src/level-system.js";
+import { createItemPortrait } from "./src/item-portraits.js";
 import { applySaveToLevel, loadSaveFile } from "./src/save-system.js";
 import {
   addPolySurfaceHolograms,
@@ -25,6 +23,7 @@ const hotbar = document.querySelector("#hotbar");
 const inventoryModal = document.querySelector("#inventory-modal");
 const notebookModal = document.querySelector("#notebook-modal");
 const fabricatorModal = document.querySelector("#fabricator-modal");
+const oxygenGeneratorModal = document.querySelector("#oxygen-generator-modal");
 const batteryModal = document.querySelector("#battery-modal");
 const batteryEnergyValue = document.querySelector("#battery-energy-value");
 const batteryEnergyFill = document.querySelector("#battery-energy-fill");
@@ -44,32 +43,90 @@ const fabricatorModeFabricationButton = document.querySelector(
 const fabricatorAnalysisStatus = document.querySelector(
   "#fabricator-analysis-status",
 );
-const fabricatorYieldIron = document.querySelector("#fabricator-yield-iron");
-const fabricatorYieldCopper = document.querySelector(
-  "#fabricator-yield-copper",
-);
-const fabricatorYieldWater = document.querySelector("#fabricator-yield-water");
 const fabricatorEnergyValue = document.querySelector(
   "#fabricator-energy-value",
 );
 const fabricatorEnergyBar = document.querySelector("#fabricator-energy-bar");
-const fabricatorEnergyCost = document.querySelector("#fabricator-energy-cost");
 const fabricatorRecipesPanel = document.querySelector("#fabricator-recipes");
+const fabricatorWorkbench = document.querySelector(".fabricator-workbench");
+const fabricatorCategoriesPanel = document.querySelector(
+  "#fabricator-categories",
+);
+const fabricatorCraftItemsPanel = document.querySelector(
+  ".fabricator-craft-items-panel",
+);
+const fabricatorSelectedIcon = document.querySelector(
+  "#fabricator-selected-icon",
+);
+const fabricatorSelectedName = document.querySelector(
+  "#fabricator-selected-name",
+);
+const fabricatorSelectedDescription = document.querySelector(
+  "#fabricator-selected-description",
+);
+const fabricatorRequirementsPanel = document.querySelector(
+  "#fabricator-requirements",
+);
+const fabricatorOutputPanel = document.querySelector(
+  "#fabricator-output-panel",
+);
+const fabricatorOutputList = document.querySelector("#fabricator-output-list");
+const oxygenGeneratorWaterValue = document.querySelector(
+  "#oxygen-generator-water-value",
+);
+const oxygenGeneratorWaterBar = document.querySelector(
+  "#oxygen-generator-water-bar",
+);
+const oxygenGeneratorHydrogenValue = document.querySelector(
+  "#oxygen-generator-hydrogen-value",
+);
+const oxygenGeneratorHydrogenBar = document.querySelector(
+  "#oxygen-generator-hydrogen-bar",
+);
+const oxygenGeneratorOxygenValue = document.querySelector(
+  "#oxygen-generator-oxygen-value",
+);
+const oxygenGeneratorOxygenBar = document.querySelector(
+  "#oxygen-generator-oxygen-bar",
+);
+const oxygenGeneratorPressureValue = document.querySelector(
+  "#oxygen-generator-pressure-value",
+);
+const oxygenGeneratorPressureBar = document.querySelector(
+  "#oxygen-generator-pressure-bar",
+);
+const oxygenGeneratorEnergyValue = document.querySelector(
+  "#oxygen-generator-energy-value",
+);
+const oxygenGeneratorEnergyBar = document.querySelector(
+  "#oxygen-generator-energy-bar",
+);
+const oxygenGeneratorStatus = document.querySelector("#oxygen-generator-status");
+const oxygenGeneratorRequirements = document.querySelector(
+  "#oxygen-generator-requirements",
+);
+const oxygenGeneratorOutputList = document.querySelector(
+  "#oxygen-generator-output-list",
+);
 const inventoryGrid = document.querySelector(".inventory-grid");
 const modalHotbar = document.querySelector(".modal-hotbar");
 const clothingGrid = document.querySelector(".clothing-grid");
 const notebookTabs = document.querySelector(".notebook-tabs");
 const notebookCopy = document.querySelector(".notebook-copy");
 const interactionPrompt = document.querySelector("#interaction-prompt");
+const inventoryToastLayer = document.querySelector("#inventory-toast-layer");
 const backgroundMusic = createBackgroundMusic("./background.mp3");
 const BASE_MOUSE_SENSIBILITY = 2600;
 const GLB_PICKUP_PROMPT_RANGE = 1.8;
+const INTERACTION_UPDATE_SECONDS = 0.08;
+const PLACEMENT_UPDATE_SECONDS = 0.05;
 const MENU_STAR_DOME_RADIUS = 900;
 const PLACEMENT_RANGE = 3.2;
 const PLACEMENT_PADDING = 0.035;
 const ASTEROID_PICKUP_RANGE = 2.8;
 const ASTEROID_PHYSICS_ACTIVATION_RANGE = 7.5;
 const ASTEROID_PHYSICS_ACTIVATION_LIMIT = 12;
+const ASTEROID_PHYSICS_ACTIVATION_SECONDS = 0.2;
 const FABRICATOR_ASTEROID_MAX_RADIUS = 0.22;
 const FABRICATOR_ASTEROID_BOTTOM_CLEARANCE = 0.1;
 const FABRICATOR_ASTEROID_FORWARD_OFFSET = 0.06;
@@ -82,17 +139,24 @@ const FABRICATOR_LASER_NUB_Y_OFFSET = 0.012;
 const FABRICATOR_PRINT_LAYER_COUNT = 48;
 const FABRICATOR_PRINT_LINES_PER_LAYER = 18;
 const FABRICATOR_TRACE_RING_POINTS = 80;
-const FABRICATOR_RESOURCE_CHUNK_SIZE = 0.052;
-const FABRICATOR_RESOURCE_CHUNK_RADIUS = 0.038;
-const FABRICATOR_RESOURCE_EJECT_SPEED = 0.72;
-const FABRICATOR_RESOURCE_EJECT_SPREAD = 0.22;
 const FABRICATOR_DISASSEMBLY_ENERGY_COST = 12;
 const FABRICATOR_RESOURCE_STACK_LIMIT = 16;
-const BATTERY_DEFAULT_ENERGY = 120;
-const BATTERY_MAX_ENERGY = 120;
+const BATTERY_DEFAULT_ENERGY = 240;
+const BATTERY_MAX_ENERGY = 240;
+const OXYGEN_GENERATOR_WATER_CAPACITY_LITERS = 100;
+const OXYGEN_GENERATOR_HYDROGEN_CAPACITY_LITERS = 100;
+const OXYGEN_GENERATOR_OXYGEN_CAPACITY_LITERS = 100;
+const OXYGEN_GENERATOR_ICE_WATER_LITERS = 25;
+const OXYGEN_GENERATOR_WATER_LITERS_PER_SECOND = 0.625;
+const OXYGEN_GENERATOR_HYDROGEN_LITERS_PER_SECOND = 0.7;
+const OXYGEN_GENERATOR_PRESSURE_KPA_PER_SECOND = 1.25;
+const OXYGEN_GENERATOR_ENERGY_PER_SECOND = 0.08;
+const OXYGEN_GENERATOR_PRESSURIZED_MULTIPLIER = 0.1;
+const OXYGEN_GENERATOR_UPDATE_SECONDS = 0.2;
 const ASTEROID_THROW_SPEED = 0.85;
 const ASTEROID_BOUNCE_RESTITUTION = 0.68;
 const ASTEROID_COLLISION_DAMPING = 0.985;
+const ASTEROID_FIELD_STREAM_MIN_SPEED = 0.22;
 const ASTEROID_MAX_SPEED = 5.6;
 const ASTEROID_CONTACT_SKIN = 0.004;
 const ASTEROID_PLAYER_PUSH_FRACTION = 0.42;
@@ -132,6 +196,7 @@ const HELMET_OXYGEN_SECONDS_TO_EMPTY = 600;
 const HELMET_OXYGEN_LITERS_PER_SECOND =
   HELMET_OXYGEN_MAX_LITERS / HELMET_OXYGEN_SECONDS_TO_EMPTY;
 const PRESSURE_STANDARD_KPA = 100;
+const HELMET_REMOVAL_MIN_PRESSURE_KPA = PRESSURE_STANDARD_KPA;
 const PRESSURE_DAMAGE_THRESHOLD_KPA = 25;
 const PRESSURE_YELLOW_THRESHOLD_KPA = 50;
 const PRESSURE_DAMAGE_PER_SECOND = 12;
@@ -247,10 +312,22 @@ addEventListener("keydown", (event) => {
     keys.delete("KeyF");
     return;
   }
+  if (event.code === "KeyF" && activeInteraction?.type === "oxygen-generator") {
+    event.preventDefault();
+    openOxygenGeneratorModal(activeInteraction.root);
+    keys.delete("KeyF");
+    return;
+  }
   if (event.code === "KeyF" && activeInteraction?.type === "battery") {
     event.preventDefault();
     showBatteryEnergy(activeInteraction);
     keys.delete("KeyF");
+    return;
+  }
+  if (event.code === "KeyG" && activeInteraction?.type === "oxygen-generator") {
+    event.preventDefault();
+    loadSelectedIceIntoOxygenGenerator(activeInteraction.root);
+    keys.delete("KeyG");
     return;
   }
   if (event.code === "Escape" && isUiModalOpen()) {
@@ -268,6 +345,12 @@ addEventListener("keydown", (event) => {
   }
   if (isUiModalOpen()) {
     if (movementKeys.has(event.code)) event.preventDefault();
+    return;
+  }
+  if (event.code === "KeyR" && getSelectedPlaceableItem()) {
+    event.preventDefault();
+    rotateSelectedFloorPlacement();
+    keys.delete("KeyR");
     return;
   }
   if (event.code === "KeyQ") {
@@ -322,6 +405,8 @@ addEventListener("keydown", (event) => {
       interactionHandled = activateHelmetHook(activeInteraction);
     } else if (activeInteraction.type === "fabricator") {
       interactionHandled = collectFabricatorInteraction(activeInteraction);
+    } else if (activeInteraction.type === "oxygen-generator") {
+      interactionHandled = collectOxygenGeneratorInteraction(activeInteraction);
     } else {
       const result = activeInteraction.activate?.();
       interactionHandled = result !== false;
@@ -341,7 +426,7 @@ const timeSpeeds = [0, 0.25, 1, 4, 16, 64];
 let timeSpeedIndex = 2;
 let flyMode = false;
 let zeroGravityMode = true;
-let toolTipsVisible = true;
+let toolTipsVisible = false;
 let selectedHotbarIndex = 0;
 let selectedNotebookPage = "objectives";
 let brownDwarfLevel = null;
@@ -393,6 +478,7 @@ let temperatureStatusText = null;
 let mouseSensitivitySlider = null;
 let mouseSensitivityValue = null;
 let activeInteraction = null;
+let transientPromptUntil = 0;
 let objectBoundsVisible = false;
 let collisionDebugVisible = false;
 let draggedInventorySlot = null;
@@ -401,12 +487,20 @@ let placementPreviewKey = "";
 let placementPreviewLoadId = 0;
 let placementState = null;
 let placementInProgress = false;
+let floorPlacementYaw = 0;
+let interactionUpdateElapsed = Number.POSITIVE_INFINITY;
+let placementUpdateElapsed = Number.POSITIVE_INFINITY;
+let asteroidPhysicsActivationElapsed = Number.POSITIVE_INFINITY;
+let oxygenGeneratorUpdateElapsed = Number.POSITIVE_INFINITY;
+let mountedHooksInitialized = false;
 let equippedHelmet = null;
 let helmetEquipInProgress = false;
 let playerTether = null;
 let playerPlaceholderRig = null;
 let heldAsteroid = null;
 let activeFabricatorRoot = null;
+let activeOxygenGeneratorRoot = null;
+let fabricatorAnalysisStaticKey = "";
 let pendingHatchInteraction = null;
 let cabinPressureAtm = CABIN_PRESSURE_INITIAL_ATM;
 let helmetOxygenLiters = HELMET_OXYGEN_MAX_LITERS;
@@ -418,23 +512,105 @@ const fabricatorBatteryWires = new Set();
 const fabricatorDisassemblyJobs = new Set();
 
 const fabricatorResourceItems = {
-  iron: { id: "iron", name: "Iron", icon: "Fe", swatch: "#a7adb1" },
-  copper: { id: "copper", name: "Copper", icon: "Cu", swatch: "#c8753e" },
-  water: { id: "water", name: "Water", icon: "H2O", swatch: "#58b9e8" },
+  iron: {
+    id: "iron",
+    name: "Iron Ingot",
+    icon: "Fe",
+    swatch: "#a7adb1",
+    portraitModelUrl: "./assets/raw_materials/iron_ingot.glb",
+    portraitRotation: [0.34, 1.56, -0.32],
+  },
+  copper: {
+    id: "copper",
+    name: "Copper Ingot",
+    icon: "Cu",
+    swatch: "#c8753e",
+    portraitModelUrl: "./assets/raw_materials/copper_ingot.glb",
+    portraitRotation: [0.34, 1.56, -0.32],
+  },
+  water: {
+    id: "water",
+    name: "Ice",
+    icon: "H2O",
+    swatch: "#58b9e8",
+    portraitModelUrl: "./assets/raw_materials/ice.glb",
+    portraitRotation: [0.12, -0.62, 0],
+  },
 };
 
+const FABRICATOR_DISASSEMBLY_ENTRY = {
+  id: "disassemble-asteroid",
+  name: "Disassemble Asteroid",
+  description: "Break the loaded asteroid into raw materials.",
+  type: "disassembly",
+  icon: "refine",
+};
+
+const fabricatorCategories = [
+  {
+    id: "vitals",
+    name: "Vitals",
+    icon: "vitals",
+    description: "Life support and cabin survival systems.",
+  },
+  {
+    id: "electricity",
+    name: "Electricity",
+    icon: "electricity",
+    description: "Power storage and generation equipment.",
+  },
+  {
+    id: "mining",
+    name: "Mining",
+    icon: "mining",
+    description: "Extraction, refining, and field tools.",
+  },
+];
+
 const fabricatorRecipes = [
-  createFabricatorRecipe("drill", "Drill", 4, 2, 18),
-  createFabricatorRecipe("airlock", "Airlock", 10, 5, 42),
-  createFabricatorRecipe("electrolizer", "Electrolizer", 5, 8, 36),
-  createFabricatorRecipe("build-tool", "Build Tool", 3, 6, 28),
-  createFabricatorRecipe("research-machine", "Research Machine", 8, 10, 54),
-  createFabricatorRecipe("solar-panel", "Solar Panel", 6, 12, 48),
-  createFabricatorRecipe("battery", "Battery", 5, 8, 30, {
+  createFabricatorRecipe("airlock", "Airlock", 5, 3, 42, {
+    category: "vitals",
+    craftIcon: "airlock",
+    description: "Seals a doorway so pressure can be managed safely.",
+  }),
+  createFabricatorRecipe("oxygen-generator", "Oxygen Generator", 3, 4, 36, {
+    category: "vitals",
+    craftIcon: "oxygen-generator",
+    description: "Splits stored water into breathable oxygen reserves.",
+    modelUrl: "./assets/oxygen_generator.glb",
+    portraitModelUrl: "./assets/oxygen_generator.glb",
+    maxSize: 0.32,
+    placementSurface: "floor",
+    stackLimit: 1,
+  }),
+  createFabricatorRecipe("battery", "Battery", 3, 4, 30, {
+    category: "electricity",
+    craftIcon: "battery",
+    description: "Stores energy for fabricators and powered systems.",
     modelUrl: "./assets/battery.glb",
     maxSize: 0.22,
     energyStored: BATTERY_DEFAULT_ENERGY,
     maxEnergy: BATTERY_MAX_ENERGY,
+  }),
+  createFabricatorRecipe("solar-panel", "Solar Panel", 3, 6, 48, {
+    category: "electricity",
+    craftIcon: "solar-panel",
+    description: "Generates charge when it can see stellar light.",
+  }),
+  createFabricatorRecipe("drill", "Drill", 2, 1, 18, {
+    category: "mining",
+    craftIcon: "drill",
+    description: "Cuts dense fragments loose for processing.",
+  }),
+  createFabricatorRecipe("build-tool", "Build Tool", 2, 3, 28, {
+    category: "mining",
+    craftIcon: "build-tool",
+    description: "Places and adjusts constructed modules.",
+  }),
+  createFabricatorRecipe("research-machine", "Research Machine", 4, 5, 54, {
+    category: "mining",
+    craftIcon: "research-machine",
+    description: "Analyzes samples and unlocks fabrication notes.",
   }),
 ];
 
@@ -517,6 +693,9 @@ function installPlayerUi() {
   fabricatorModal?.addEventListener("click", (event) => {
     if (event.target === fabricatorModal) closePlayerModals();
   });
+  oxygenGeneratorModal?.addEventListener("click", (event) => {
+    if (event.target === oxygenGeneratorModal) closePlayerModals();
+  });
   batteryModal?.addEventListener("click", (event) => {
     if (event.target === batteryModal) closePlayerModals();
   });
@@ -535,7 +714,6 @@ function installPlayerUi() {
     event.stopPropagation();
     setFabricatorMode(activeFabricatorRoot, "fabrication");
   });
-
   renderHotbars();
   renderInventoryGrid();
   renderClothingGrid();
@@ -593,6 +771,10 @@ function renderClothingGrid() {
       entry: equippedHelmet?.item ?? null,
       accepts: isHelmetItem,
       onDrop: (slot) => equipHelmetFromInventory(slot),
+      dragState: {
+        type: "equipped-helmet",
+        getEntry: () => equippedHelmet?.item ?? null,
+      },
     }),
     createClothingSlot({ label: "Suit" }),
     createClothingSlot({ label: "Gloves" }),
@@ -606,6 +788,7 @@ function createClothingSlot({
   entry = null,
   accepts = null,
   onDrop = null,
+  dragState = null,
 }) {
   const wrapper = document.createElement("div");
   wrapper.className = "clothing-slot";
@@ -619,6 +802,9 @@ function createClothingSlot({
 
   if (accepts && onDrop) {
     installClothingSlotDropHandlers(slot, accepts, onDrop);
+  }
+  if (entry && dragState) {
+    installEquippedClothingDragHandlers(slot, dragState);
   }
 
   const name = document.createElement("span");
@@ -725,7 +911,8 @@ function createItemSlot(entry, index, options = {}) {
 function installClothingSlotDropHandlers(slot, accepts, onDrop) {
   slot.addEventListener("dragover", (event) => {
     const sourceSlot = draggedInventorySlot;
-    const entry = sourceSlot?.items?.[sourceSlot.index];
+    if (sourceSlot?.type === "equipped-helmet") return;
+    const entry = getDraggedSlotEntry(sourceSlot);
     if (!entry || !accepts(entry)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
@@ -736,7 +923,8 @@ function installClothingSlotDropHandlers(slot, accepts, onDrop) {
   });
   slot.addEventListener("drop", (event) => {
     const sourceSlot = draggedInventorySlot;
-    const entry = sourceSlot?.items?.[sourceSlot.index];
+    if (sourceSlot?.type === "equipped-helmet") return;
+    const entry = getDraggedSlotEntry(sourceSlot);
     event.preventDefault();
     slot.classList.remove("drag-over");
     draggedInventorySlot = null;
@@ -745,6 +933,26 @@ function installClothingSlotDropHandlers(slot, accepts, onDrop) {
       return;
     }
     onDrop(sourceSlot);
+  });
+}
+
+function installEquippedClothingDragHandlers(slot, slotState) {
+  slot.draggable = true;
+  slot.addEventListener("dragstart", (event) => {
+    const entry = getDraggedSlotEntry(slotState);
+    if (!entry) {
+      event.preventDefault();
+      return;
+    }
+    draggedInventorySlot = slotState;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", entry.id ?? "item");
+    slot.classList.add("dragging");
+  });
+  slot.addEventListener("dragend", () => {
+    draggedInventorySlot = null;
+    slot.classList.remove("dragging");
+    slot.classList.remove("drag-over");
   });
 }
 
@@ -785,6 +993,10 @@ function moveInventorySlot(targetSlot) {
   const sourceSlot = draggedInventorySlot;
   draggedInventorySlot = null;
   if (!sourceSlot) return;
+  if (sourceSlot.type === "equipped-helmet") {
+    moveEquippedHelmetToSlot(targetSlot);
+    return;
+  }
   if (
     sourceSlot.items === targetSlot.items &&
     sourceSlot.index === targetSlot.index
@@ -821,6 +1033,51 @@ function moveInventorySlot(targetSlot) {
   refreshPlacementPreview();
 }
 
+function getDraggedSlotEntry(slotState) {
+  if (!slotState) return null;
+  if (typeof slotState.getEntry === "function") {
+    return slotState.getEntry();
+  }
+  return slotState.items?.[slotState.index] ?? null;
+}
+
+function moveEquippedHelmetToSlot(targetSlot) {
+  if (!equippedHelmet) return false;
+
+  const item = equippedHelmet.item;
+  if (!canMoveItemToTargetSlot(item, targetSlot)) {
+    updateInteractionPrompt({ prompt: "Choose an empty slot" });
+    return false;
+  }
+
+  return takeOffHelmet(targetSlot);
+}
+
+function canMoveItemToTargetSlot(item, targetSlot) {
+  if (!item || !targetSlot?.items) return false;
+
+  const targetEntry = targetSlot.items[targetSlot.index];
+  if (!targetEntry) return true;
+  if (targetEntry.id !== item.id) return false;
+
+  const stackLimit = getItemStackLimit(targetEntry);
+  if (!Number.isFinite(stackLimit)) return true;
+  return (targetEntry.count ?? 1) < stackLimit;
+}
+
+function addItemToTargetSlot(item, targetSlot) {
+  if (!canMoveItemToTargetSlot(item, targetSlot)) return false;
+
+  const targetEntry = targetSlot.items[targetSlot.index];
+  if (!targetEntry) {
+    targetSlot.items[targetSlot.index] = item;
+    return true;
+  }
+
+  targetEntry.count = (targetEntry.count ?? 1) + (item.count ?? 1);
+  return true;
+}
+
 function collectPickupInteraction(interaction) {
   const item = interaction.item ?? {};
   if (!addInventoryItemCount(item, 1)) {
@@ -850,6 +1107,10 @@ function mergeItemMetadata(entry, item) {
     "wallGap",
     "wallRotation",
     "wallRotationDegrees",
+    "portraitModelUrl",
+    "portraitRotation",
+    "stackLimit",
+    "oxygenGenerator",
   ]) {
     if (item[key] !== undefined) entry[key] = item[key];
   }
@@ -876,45 +1137,27 @@ function findEmptyInventorySlot() {
 function hydrateInventoryPortrait(entry, item) {
   if (
     entry.portrait ||
-    entry.modelPortraitLoading ||
-    entry.modelPortraitFailed
+    entry.modelPortraitLoading
   ) {
+    return;
+  }
+  if (entry.modelPortraitFailed) {
+    applyInventoryFallbackPortrait(entry, item);
     return;
   }
   entry.modelPortraitLoading = true;
 
-  if (isFabricatorResourceItem(item)) {
-    createFabricatorResourceChunkPortrait(item)
-      .then((portrait) => {
-        entry.modelPortraitLoading = false;
-        if (!portrait) {
-          entry.modelPortraitFailed = true;
-          return;
-        }
-        entry.portrait = portrait;
-        entry.modelPortraitLoaded = true;
-        renderHotbars();
-        renderInventoryGrid();
-      })
-      .catch(() => {
-        entry.modelPortraitLoading = false;
-        entry.modelPortraitFailed = true;
-      });
-    return;
-  }
-
-  if (!item.modelUrl) {
+  const portraitModelUrl = getInventoryPortraitModelUrl(item);
+  if (!portraitModelUrl) {
     entry.modelPortraitLoading = false;
     return;
   }
 
-  createGlbModelPortrait(item.modelUrl, {
-    rotation: item.rotation ?? item.rotationDegrees,
-  })
+  createInventoryPortraitDataUrl(item)
     .then((portrait) => {
       entry.modelPortraitLoading = false;
       if (!portrait) {
-        entry.modelPortraitFailed = true;
+        applyInventoryFallbackPortrait(entry, item);
         return;
       }
       entry.portrait = portrait;
@@ -924,8 +1167,41 @@ function hydrateInventoryPortrait(entry, item) {
     })
     .catch(() => {
       entry.modelPortraitLoading = false;
-      entry.modelPortraitFailed = true;
+      applyInventoryFallbackPortrait(entry, item);
     });
+}
+
+function applyInventoryFallbackPortrait(entry, item) {
+  entry.modelPortraitLoading = false;
+  entry.modelPortraitFailed = true;
+  entry.portrait = createItemPortrait(item);
+  renderHotbars();
+  renderInventoryGrid();
+}
+
+function getInventoryPortraitModelUrl(item) {
+  const resource = fabricatorResourceItems[item?.id];
+  return (
+    item?.portraitModelUrl ?? resource?.portraitModelUrl ?? item?.modelUrl ?? ""
+  );
+}
+
+function getInventoryPortraitRotation(item) {
+  const resource = fabricatorResourceItems[item?.id];
+  return (
+    item?.portraitRotation ??
+    resource?.portraitRotation ??
+    item?.rotation ??
+    item?.rotationDegrees
+  );
+}
+
+function createInventoryPortraitDataUrl(item) {
+  const portraitModelUrl = getInventoryPortraitModelUrl(item);
+  if (!portraitModelUrl) return Promise.resolve(null);
+  return createGlbModelPortrait(portraitModelUrl, {
+    rotation: getInventoryPortraitRotation(item),
+  });
 }
 
 function isFabricatorResourceItem(item) {
@@ -1064,28 +1340,34 @@ function toggleTetherFromActiveHook() {
 }
 
 function triggerHatchDecompression(interaction) {
-  if (!interaction || interaction.decompressionTriggered) return;
+  if (!interaction) return;
+
+  const pressureScale = getCabinPressureScale();
+  if (pressureScale <= 0.001) {
+    cabinPressureAtm = CABIN_PRESSURE_VACUUM_ATM;
+    return;
+  }
 
   const outflowDirection = getHatchOutflowDirection(interaction);
   const suctionDirection = getHatchSuctionDirection(interaction);
-  interaction.decompressionTriggered = true;
   hatchDecompression = {
     interaction,
     outflowDirection,
     startPressureAtm: cabinPressureAtm,
+    pressureScale,
     elapsed: 0,
     duration: HATCH_DECOMPRESSION_DURATION,
   };
   zeroGravityMode = true;
   zeroGravityVelocity.addInPlace(
-    suctionDirection.scale(HATCH_DECOMPRESSION_INITIAL_IMPULSE),
+    suctionDirection.scale(HATCH_DECOMPRESSION_INITIAL_IMPULSE * pressureScale),
   );
   clampVectorLengthInPlace(zeroGravityVelocity, HATCH_DECOMPRESSION_MAX_SPEED);
   if (playerPhysics) {
     playerPhysics.grounded = false;
     playerPhysics.verticalVelocity = zeroGravityVelocity.y;
   }
-  createHatchWindBurst(interaction, outflowDirection);
+  createHatchWindBurst(interaction, outflowDirection, pressureScale);
   updateQuickAccessButtons();
   updateLifeSupportHud();
 }
@@ -1101,6 +1383,7 @@ function updateHatchDecompression(seconds) {
   );
   const remaining = Math.max(0, 1 - progress);
   const falloff = 0.28 + remaining * remaining * 0.72;
+  const pressureScale = hatchDecompression.pressureScale ?? 1;
   const direction = getHatchSuctionDirection(
     hatchDecompression.interaction,
     hatchDecompression.outflowDirection,
@@ -1110,7 +1393,11 @@ function updateHatchDecompression(seconds) {
   );
   zeroGravityVelocity.addInPlace(
     direction.scale(
-      HATCH_DECOMPRESSION_ACCELERATION * falloff * distanceBoost * seconds,
+      HATCH_DECOMPRESSION_ACCELERATION *
+        pressureScale *
+        falloff *
+        distanceBoost *
+        seconds,
     ),
   );
   clampVectorLengthInPlace(zeroGravityVelocity, HATCH_DECOMPRESSION_MAX_SPEED);
@@ -1124,6 +1411,23 @@ function updateHatchDecompression(seconds) {
     cabinPressureAtm = CABIN_PRESSURE_VACUUM_ATM;
     hatchDecompression = null;
   }
+}
+
+function updateOpenCabinPressureLeak() {
+  if (hatchDecompression || getCabinPressureScale() <= 0.001) return;
+
+  const openHatch = getOpenCabinHatchInteraction();
+  if (openHatch) triggerHatchDecompression(openHatch);
+}
+
+function isCabinSealed() {
+  return !getOpenCabinHatchInteraction();
+}
+
+function getOpenCabinHatchInteraction() {
+  return (level?.platform?.interactions ?? []).find(
+    (interaction) => interaction.type === "ship-door" && interaction.isOpen,
+  ) ?? null;
 }
 
 function updateLifeSupport(seconds) {
@@ -1210,8 +1514,9 @@ function updateLifeSupportHud() {
 
 function setVitalMeterValue(meter, fill, value) {
   const percent = Math.max(0, Math.min(Number(value) || 0, 1)) * 100;
-  meter?.style.setProperty("--meter-value", `${percent}%`);
-  if (fill) fill.style.width = `${percent}%`;
+  const percentText = `${percent.toFixed(1)}%`;
+  setStylePropertyIfChanged(meter, "--meter-value", percentText);
+  setStyleValueIfChanged(fill, "width", percentText);
 }
 
 function updateOxygenStatusBox() {
@@ -1221,20 +1526,30 @@ function updateOxygenStatusBox() {
   const helmetProtected = isHelmetProtecting();
   const status = getOxygenStatusLevel(pressureKpa, helmetProtected);
   setStatusTileState(oxygenStatusRoot, status.tone, status.order);
-  oxygenStatusText.textContent = status.label;
-  oxygenPressureText.textContent =
+  setTextIfChanged(oxygenStatusText, status.label);
+  setTextIfChanged(
+    oxygenPressureText,
     `Outer Pressure: ${Math.round(pressureKpa)} kPa` +
-    (equippedHelmet ? " (helmet)" : "");
+      (equippedHelmet ? " (helmet)" : ""),
+  );
 }
 
 function updateHelmetOxygenMeter() {
   if (!helmetOxygenMeter || !helmetOxygenFill || !helmetOxygenText) return;
   const liters = clamp(helmetOxygenLiters, 0, HELMET_OXYGEN_MAX_LITERS);
   const percent = (liters / HELMET_OXYGEN_MAX_LITERS) * 100;
-  helmetOxygenMeter.hidden = !equippedHelmet;
-  helmetOxygenMeter.style.setProperty("--helmet-oxygen-fill", `${percent}%`);
-  helmetOxygenFill.style.height = `${percent}%`;
-  helmetOxygenText.textContent = `${Math.ceil(liters)}/${HELMET_OXYGEN_MAX_LITERS} L`;
+  const percentText = `${percent.toFixed(1)}%`;
+  setHiddenIfChanged(helmetOxygenMeter, !equippedHelmet);
+  setStylePropertyIfChanged(
+    helmetOxygenMeter,
+    "--helmet-oxygen-fill",
+    percentText,
+  );
+  setStyleValueIfChanged(helmetOxygenFill, "height", percentText);
+  setTextIfChanged(
+    helmetOxygenText,
+    `${Math.ceil(liters)}/${HELMET_OXYGEN_MAX_LITERS} L`,
+  );
 }
 
 function updateFoodStatusTile() {
@@ -1258,7 +1573,7 @@ function updateFoodStatusTile() {
     status = { label: "Okay", tone: "good", order: baseOrder + 10 };
   }
   setStatusTileState(foodStatusRoot, status.tone, status.order);
-  foodStatusText.textContent = status.label;
+  setTextIfChanged(foodStatusText, status.label);
 }
 
 function updateThirstStatusTile() {
@@ -1282,7 +1597,7 @@ function updateThirstStatusTile() {
     status = { label: "Okay", tone: "good", order: baseOrder + 10 };
   }
   setStatusTileState(thirstStatusRoot, status.tone, status.order);
-  thirstStatusText.textContent = status.label;
+  setTextIfChanged(thirstStatusText, status.label);
 }
 
 function updateRestroomStatusTile() {
@@ -1306,7 +1621,7 @@ function updateRestroomStatusTile() {
     status = { label: "Okay", tone: "good", order: baseOrder + 10 };
   }
   setStatusTileState(restroomStatusRoot, status.tone, status.order);
-  restroomStatusText.textContent = status.label;
+  setTextIfChanged(restroomStatusText, status.label);
 }
 
 function updateComfortStatusTile() {
@@ -1330,7 +1645,7 @@ function updateComfortStatusTile() {
     status = { label: "Okay", tone: "good", order: baseOrder + 10 };
   }
   setStatusTileState(comfortStatusRoot, status.tone, status.order);
-  comfortStatusText.textContent = status.label;
+  setTextIfChanged(comfortStatusText, status.label);
 }
 
 function updateTemperatureStatusTile() {
@@ -1353,14 +1668,14 @@ function updateTemperatureStatusTile() {
     };
   }
   setStatusTileState(temperatureStatusRoot, status.tone, status.order);
-  temperatureStatusText.textContent = status.label;
+  setTextIfChanged(temperatureStatusText, status.label);
 }
 
 function updateMainIssueTile() {
   if (!mainIssueRoot || !mainIssueText) return;
   const issue = getMainIssueStatus();
   setStatusTileState(mainIssueRoot, issue.tone, 98);
-  mainIssueText.textContent = issue.label;
+  setTextIfChanged(mainIssueText, issue.label);
 }
 
 function getMainIssueStatus() {
@@ -1433,10 +1748,17 @@ function getOxygenStatusLevel(pressureKpa, helmetProtected) {
 }
 
 function setStatusTileState(root, tone, order) {
+  if (!root) return;
+  const orderText = String(order);
+  if (root.dataset.vitalTone === tone && root.dataset.vitalOrder === orderText) {
+    return;
+  }
+  root.dataset.vitalTone = tone;
+  root.dataset.vitalOrder = orderText;
   root.classList.toggle("good", tone === "good");
   root.classList.toggle("warn", tone === "warn");
   root.classList.toggle("critical", tone === "critical");
-  root.style.order = String(order);
+  setStyleValueIfChanged(root, "order", orderText);
 }
 
 function updateNearDeathPulse() {
@@ -1447,10 +1769,37 @@ function updateNearDeathPulse() {
       ? 1 - health / NEAR_DEATH_HEALTH_THRESHOLD
       : 0;
   const intensity = playerDead ? 0 : 0.08 + danger * 0.42;
-  nearDeathPulse.style.setProperty(
+  setStylePropertyIfChanged(
+    nearDeathPulse,
     "--near-death-intensity",
     danger > 0 ? intensity.toFixed(3) : "0",
   );
+}
+
+function setTextIfChanged(element, text) {
+  if (!element) return;
+  const next = String(text ?? "");
+  if (element.textContent !== next) element.textContent = next;
+}
+
+function setHiddenIfChanged(element, hidden) {
+  if (!element) return;
+  const next = Boolean(hidden);
+  if (element.hidden !== next) element.hidden = next;
+}
+
+function setStylePropertyIfChanged(element, property, value) {
+  if (!element) return;
+  const next = String(value);
+  if (element.style.getPropertyValue(property) !== next) {
+    element.style.setProperty(property, next);
+  }
+}
+
+function setStyleValueIfChanged(element, property, value) {
+  if (!element) return;
+  const next = String(value);
+  if (element.style[property] !== next) element.style[property] = next;
 }
 
 function getCabinPressureKpa() {
@@ -1459,6 +1808,10 @@ function getCabinPressureKpa() {
       ? cabinPressureAtm / CABIN_PRESSURE_INITIAL_ATM
       : 0;
   return Math.max(0, pressureRatio * PRESSURE_STANDARD_KPA);
+}
+
+function getCabinPressureScale() {
+  return clamp(getCabinPressureKpa() / PRESSURE_STANDARD_KPA, 0, 1);
 }
 
 function getOxygenPressureStatus(kpa) {
@@ -1591,9 +1944,10 @@ function getPlayerPlatformPosition() {
   return worldPointToPlatformLocal(camera.globalPosition ?? camera.position);
 }
 
-function createHatchWindBurst(interaction, direction) {
+function createHatchWindBurst(interaction, direction, pressureScale = 1) {
   if (!scene || !level?.platform?.root) return;
 
+  const intensity = clamp(pressureScale, 0.08, 1);
   const passage = interaction?.passage;
   const localEmitter = passage?.center?.clone?.() ?? camera.position.clone();
   const localRight = passage?.right?.clone?.() ?? B.Axis.X.clone();
@@ -1605,7 +1959,11 @@ function createHatchWindBurst(interaction, direction) {
   const right = platformLocalDirectionToWorld(localRight);
   const up = platformLocalDirectionToWorld(localUp);
   const texture = createHatchWindTexture();
-  const system = new B.ParticleSystem("hatch-decompression-wind", 520, scene);
+  const system = new B.ParticleSystem(
+    "hatch-decompression-wind",
+    Math.round(520 * intensity),
+    scene,
+  );
 
   system.particleTexture = texture;
   system.emitter = emitter;
@@ -1613,9 +1971,9 @@ function createHatchWindBurst(interaction, direction) {
   system.maxEmitBox = B.Vector3.Zero();
   system.direction1 = outflow.add(right.scale(-0.42)).add(up.scale(-0.24));
   system.direction2 = outflow.add(right.scale(0.42)).add(up.scale(0.24));
-  system.minEmitPower = 2.4;
-  system.maxEmitPower = 7.5;
-  system.emitRate = 720;
+  system.minEmitPower = 2.4 * intensity;
+  system.maxEmitPower = 7.5 * intensity;
+  system.emitRate = 720 * intensity;
   system.minLifeTime = 0.16;
   system.maxLifeTime = 0.48;
   system.minSize = 0.018;
@@ -2174,8 +2532,12 @@ async function mountHelmetItemOnHook(interaction, item) {
 }
 
 function equipHelmet() {
-  if (equippedHelmet || helmetEquipInProgress) {
-    updateInteractionPrompt({ prompt: "Helmet already equipped" });
+  if (equippedHelmet) {
+    return takeOffHelmet();
+  }
+
+  if (helmetEquipInProgress) {
+    updateInteractionPrompt({ prompt: "Helmet equip in progress" });
     return false;
   }
 
@@ -2289,6 +2651,48 @@ async function equipHelmetItem(item) {
   } finally {
     helmetEquipInProgress = false;
   }
+}
+
+function takeOffHelmet(targetSlot = null) {
+  if (!equippedHelmet) {
+    updateInteractionPrompt({ prompt: "Helmet not equipped" });
+    return false;
+  }
+
+  if (!canTakeOffHelmet()) {
+    updateInteractionPrompt({
+      prompt: "Warning: can't take helmet off. There's no air outside.",
+      durationMs: 3600,
+    });
+    return false;
+  }
+
+  const helmet = equippedHelmet;
+  if (targetSlot) {
+    if (!addItemToTargetSlot(helmet.item, targetSlot)) {
+      updateInteractionPrompt({ prompt: "Choose an empty slot" });
+      return false;
+    }
+  } else if (!addInventoryItem(helmet.item)) {
+    updateInteractionPrompt({ prompt: "Inventory full" });
+    return false;
+  }
+
+  if (helmet.visorObserver) {
+    scene.onBeforeRenderObservable.remove(helmet.visorObserver);
+  }
+  helmet.root?.dispose(false, true);
+  equippedHelmet = null;
+  renderHotbars();
+  renderInventoryGrid();
+  refreshPlacementPreview();
+  updateHudButtons();
+  updateInteractionPrompt({ prompt: "Helmet removed" });
+  return true;
+}
+
+function canTakeOffHelmet() {
+  return Math.round(getCabinPressureKpa()) >= HELMET_REMOVAL_MIN_PRESSURE_KPA;
 }
 
 function toggleHelmetVisor() {
@@ -2515,6 +2919,10 @@ function canAddInventoryItemCount(item, count = 1) {
 }
 
 function getItemStackLimit(item) {
+  const configuredLimit = Number(item?.stackLimit);
+  if (Number.isFinite(configuredLimit) && configuredLimit > 0) {
+    return Math.max(1, Math.floor(configuredLimit));
+  }
   return isFabricatorResourceItem(item)
     ? FABRICATOR_RESOURCE_STACK_LIMIT
     : Infinity;
@@ -2624,6 +3032,17 @@ function isFabricatorItem(entry) {
     id.includes("fabricator") ||
     name.includes("fabricator") ||
     modelUrl.includes("fabricator")
+  );
+}
+
+function isOxygenGeneratorItem(entry) {
+  const id = entry?.id?.toLowerCase?.() ?? "";
+  const name = entry?.name?.toLowerCase?.() ?? "";
+  const modelUrl = entry?.modelUrl?.toLowerCase?.() ?? "";
+  return (
+    id.includes("oxygen-generator") ||
+    name.includes("oxygen generator") ||
+    modelUrl.includes("oxygen_generator")
   );
 }
 
@@ -3037,6 +3456,9 @@ function installPlacedItemMetadata(root, item) {
   };
   if (isBatteryItem(item)) {
     initializeBatteryEnergy(root);
+  }
+  if (isOxygenGeneratorItem(item)) {
+    initializeOxygenGeneratorState(root);
   }
   unregisterPlacedItemCollisionMeshes(root);
   for (const mesh of getRootRenderableMeshes(root)) {
@@ -3478,7 +3900,22 @@ function getWallPlacementRotation(item, wall) {
 }
 
 function getFloorPlacementRotation(item) {
-  return B.Vector3.FromArray(resolveItemRotation(item));
+  const rotation = B.Vector3.FromArray(resolveItemRotation(item));
+  rotation.y += floorPlacementYaw;
+  return rotation;
+}
+
+function rotateSelectedFloorPlacement() {
+  const item = getSelectedPlaceableItem();
+  if (!item || getItemPlacementSurface(item) !== "floor") return false;
+
+  floorPlacementYaw = normalizeRadians(
+    floorPlacementYaw + Math.PI / 8,
+  );
+  placementUpdateElapsed = Number.POSITIVE_INFINITY;
+  updatePlacementPreview();
+  updateInteractionPrompt({ prompt: "Rotated placement" });
+  return true;
 }
 
 function centerWallPlacementRootOnHit(root, hitPoint, wall) {
@@ -3744,6 +4181,7 @@ function openFabricatorModal(root = activeInteraction?.root) {
 
   closePlayerModals();
   activeFabricatorRoot = root ?? null;
+  fabricatorAnalysisStaticKey = "";
   renderFabricatorAnalysis();
   fabricatorModal.hidden = false;
   document.body.classList.add("ui-modal-open");
@@ -3752,11 +4190,15 @@ function openFabricatorModal(root = activeInteraction?.root) {
 
 function activateFabricatorPrimaryButton() {
   const mode = getFabricatorMode(activeFabricatorRoot);
-  if (mode === "fabrication") {
+  const entry = getSelectedFabricatorEntry(activeFabricatorRoot);
+  if (mode === "disassembly") {
+    startFabricatorDisassembly(activeFabricatorRoot);
+    return;
+  }
+  if (entry?.type === "recipe") {
     fabricateSelectedRecipe(activeFabricatorRoot);
     return;
   }
-  startFabricatorDisassembly(activeFabricatorRoot);
 }
 
 function renderFabricatorAnalysis() {
@@ -3768,58 +4210,30 @@ function renderFabricatorAnalysis() {
   const processing = Boolean(disassembly);
   const battery = getFabricatorBatteryRoot(activeFabricatorRoot);
   const energy = getBatteryEnergyState(battery);
-  const selectedRecipe = getSelectedFabricatorRecipe(activeFabricatorRoot);
-  const actionCost =
-    mode === "fabrication"
-      ? (selectedRecipe?.energyCost ?? 0)
-      : FABRICATOR_DISASSEMBLY_ENERGY_COST;
+  const selectedEntry = getSelectedFabricatorEntry(activeFabricatorRoot);
+  const selectedRecipe =
+    selectedEntry?.type === "recipe" ? selectedEntry.recipe : null;
+  const actionCost = getFabricatorEntryEnergyCost(selectedEntry);
   const canUseEnergy = energy.stored >= actionCost;
+  const canAct = canActivateFabricatorEntry(selectedEntry, {
+    battery,
+    canUseEnergy,
+    hasYield,
+    processing,
+  });
 
   if (fabricatorAnalysisStatus) {
-    let statusText = "No asteroid loaded";
+    let statusText = "";
     if (!battery) {
       statusText = "No battery connected";
     } else if (processing) {
       statusText = `Disassembling ${Math.ceil(disassembly.remaining)}s`;
-    } else if (mode === "fabrication" && selectedRecipe) {
-      statusText = `Recipe selected · ${formatRecipeCost(selectedRecipe)}`;
-    } else if (hasYield) {
-      statusText = "Asteroid analyzed";
+    } else if (selectedEntry?.type === "disassembly" && !hasYield) {
+      statusText = "Load an asteroid to preview yield";
+    } else if (!canUseEnergy) {
+      statusText = "Not enough battery";
     }
     fabricatorAnalysisStatus.textContent = statusText;
-  }
-  if (fabricatorModeDisassemblyButton) {
-    fabricatorModeDisassemblyButton.classList.toggle(
-      "active",
-      mode === "disassembly",
-    );
-  }
-  if (fabricatorModeFabricationButton) {
-    fabricatorModeFabricationButton.classList.toggle(
-      "active",
-      mode === "fabrication",
-    );
-  }
-  if (fabricatorYieldIron) {
-    fabricatorYieldIron.textContent =
-      mode === "fabrication"
-        ? String(getInventoryItemCount("iron"))
-        : hasYield
-          ? String(yieldValues.iron)
-          : "-";
-  }
-  if (fabricatorYieldCopper) {
-    fabricatorYieldCopper.textContent =
-      mode === "fabrication"
-        ? String(getInventoryItemCount("copper"))
-        : hasYield
-          ? String(yieldValues.copper)
-          : "-";
-  }
-  if (fabricatorYieldWater) {
-    fabricatorYieldWater.textContent = hasYield
-      ? String(yieldValues.water)
-      : "-";
   }
   if (fabricatorEnergyValue) {
     fabricatorEnergyValue.textContent = battery
@@ -3834,74 +4248,247 @@ function renderFabricatorAnalysis() {
       `${clamp(fill, 0, 100).toFixed(1)}%`,
     );
   }
-  if (fabricatorEnergyCost) {
-    fabricatorEnergyCost.textContent =
-      mode === "fabrication" && selectedRecipe
-        ? `${selectedRecipe.energyCost} energy`
-        : `${FABRICATOR_DISASSEMBLY_ENERGY_COST} energy`;
-  }
-  renderFabricatorRecipes(mode, selectedRecipe);
-  if (fabricatorDisassembleButton) {
-    const canFabricate =
-      mode === "fabrication" &&
-      selectedRecipe &&
-      canFabricateRecipe(selectedRecipe) &&
-      canUseEnergy &&
-      !processing;
-    const canDisassemble =
-      mode === "disassembly" && hasYield && canUseEnergy && !processing;
-    fabricatorDisassembleButton.disabled =
-      mode === "fabrication" ? !canFabricate : !canDisassemble;
-    fabricatorDisassembleButton.textContent = processing
-      ? "Disassembling"
-      : mode === "fabrication"
-        ? "Fabricate"
-        : "Disassemble";
+  const staticKey = createFabricatorAnalysisStaticKey({
+    mode,
+    selectedEntry,
+    processing,
+    battery,
+    energy,
+    hasYield,
+    yieldValues,
+    canAct,
+  });
+  if (staticKey !== fabricatorAnalysisStaticKey) {
+    fabricatorAnalysisStaticKey = staticKey;
+    renderFabricatorCategories();
+    renderFabricatorRecipes(selectedEntry);
+    renderFabricatorDetail(selectedEntry, {
+      battery,
+      canUseEnergy,
+      hasYield,
+      yieldValues,
+    });
+    renderFabricatorModeControls(mode);
+    renderFabricatorActionButton({
+      canAct,
+      processing,
+      selectedRecipe,
+    });
   }
 }
 
-function renderFabricatorRecipes(mode, selectedRecipe) {
-  if (!fabricatorRecipesPanel) return;
-  fabricatorRecipesPanel.hidden = mode !== "fabrication";
+function createFabricatorAnalysisStaticKey({
+  mode,
+  selectedEntry,
+  processing,
+  battery,
+  energy,
+  hasYield,
+  yieldValues,
+  canAct,
+}) {
+  return [
+    mode,
+    getFabricatorCategory(activeFabricatorRoot),
+    selectedEntry?.id ?? "",
+    processing ? "working" : "idle",
+    battery ? "battery" : "no-battery",
+    energy.stored,
+    energy.max,
+    getInventoryItemCount("iron"),
+    getInventoryItemCount("copper"),
+    hasYield ? yieldValues.iron : "-",
+    hasYield ? yieldValues.copper : "-",
+    hasYield ? yieldValues.water : "-",
+    canAct ? "can-act" : "blocked",
+  ].join("|");
+}
+
+function renderFabricatorActionButton({
+  canAct,
+  processing,
+  selectedRecipe,
+}) {
+  if (!fabricatorDisassembleButton) return;
+  const actionLabel = processing
+    ? "Working"
+    : selectedRecipe
+      ? "Craft"
+      : "Disassemble";
+  const label = document.createElement("span");
+  label.className = "fabricator-action-label";
+  label.textContent = actionLabel;
+  fabricatorDisassembleButton.disabled = !canAct;
+  fabricatorDisassembleButton.setAttribute(
+    "aria-label",
+    selectedRecipe
+      ? `Craft ${selectedRecipe.name}`
+      : "Disassemble loaded asteroid",
+  );
+  fabricatorDisassembleButton.replaceChildren(
+    createFabricatorIcon(selectedRecipe ? "craft" : "refine"),
+    label,
+  );
+}
+
+function renderFabricatorModeControls(mode = getFabricatorMode(activeFabricatorRoot)) {
+  fabricatorModeDisassemblyButton?.classList.toggle(
+    "active",
+    mode === "disassembly",
+  );
+  fabricatorModeFabricationButton?.classList.toggle(
+    "active",
+    mode === "fabrication",
+  );
+  fabricatorWorkbench?.classList.toggle(
+    "disassembly-mode",
+    mode === "disassembly",
+  );
+  fabricatorWorkbench?.classList.toggle("craft-mode", mode === "fabrication");
+}
+
+function renderFabricatorCategories() {
+  if (!fabricatorCategoriesPanel) return;
+  const mode = getFabricatorMode(activeFabricatorRoot);
+  fabricatorCategoriesPanel.hidden = mode !== "fabrication";
   if (mode !== "fabrication") {
-    fabricatorRecipesPanel.replaceChildren();
+    fabricatorCategoriesPanel.replaceChildren();
     return;
   }
-
-  fabricatorRecipesPanel.replaceChildren(
-    ...fabricatorRecipes.map((recipe) => {
+  const selectedCategory = getFabricatorCategory(activeFabricatorRoot);
+  fabricatorCategoriesPanel.replaceChildren(
+    ...fabricatorCategories.map((category) => {
       const button = document.createElement("button");
-      button.className = "fabricator-recipe-button";
-      button.classList.toggle("active", recipe.id === selectedRecipe?.id);
+      button.className = "fabricator-category-button";
+      button.classList.toggle("active", category.id === selectedCategory);
       button.type = "button";
+      button.title = category.description;
+      button.setAttribute("aria-label", category.name);
+      const label = document.createElement("span");
+      label.className = "fabricator-category-label";
+      label.textContent = category.name;
+      button.append(createFabricatorIcon(category.icon), label);
       button.addEventListener("click", (event) => {
         event.stopPropagation();
-        setSelectedFabricatorRecipe(activeFabricatorRoot, recipe.id);
+        setFabricatorCategory(activeFabricatorRoot, category.id);
       });
-
-      const name = document.createElement("span");
-      name.className = "fabricator-recipe-name";
-      name.textContent = recipe.name;
-
-      const cost = document.createElement("span");
-      cost.className = "fabricator-recipe-cost";
-      cost.textContent = formatRecipeCost(recipe);
-
-      button.append(name, cost);
       return button;
     }),
   );
 }
 
+function renderFabricatorRecipes(selectedEntry) {
+  if (!fabricatorRecipesPanel) return;
+  const mode = getFabricatorMode(activeFabricatorRoot);
+  if (fabricatorCraftItemsPanel) {
+    fabricatorCraftItemsPanel.hidden = mode !== "fabrication";
+  }
+  if (mode !== "fabrication") {
+    fabricatorRecipesPanel.replaceChildren();
+    return;
+  }
+  const entries = getFabricatorEntriesForCategory(
+    getFabricatorCategory(activeFabricatorRoot),
+  );
+  fabricatorRecipesPanel.replaceChildren(
+    ...entries.map((entry) => {
+      const button = document.createElement("button");
+      button.className = "fabricator-craft-button";
+      button.classList.toggle("active", entry.id === selectedEntry?.id);
+      button.type = "button";
+      button.title = entry.description;
+      button.setAttribute("aria-label", entry.name);
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        setSelectedFabricatorEntry(activeFabricatorRoot, entry.id);
+      });
+      const copy = document.createElement("span");
+      copy.className = "fabricator-craft-copy";
+      const name = document.createElement("span");
+      name.className = "fabricator-craft-name";
+      name.textContent = entry.name;
+      const description = document.createElement("span");
+      description.className = "fabricator-craft-description";
+      description.textContent = entry.description;
+      copy.append(name, description);
+      button.append(createCraftEntryIcon(entry), copy);
+      return button;
+    }),
+  );
+}
+
+function renderFabricatorDetail(entry, context) {
+  if (!entry) return;
+  fabricatorSelectedIcon?.replaceChildren(createCraftEntryIcon(entry, true));
+  if (fabricatorSelectedName) fabricatorSelectedName.textContent = entry.name;
+  if (fabricatorSelectedDescription) {
+    fabricatorSelectedDescription.textContent = entry.description;
+  }
+  if (!fabricatorRequirementsPanel) return;
+  const requirements = getFabricatorEntryRequirements(entry, context);
+  fabricatorRequirementsPanel.replaceChildren(
+    ...requirements.map((requirement) =>
+      createFabricatorRequirementRow(requirement),
+    ),
+  );
+  renderFabricatorOutputs(entry, context);
+}
+
+function renderFabricatorOutputs(entry, context = {}) {
+  if (!fabricatorOutputPanel || !fabricatorOutputList) return;
+  const outputVisible = entry?.type === "disassembly";
+  fabricatorOutputPanel.hidden = !outputVisible;
+  if (!outputVisible) {
+    fabricatorOutputList.replaceChildren();
+    return;
+  }
+  const outputs = getFabricatorEntryOutputs(entry, context);
+  if (!outputs.length) {
+    const empty = document.createElement("div");
+    empty.className = "fabricator-output-empty";
+    empty.textContent = "No asteroid loaded";
+    fabricatorOutputList.replaceChildren(empty);
+    return;
+  }
+  fabricatorOutputList.replaceChildren(
+    ...outputs.map((output) => createFabricatorOutputRow(output)),
+  );
+}
+
 function setFabricatorMode(root, mode) {
   if (!root) return;
+  const fabricatorMode = mode === "disassembly" ? "disassembly" : "fabrication";
+  const category = getFabricatorCategory(root);
+  const entries = getFabricatorEntriesForCategory(category);
+  const selectedCraftEntry =
+    entries.find(({ id }) => id === root.metadata?.fabricatorSelectedEntryId) ??
+    entries[0];
   root.metadata = {
     ...(root.metadata ?? {}),
-    fabricatorMode: mode === "fabrication" ? "fabrication" : "disassembly",
+    fabricatorMode,
+    fabricatorSelectedEntryId:
+      fabricatorMode === "fabrication"
+        ? selectedCraftEntry?.id
+        : FABRICATOR_DISASSEMBLY_ENTRY.id,
+    fabricatorSelectedRecipeId:
+      fabricatorMode === "fabrication" ? selectedCraftEntry?.id : null,
   };
-  if (!root.metadata.fabricatorSelectedRecipeId) {
-    root.metadata.fabricatorSelectedRecipeId = fabricatorRecipes[0]?.id;
-  }
+  renderFabricatorAnalysis();
+}
+
+function setFabricatorCategory(root, categoryId) {
+  if (!root) return;
+  const category = fabricatorCategories.some(({ id }) => id === categoryId)
+    ? categoryId
+    : fabricatorCategories[0].id;
+  const entries = getFabricatorEntriesForCategory(category);
+  root.metadata = {
+    ...(root.metadata ?? {}),
+    fabricatorMode: "fabrication",
+    fabricatorCategoryId: category,
+    fabricatorSelectedEntryId: entries[0]?.id,
+    fabricatorSelectedRecipeId: entries[0]?.id,
+  };
   renderFabricatorAnalysis();
 }
 
@@ -3911,23 +4498,282 @@ function getFabricatorMode(root) {
     : "disassembly";
 }
 
-function setSelectedFabricatorRecipe(root, recipeId) {
+function getFabricatorCategory(root) {
+  const categoryId = root?.metadata?.fabricatorCategoryId;
+  return fabricatorCategories.some(({ id }) => id === categoryId)
+    ? categoryId
+    : fabricatorCategories[0].id;
+}
+
+function setSelectedFabricatorEntry(root, entryId) {
   if (!root) return;
+  const entries = getFabricatorEntriesForCategory(getFabricatorCategory(root));
+  const entry = entries.find(({ id }) => id === entryId) ?? entries[0];
   root.metadata = {
     ...(root.metadata ?? {}),
-    fabricatorSelectedRecipeId: recipeId,
+    fabricatorSelectedEntryId: entry?.id,
+    fabricatorSelectedRecipeId: entry?.type === "recipe" ? entry.id : null,
   };
   renderFabricatorAnalysis();
 }
 
+function getSelectedFabricatorEntry(root) {
+  if (getFabricatorMode(root) === "disassembly") {
+    return FABRICATOR_DISASSEMBLY_ENTRY;
+  }
+  const entries = getFabricatorEntriesForCategory(getFabricatorCategory(root));
+  if (!entries.length) return null;
+  const selectedId =
+    root?.metadata?.fabricatorSelectedEntryId ??
+    root?.metadata?.fabricatorSelectedRecipeId;
+  return entries.find(({ id }) => id === selectedId) ?? entries[0];
+}
+
 function getSelectedFabricatorRecipe(root) {
-  const recipeId =
-    root?.metadata?.fabricatorSelectedRecipeId ?? fabricatorRecipes[0]?.id;
-  return (
-    fabricatorRecipes.find((recipe) => recipe.id === recipeId) ??
-    fabricatorRecipes[0] ??
-    null
+  const entry = getSelectedFabricatorEntry(root);
+  return entry?.type === "recipe" ? entry.recipe : null;
+}
+
+function getFabricatorEntries() {
+  return fabricatorRecipes
+    .map((recipe) => ({
+      id: recipe.id,
+      name: recipe.name,
+      description: recipe.description,
+      type: "recipe",
+      icon: recipe.craftIcon,
+      recipe,
+    }));
+}
+
+function getFabricatorEntriesForCategory(category) {
+  return getFabricatorEntries().filter(
+    ({ recipe }) => recipe.category === category,
   );
+}
+
+function getFabricatorEntryEnergyCost(entry) {
+  return entry?.type === "recipe"
+    ? entry.recipe.energyCost
+    : FABRICATOR_DISASSEMBLY_ENERGY_COST;
+}
+
+function getFabricatorEntryRequirements(entry, context = {}) {
+  if (!entry) return [];
+  const requirements = [];
+  if (entry.type === "recipe") {
+    const { recipe } = entry;
+    requirements.push(
+      createItemRequirement(fabricatorResourceItems.iron, recipe.ingredients.iron),
+      createItemRequirement(
+        fabricatorResourceItems.copper,
+        recipe.ingredients.copper,
+      ),
+    );
+  } else {
+    requirements.push({
+      id: "asteroid",
+      icon: "asteroid",
+      owned: context.hasYield ? 1 : 0,
+      needed: 1,
+      met: Boolean(context.hasYield),
+    });
+  }
+  requirements.push({
+    id: "energy",
+    icon: "electricity",
+    owned: getBatteryEnergyState(getFabricatorBatteryRoot(activeFabricatorRoot))
+      .stored,
+    needed: getFabricatorEntryEnergyCost(entry),
+    met:
+      getBatteryEnergyState(getFabricatorBatteryRoot(activeFabricatorRoot))
+        .stored >= getFabricatorEntryEnergyCost(entry),
+  });
+  return requirements;
+}
+
+function getFabricatorEntryOutputs(entry, context = {}) {
+  if (entry?.type !== "disassembly") return [];
+  return Object.entries(context.yieldValues ?? {})
+    .filter(([, count]) => count > 0)
+    .map(([id, count]) => ({
+      id,
+      item: fabricatorResourceItems[id],
+      count,
+    }))
+    .filter(({ item }) => Boolean(item));
+}
+
+function createItemRequirement(item, needed) {
+  const owned = getInventoryItemCount(item.id);
+  return {
+    id: item.id,
+    item,
+    owned,
+    needed,
+    met: owned >= needed,
+  };
+}
+
+function canActivateFabricatorEntry(entry, context = {}) {
+  if (!entry || !context.battery || !context.canUseEnergy || context.processing) {
+    return false;
+  }
+  if (entry.type === "recipe") return canFabricateRecipe(entry.recipe);
+  return Boolean(context.hasYield);
+}
+
+function createFabricatorRequirementRow(requirement) {
+  const row = document.createElement("div");
+  row.className = "fabricator-requirement";
+  row.classList.toggle("missing", !requirement.met);
+  row.classList.toggle("output", Boolean(requirement.output));
+
+  const icon = document.createElement("span");
+  icon.className = "fabricator-requirement-icon";
+  if (requirement.item) {
+    icon.append(createInventoryPortraitImage(requirement.item));
+  } else {
+    icon.append(createFabricatorIcon(requirement.icon));
+  }
+  if (requirement.rate) {
+    const rate = document.createElement("span");
+    rate.className = "fabricator-requirement-rate";
+    rate.textContent = requirement.rate;
+    icon.append(rate);
+  }
+
+  const count = document.createElement("span");
+  count.className = "fabricator-requirement-count";
+  count.textContent = requirement.output
+    ? `+${requirement.owned}`
+    : `${requirement.owned}/${requirement.needed}`;
+
+  const state = document.createElement("span");
+  state.className = "fabricator-requirement-status";
+  state.textContent = requirement.met ? "" : "!";
+
+  row.append(icon, count, state);
+  return row;
+}
+
+function createFabricatorOutputRow(output) {
+  const row = document.createElement("div");
+  row.className = "fabricator-output-row";
+
+  const icon = document.createElement("span");
+  icon.className = "fabricator-output-icon";
+  icon.append(createInventoryPortraitImage(output.item));
+
+  const name = document.createElement("span");
+  name.className = "fabricator-output-name";
+  name.textContent = output.item.name;
+
+  const count = document.createElement("span");
+  count.className = "fabricator-output-count";
+  count.textContent = `+${output.count}`;
+
+  row.append(icon, name, count);
+  return row;
+}
+
+function createCraftEntryIcon(entry, large = false) {
+  if (entry?.recipe?.item?.modelUrl || entry?.recipe?.item?.portraitModelUrl) {
+    const image = createInventoryPortraitImage(entry.recipe.item);
+    image.classList.add("fabricator-craft-icon");
+    return image;
+  }
+  const wrapper = document.createElement("span");
+  wrapper.className = large ? "fabricator-selected-svg" : "fabricator-craft-svg";
+  wrapper.append(createFabricatorIcon(entry?.icon ?? "craft"));
+  return wrapper;
+}
+
+function createInventoryPortraitImage(item) {
+  const image = document.createElement("img");
+  image.alt = "";
+  image.className = "fabricator-craft-icon";
+  createInventoryPortraitDataUrl(item)
+    .then((portrait) => {
+      image.src = portrait || createItemPortrait(item);
+    })
+    .catch(() => {
+      image.src = createItemPortrait(item);
+    });
+  return image;
+}
+
+function createFabricatorIcon(type) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "fabricator-icon");
+  svg.setAttribute("viewBox", "0 0 64 64");
+  svg.setAttribute("aria-hidden", "true");
+  const addPath = (d, fill = "none") => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", fill);
+    svg.append(path);
+  };
+  const addCircle = (cx, cy, r, fill = "none") => {
+    const circle = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "circle",
+    );
+    circle.setAttribute("cx", String(cx));
+    circle.setAttribute("cy", String(cy));
+    circle.setAttribute("r", String(r));
+    circle.setAttribute("fill", fill);
+    svg.append(circle);
+  };
+
+  if (type === "vitals") {
+    addPath("M8 36h11l5-16 8 30 7-22 5 8h12");
+  } else if (type === "electricity") {
+    addPath("M36 4 14 35h16l-3 25 23-34H34l2-22Z", "currentColor");
+  } else if (type === "mining") {
+    addPath("M14 50 39 25");
+    addPath("M28 14c9-7 20-6 28 2-12-1-20 3-28 13l-8-8Z", "currentColor");
+  } else if (type === "airlock") {
+    addPath("M17 8h30v48H17Z");
+    addPath("M25 16h14v40");
+    addCircle(35, 33, 2, "currentColor");
+  } else if (type === "electrolizer") {
+    addPath("M32 6c10 14 17 23 17 34a17 17 0 0 1-34 0c0-11 7-20 17-34Z");
+    addPath("M36 20 25 37h9l-4 13 12-19h-9l3-11Z", "currentColor");
+  } else if (type === "oxygen-generator") {
+    addPath("M17 13h30v38H17Z");
+    addPath("M24 21h16M24 31h16M24 41h8");
+    addPath("M44 18c6 7 9 12 9 19a9 9 0 0 1-18 0c0-7 3-12 9-19Z", "currentColor");
+  } else if (type === "hydrogen") {
+    addPath("M14 12v40M50 12v40M14 32h36");
+    addCircle(32, 32, 6, "currentColor");
+  } else if (type === "battery") {
+    addPath("M11 20h37v27H11Z");
+    addPath("M48 28h5v11h-5");
+    addPath("M29 25 22 36h7l-2 8 10-14h-7l-1-5Z", "currentColor");
+  } else if (type === "solar-panel") {
+    addPath("M12 17h40v25H12Z");
+    addPath("M22 17v25M32 17v25M42 17v25M12 29h40");
+    addPath("M32 42v11M22 53h20");
+  } else if (type === "drill") {
+    addPath("M10 39 34 15l15 15-24 24Z");
+    addPath("m39 10 15 15M17 46l-7 7");
+  } else if (type === "build-tool") {
+    addPath("M12 45 37 20");
+    addPath("m28 12 24 24-8 8-24-24Z");
+  } else if (type === "research-machine") {
+    addPath("M28 9v18L15 49a8 8 0 0 0 7 12h20a8 8 0 0 0 7-12L36 27V9");
+    addPath("M24 9h16M21 45h22");
+  } else if (type === "refine") {
+    addPath("M17 12h30l7 16-22 26L10 28Z");
+    addPath("M22 28h20M27 38h10");
+  } else if (type === "asteroid") {
+    addPath("M22 9 45 13 57 31 45 53 20 56 7 37 10 19Z", "currentColor");
+  } else {
+    addPath("M14 14h36v36H14Z");
+    addPath("M22 32h20M32 22v20");
+  }
+  return svg;
 }
 
 function createFabricatorRecipe(
@@ -3941,6 +4787,9 @@ function createFabricatorRecipe(
   return {
     id,
     name,
+    description: itemOverrides.description ?? "Fabricated utility component.",
+    category: itemOverrides.category ?? "mining",
+    craftIcon: itemOverrides.craftIcon ?? id,
     ingredients: { iron, copper },
     energyCost,
     item: {
@@ -4071,6 +4920,372 @@ function createFabricatorRewards(yieldValues) {
   ].filter(({ count }) => count > 0);
 }
 
+function openOxygenGeneratorModal(root = activeInteraction?.root) {
+  if (!oxygenGeneratorModal) return;
+
+  closePlayerModals();
+  activeOxygenGeneratorRoot = root ?? null;
+  initializeOxygenGeneratorState(activeOxygenGeneratorRoot);
+  renderOxygenGeneratorPanel();
+  oxygenGeneratorModal.hidden = false;
+  document.body.classList.add("ui-modal-open");
+  exitPointerLock();
+}
+
+function initializeOxygenGeneratorState(root) {
+  if (!root || !isOxygenGeneratorItem(root.metadata?.placedItem)) return null;
+
+  const item = root.metadata.placedItem;
+  const saved = item.oxygenGenerator ?? {};
+  const state = root.metadata.oxygenGenerator ?? {};
+  state.waterLiters = clamp(
+    Number(state.waterLiters ?? saved.waterLiters ?? item.waterLiters ?? 0) || 0,
+    0,
+    OXYGEN_GENERATOR_WATER_CAPACITY_LITERS,
+  );
+  state.hydrogenLiters = clamp(
+    Number(
+      state.hydrogenLiters ??
+        saved.hydrogenLiters ??
+        item.hydrogenLiters ??
+        0,
+    ) || 0,
+    0,
+    OXYGEN_GENERATOR_HYDROGEN_CAPACITY_LITERS,
+  );
+  state.oxygenProducedLiters = clamp(
+    Number(
+      state.oxygenProducedLiters ??
+        saved.oxygenProducedLiters ??
+        saved.oxygenLiters ??
+        item.oxygenProducedLiters ??
+        item.oxygenLiters ??
+        0,
+    ) || 0,
+    0,
+    OXYGEN_GENERATOR_OXYGEN_CAPACITY_LITERS,
+  );
+  state.status = state.status ?? "empty";
+  root.metadata.oxygenGenerator = state;
+  syncOxygenGeneratorItemState(root);
+  return state;
+}
+
+function syncOxygenGeneratorItemState(root) {
+  const state = root?.metadata?.oxygenGenerator;
+  const item = root?.metadata?.placedItem;
+  if (!state || !item) return;
+  item.oxygenGenerator = createOxygenGeneratorSaveState(state);
+}
+
+function createOxygenGeneratorSaveState(state) {
+  return {
+    waterLiters: Number((state.waterLiters ?? 0).toFixed(2)),
+    hydrogenLiters: Number((state.hydrogenLiters ?? 0).toFixed(2)),
+    oxygenProducedLiters: Number((state.oxygenProducedLiters ?? 0).toFixed(2)),
+    oxygenLiters: Number((state.oxygenProducedLiters ?? 0).toFixed(2)),
+  };
+}
+
+function loadSelectedIceIntoOxygenGenerator(root) {
+  const state = initializeOxygenGeneratorState(root);
+  if (!state) return false;
+
+  const selected = hotbarItems[selectedHotbarIndex];
+  if (!isIceItem(selected)) {
+    updateInteractionPrompt({ prompt: "Select Ice to load water" });
+    renderOxygenGeneratorPanel();
+    return false;
+  }
+  if (state.waterLiters >= OXYGEN_GENERATOR_WATER_CAPACITY_LITERS - 0.001) {
+    updateInteractionPrompt({ prompt: "Water tank full" });
+    renderOxygenGeneratorPanel();
+    return false;
+  }
+
+  const loaded = Math.min(
+    OXYGEN_GENERATOR_ICE_WATER_LITERS,
+    OXYGEN_GENERATOR_WATER_CAPACITY_LITERS - state.waterLiters,
+  );
+  state.waterLiters += loaded;
+  state.status = "Water loaded";
+  consumeSelectedHotbarItem();
+  syncOxygenGeneratorItemState(root);
+  renderHotbars();
+  renderInventoryGrid();
+  refreshPlacementPreview();
+  renderOxygenGeneratorPanel();
+  updateInteractionPrompt({
+    prompt: `Loaded ${loaded.toFixed(0)} L water into oxygen generator`,
+  });
+  return true;
+}
+
+function isIceItem(item) {
+  const id = item?.id?.toLowerCase?.() ?? "";
+  const name = item?.name?.toLowerCase?.() ?? "";
+  return id === "water" || id === "ice" || name.includes("ice");
+}
+
+function updateOxygenGenerators(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return;
+  const generators = getPlacedItemRoots((item) => isOxygenGeneratorItem(item));
+  for (const root of generators) {
+    updateOxygenGenerator(root, seconds);
+  }
+}
+
+function updateOxygenGenerator(root, seconds) {
+  const state = initializeOxygenGeneratorState(root);
+  if (!state) return;
+
+  const battery = getOxygenGeneratorBatteryRoot(root);
+  const pressureKpa = getCabinPressureKpa();
+  const sealed = isCabinSealed();
+  const pressureFull = pressureKpa >= PRESSURE_STANDARD_KPA - 0.001;
+  const multiplier = pressureFull ? OXYGEN_GENERATOR_PRESSURIZED_MULTIPLIER : 1;
+  const waterUse = OXYGEN_GENERATOR_WATER_LITERS_PER_SECOND * multiplier * seconds;
+  const energyUse = OXYGEN_GENERATOR_ENERGY_PER_SECOND * multiplier * seconds;
+
+  if (!sealed) {
+    state.status = "Cabin not sealed - close hatch";
+    syncOxygenGeneratorItemState(root);
+    if (activeOxygenGeneratorRoot === root) renderOxygenGeneratorPanel();
+    return;
+  }
+  if (!battery) {
+    state.status = "No battery connected";
+    syncOxygenGeneratorItemState(root);
+    if (activeOxygenGeneratorRoot === root) renderOxygenGeneratorPanel();
+    return;
+  }
+  if (state.waterLiters <= 0.001) {
+    state.status = "Water tank empty";
+    syncOxygenGeneratorItemState(root);
+    if (activeOxygenGeneratorRoot === root) renderOxygenGeneratorPanel();
+    return;
+  }
+  if (
+    pressureFull &&
+    state.oxygenProducedLiters >= OXYGEN_GENERATOR_OXYGEN_CAPACITY_LITERS - 0.001
+  ) {
+    state.status = "Oxygen reserve full - idle";
+    syncOxygenGeneratorItemState(root);
+    if (activeOxygenGeneratorRoot === root) renderOxygenGeneratorPanel();
+    return;
+  }
+  if (!consumeBatteryEnergy(battery, energyUse)) {
+    state.status = "Battery depleted";
+    syncOxygenGeneratorItemState(root);
+    if (activeOxygenGeneratorRoot === root) renderOxygenGeneratorPanel();
+    return;
+  }
+
+  const waterConsumed = Math.min(state.waterLiters, waterUse);
+  state.waterLiters -= waterConsumed;
+  state.hydrogenLiters = Math.min(
+    OXYGEN_GENERATOR_HYDROGEN_CAPACITY_LITERS,
+    state.hydrogenLiters +
+      OXYGEN_GENERATOR_HYDROGEN_LITERS_PER_SECOND * multiplier * seconds,
+  );
+  if (!pressureFull) {
+    cabinPressureAtm = Math.min(
+      CABIN_PRESSURE_INITIAL_ATM,
+      cabinPressureAtm +
+        (OXYGEN_GENERATOR_PRESSURE_KPA_PER_SECOND * seconds /
+          PRESSURE_STANDARD_KPA) *
+          CABIN_PRESSURE_INITIAL_ATM,
+    );
+  } else {
+    state.oxygenProducedLiters = Math.min(
+      OXYGEN_GENERATOR_OXYGEN_CAPACITY_LITERS,
+      state.oxygenProducedLiters + waterConsumed * 2,
+    );
+  }
+  state.status = pressureFull
+    ? "Cabin pressurized - storing oxygen"
+    : "Producing oxygen";
+  syncOxygenGeneratorItemState(root);
+  if (activeOxygenGeneratorRoot === root) renderOxygenGeneratorPanel();
+}
+
+function consumeBatteryEnergy(battery, amount) {
+  const cost = Math.max(0, Number(amount) || 0);
+  if (cost <= 0) return true;
+  if (!battery) return false;
+  initializeBatteryEnergy(battery);
+  if ((battery.metadata.energyStored ?? 0) < cost) return false;
+  battery.metadata.energyStored -= cost;
+  battery.metadata.placedItem.energyStored = battery.metadata.energyStored;
+  return true;
+}
+
+function getOxygenGeneratorBatteryRoot(root) {
+  const linked = root?.metadata?.connectedBattery;
+  if (
+    isActivePlacedRoot(linked) &&
+    isBatteryItem(linked.metadata?.placedItem)
+  ) {
+    return linked;
+  }
+
+  return findClosestPlacedRoot(
+    root,
+    getPlacedItemRoots((item) => isBatteryItem(item)),
+  );
+}
+
+function renderOxygenGeneratorPanel() {
+  if (!activeOxygenGeneratorRoot) return;
+  const state = initializeOxygenGeneratorState(activeOxygenGeneratorRoot);
+  if (!state) return;
+
+  const battery = getOxygenGeneratorBatteryRoot(activeOxygenGeneratorRoot);
+  const energy = getBatteryEnergyState(battery);
+  const pressureKpa = getCabinPressureKpa();
+  const sealed = isCabinSealed();
+  const pressureFull = pressureKpa >= PRESSURE_STANDARD_KPA - 0.001;
+  const multiplier = pressureFull ? OXYGEN_GENERATOR_PRESSURIZED_MULTIPLIER : 1;
+  const running =
+    Boolean(battery) &&
+    energy.stored > 0 &&
+    state.waterLiters > 0.001 &&
+    sealed;
+  const status = state.status ?? (state.waterLiters > 0 ? "Ready" : "Empty");
+
+  setTextIfChanged(
+    oxygenGeneratorWaterValue,
+    `${formatTankValue(state.waterLiters)}/${OXYGEN_GENERATOR_WATER_CAPACITY_LITERS} L`,
+  );
+  setMeterFill(oxygenGeneratorWaterBar, state.waterLiters, OXYGEN_GENERATOR_WATER_CAPACITY_LITERS);
+  setTextIfChanged(
+    oxygenGeneratorHydrogenValue,
+    `${formatTankValue(state.hydrogenLiters)}/${OXYGEN_GENERATOR_HYDROGEN_CAPACITY_LITERS} L`,
+  );
+  setMeterFill(
+    oxygenGeneratorHydrogenBar,
+    state.hydrogenLiters,
+    OXYGEN_GENERATOR_HYDROGEN_CAPACITY_LITERS,
+  );
+  setTextIfChanged(
+    oxygenGeneratorOxygenValue,
+    `${formatTankValue(state.oxygenProducedLiters)}/${OXYGEN_GENERATOR_OXYGEN_CAPACITY_LITERS} L`,
+  );
+  setMeterFill(
+    oxygenGeneratorOxygenBar,
+    state.oxygenProducedLiters,
+    OXYGEN_GENERATOR_OXYGEN_CAPACITY_LITERS,
+  );
+  setTextIfChanged(
+    oxygenGeneratorPressureValue,
+    `${Math.round(pressureKpa)}/${PRESSURE_STANDARD_KPA} kPa`,
+  );
+  setMeterFill(oxygenGeneratorPressureBar, pressureKpa, PRESSURE_STANDARD_KPA);
+  setTextIfChanged(
+    oxygenGeneratorEnergyValue,
+    battery ? `${energy.stored}/${energy.max}` : "No battery",
+  );
+  setMeterFill(oxygenGeneratorEnergyBar, energy.stored, energy.max);
+  setTextIfChanged(oxygenGeneratorStatus, status);
+
+  oxygenGeneratorRequirements?.replaceChildren(
+    createFabricatorRequirementRow({
+      id: "seal",
+      icon: "airlock",
+      owned: sealed ? 1 : 0,
+      needed: 1,
+      met: sealed,
+    }),
+    createFabricatorRequirementRow({
+      id: "energy",
+      icon: "electricity",
+      owned: energy.stored,
+      needed: 1,
+      met: Boolean(battery) && energy.stored > 0,
+      rate: running
+        ? formatResourceBurnRate(
+            OXYGEN_GENERATOR_ENERGY_PER_SECOND * multiplier,
+            "E/s",
+          )
+        : "",
+    }),
+    createFabricatorRequirementRow({
+      id: "water",
+      item: fabricatorResourceItems.water,
+      owned: Math.floor(state.waterLiters),
+      needed: 1,
+      met: state.waterLiters > 0.001,
+      rate: running
+        ? formatResourceBurnRate(
+            OXYGEN_GENERATOR_WATER_LITERS_PER_SECOND * multiplier,
+            "L/s",
+          )
+        : "",
+    }),
+  );
+  oxygenGeneratorOutputList?.replaceChildren(
+    createOxygenGeneratorOutputRow(
+      "Oxygen",
+      running
+        ? "Venting to cabin"
+        : sealed
+          ? "Idle"
+          : "Blocked - cabin open",
+    ),
+    createOxygenGeneratorOutputRow(
+      "Hydrogen Tank",
+      `${formatTankValue(state.hydrogenLiters)} L`,
+    ),
+    createOxygenGeneratorOutputRow(
+      "Oxygen Store",
+      `${formatTankValue(state.oxygenProducedLiters)} L`,
+    ),
+  );
+}
+
+function setMeterFill(element, value, max) {
+  const fill = max > 0 ? (Math.max(0, Number(value) || 0) / max) * 100 : 0;
+  setStylePropertyIfChanged(
+    element,
+    "--energy-fill",
+    `${clamp(fill, 0, 100).toFixed(1)}%`,
+  );
+}
+
+function createOxygenGeneratorOutputRow(label, value) {
+  const row = document.createElement("div");
+  row.className = "fabricator-output-row";
+  const icon = document.createElement("span");
+  icon.className = "fabricator-output-icon";
+  icon.append(
+    createFabricatorIcon(label.includes("Oxygen") ? "vitals" : "hydrogen"),
+  );
+  const name = document.createElement("span");
+  name.className = "fabricator-output-name";
+  name.textContent = label;
+  const count = document.createElement("span");
+  count.className = "fabricator-output-count oxygen-generator-output-value";
+  count.textContent = value;
+  row.append(icon, name, count);
+  return row;
+}
+
+function formatTankValue(value) {
+  const amount = Math.max(0, Number(value) || 0);
+  return amount >= 10 ? amount.toFixed(0) : amount.toFixed(1);
+}
+
+function formatResourceBurnRate(value, unit) {
+  const amount = Math.max(0, Number(value) || 0);
+  const text =
+    amount >= 1
+      ? amount.toFixed(2)
+      : amount >= 0.1
+        ? amount.toFixed(3)
+        : amount.toFixed(4);
+  return `-${text} ${unit}`;
+}
+
 function getFabricatorBatteryRoot(root) {
   const linked = root?.metadata?.connectedBattery;
   if (
@@ -4178,13 +5393,14 @@ function completeFabricatorDisassembly(job) {
   }
   job.mesh?.dispose(false, true);
 
-  const spawnedCount = spawnFabricatorResourceChunks(job.root, job.rewards);
+  const addedRewards = grantFabricatorRewards(job.rewards);
   refreshPlacementPreview();
   if (activeFabricatorRoot === job.root) {
     renderFabricatorAnalysis();
   }
+  showInventoryRewardToasts(addedRewards);
   updateInteractionPrompt({
-    prompt: `Disassembled · Ejected ${spawnedCount} resource chunks`,
+    prompt: `Disassembled · Added ${formatFabricatorRewards(addedRewards)}`,
   });
 }
 
@@ -4198,282 +5414,63 @@ function cancelFabricatorDisassembly(job) {
 }
 
 function formatFabricatorRewards(rewards) {
-  return rewards.map(({ item, count }) => `${count} ${item.name}`).join(" · ");
+  if (!rewards.length) return "nothing";
+  return rewards
+    .map(({ item, count }) => `${count} ${formatRewardItemName(item, count)}`)
+    .join(" · ");
 }
 
-function spawnFabricatorResourceChunks(root, rewards) {
-  const frame = getFabricatorResourceEjectionFrame(root);
-  if (!frame || !Array.isArray(rewards)) return 0;
-
-  let spawned = 0;
-  const totalCount = rewards.reduce((sum, reward) => sum + reward.count, 0);
+function grantFabricatorRewards(rewards) {
+  const addedRewards = [];
   for (const reward of rewards) {
-    for (let index = 0; index < reward.count; index += 1) {
-      const offsetIndex = spawned - (totalCount - 1) * 0.5;
-      createFabricatorResourceChunk(root, reward.item, frame, offsetIndex);
-      spawned += 1;
+    if (addInventoryItemCount(reward.item, reward.count)) {
+      addedRewards.push(reward);
     }
   }
-  return spawned;
+  renderHotbars();
+  renderInventoryGrid();
+  return addedRewards;
 }
 
-function getFabricatorResourceEjectionFrame(root) {
-  const platformRoot = level?.platform?.root;
-  if (!root || !platformRoot) return null;
-
-  const bounds = getRootBoundsInPlatform(root);
-  if (!bounds) return null;
-
-  const center = bounds.min.add(bounds.max).scale(0.5);
-  const size = bounds.max.subtract(bounds.min);
-  const right = nodeLocalDirectionToPlatform(root, B.Axis.X);
-  const up = nodeLocalDirectionToPlatform(root, B.Axis.Y);
-  const forward = nodeLocalDirectionToPlatform(root, B.Axis.Z);
-  if (right.lengthSquared() <= 0.000001) right.copyFrom(B.Axis.X);
-  if (up.lengthSquared() <= 0.000001) up.copyFrom(B.Axis.Y);
-  if (forward.lengthSquared() <= 0.000001) forward.copyFrom(B.Axis.Z);
-  right.normalize();
-  up.normalize();
-  forward.normalize();
-
-  const sideDistance = Math.max(size.x, size.y, size.z) * 0.46 + 0.055;
-  const position = center
-    .add(right.scale(sideDistance))
-    .add(up.scale(-size.y * 0.08));
-  return { position, right, up, forward };
-}
-
-function createFabricatorResourceChunk(root, item, frame, offsetIndex) {
-  const mesh = createRoundedResourceChunkMesh(item);
-  const platformRoot = level?.platform?.root;
-  mesh.parent = platformRoot ?? root ?? null;
-  mesh.position.copyFrom(
-    frame.position
-      .add(frame.up.scale(offsetIndex * FABRICATOR_RESOURCE_CHUNK_SIZE * 0.35))
-      .add(
-        frame.forward.scale(
-          Math.sin(offsetIndex * 1.71) * FABRICATOR_RESOURCE_CHUNK_SIZE * 0.42,
-        ),
-      ),
-  );
-  mesh.rotationQuaternion = B.Quaternion.RotationYawPitchRoll(
-    Math.random() * Math.PI,
-    Math.random() * Math.PI,
-    Math.random() * Math.PI,
-  );
-  mesh.isPickable = true;
-  mesh.checkCollisions = false;
-  mesh.receiveShadows = true;
-  mesh.metadata = {
-    ...(mesh.metadata ?? {}),
-    resourceChunk: true,
-    resourceItem: { ...item },
-    excludeFromBounds: false,
-    excludeFromCollision: true,
-    interaction: {
-      type: "pickup",
-      range: GLB_PICKUP_PROMPT_RANGE,
-      item,
-      prompt: `Press E to pick up ${item.name}`,
-      activate: () => collectFabricatorResourceChunk(mesh),
-    },
-  };
-
-  const velocity = frame.right
-    .scale(FABRICATOR_RESOURCE_EJECT_SPEED)
-    .add(
-      frame.up.scale((Math.random() - 0.35) * FABRICATOR_RESOURCE_EJECT_SPREAD),
-    )
-    .add(
-      frame.forward.scale(
-        (Math.random() - 0.5) * FABRICATOR_RESOURCE_EJECT_SPREAD,
-      ),
-    );
-  registerAsteroidBody(mesh, {
-    radius: FABRICATOR_RESOURCE_CHUNK_RADIUS,
-    velocity,
-    angularVelocity: createAsteroidAngularVelocity().scale(1.7),
-  });
-  return mesh;
-}
-
-function collectFabricatorResourceChunk(mesh) {
-  unregisterAsteroidBody(mesh);
-  mesh?.dispose(false, true);
-  return true;
-}
-
-function createFabricatorResourceChunkPortrait(item) {
-  return createMeshModelPortrait(
-    `fabricator-resource-${item.id}`,
-    (previewScene) => createRoundedResourceChunkMesh(item, previewScene),
-    {
-      rotation: [-0.26, 0.72, -0.18],
-    },
-  );
-}
-
-function createRoundedResourceChunkMesh(item, targetScene = scene) {
-  const mesh = createRoundedCubeMesh(
-    `fabricator-${item.id}-resource-chunk`,
-    FABRICATOR_RESOURCE_CHUNK_SIZE,
-    10,
-    targetScene,
-  );
-  mesh.material = getFabricatorResourceChunkMaterial(item.id, targetScene);
-  return mesh;
-}
-
-function createRoundedCubeMesh(name, size, segments = 8, targetScene = scene) {
-  const positions = [];
-  const indices = [];
-  const rings = Math.max(segments, 6);
-  const exponent = 0.28;
-
-  for (let latIndex = 0; latIndex <= rings; latIndex += 1) {
-    const latitude = -Math.PI / 2 + (Math.PI * latIndex) / rings;
-    for (let lonIndex = 0; lonIndex <= rings * 2; lonIndex += 1) {
-      const longitude = -Math.PI + (Math.PI * 2 * lonIndex) / (rings * 2);
-      const cosLat = Math.cos(latitude);
-      const x =
-        signedPower(cosLat, exponent) *
-        signedPower(Math.cos(longitude), exponent);
-      const y = signedPower(Math.sin(latitude), exponent);
-      const z =
-        signedPower(cosLat, exponent) *
-        signedPower(Math.sin(longitude), exponent);
-      positions.push(x * size * 0.5, y * size * 0.5, z * size * 0.5);
-    }
+function showInventoryRewardToasts(rewards) {
+  for (const reward of rewards) {
+    showInventoryRewardToast(reward.item, reward.count);
   }
-
-  const columns = rings * 2 + 1;
-  for (let latIndex = 0; latIndex < rings; latIndex += 1) {
-    for (let lonIndex = 0; lonIndex < rings * 2; lonIndex += 1) {
-      const a = latIndex * columns + lonIndex;
-      const b = a + 1;
-      const c = a + columns;
-      const d = c + 1;
-      indices.push(a, c, b, b, c, d);
-    }
-  }
-
-  const normals = [];
-  B.VertexData.ComputeNormals(positions, indices, normals);
-  const vertexData = new B.VertexData();
-  vertexData.positions = positions;
-  vertexData.indices = indices;
-  vertexData.normals = normals;
-
-  const mesh = new B.Mesh(name, targetScene);
-  vertexData.applyToMesh(mesh, true);
-  return mesh;
 }
 
-function signedPower(value, exponent) {
-  return Math.sign(value) * Math.pow(Math.abs(value), exponent);
+function showInventoryRewardToast(item, count) {
+  if (!inventoryToastLayer || count <= 0) return;
+
+  const toast = document.createElement("div");
+  toast.className = "inventory-toast";
+
+  const label = document.createElement("span");
+  label.textContent = `+ ${count} ${formatRewardItemName(item, count)}`;
+
+  const image = document.createElement("img");
+  image.className = "inventory-toast-icon";
+  image.alt = "";
+
+  toast.append(label, image);
+  inventoryToastLayer.append(toast);
+
+  createInventoryPortraitDataUrl(item)
+    .then((portrait) => {
+      image.src = portrait || createItemPortrait(item);
+    })
+    .catch(() => {
+      image.src = createItemPortrait(item);
+    });
+
+  setTimeout(() => toast.classList.add("leaving"), 2200);
+  setTimeout(() => toast.remove(), 2800);
 }
 
-function getFabricatorResourceChunkMaterial(id, targetScene = scene) {
-  const materialName = `fabricator-${id}-resource-chunk-material`;
-  const existing = targetScene.getMaterialByName?.(materialName);
-  if (existing) return existing;
-
-  if (id === "water") {
-    return createFabricatorIceChunkMaterial(materialName, targetScene);
-  }
-  return createFabricatorMetalChunkMaterial(materialName, id, targetScene);
-}
-
-function createFabricatorMetalChunkMaterial(name, id, targetScene = scene) {
-  const material = new B.PBRMaterial(name, targetScene);
-  const copper = id === "copper";
-  material.albedoColor = copper
-    ? new B.Color3(0.78, 0.36, 0.16)
-    : new B.Color3(0.52, 0.56, 0.57);
-  material.albedoTexture = createResourceChunkTexture(
-    name,
-    copper,
-    false,
-    targetScene,
-  );
-  material.metallic = copper ? 0.78 : 0.86;
-  material.roughness = copper ? 0.38 : 0.45;
-  material.microSurface = copper ? 0.58 : 0.52;
-  material.environmentIntensity = 0.44;
-  material.directIntensity = 0.9;
-  material.backFaceCulling = false;
-  return material;
-}
-
-function createFabricatorIceChunkMaterial(name, targetScene = scene) {
-  const material = new B.PBRMaterial(name, targetScene);
-  material.albedoColor = new B.Color3(0.58, 0.86, 1.0);
-  material.albedoTexture = createResourceChunkTexture(
-    name,
-    false,
-    true,
-    targetScene,
-  );
-  material.emissiveColor = new B.Color3(0.02, 0.08, 0.11);
-  material.metallic = 0;
-  material.roughness = 0.18;
-  material.microSurface = 0.74;
-  material.alpha = 0.58;
-  material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
-  material.alphaMode = B.Engine.ALPHA_COMBINE;
-  material.backFaceCulling = false;
-  material.twoSidedLighting = true;
-  return material;
-}
-
-function createResourceChunkTexture(
-  name,
-  copper = false,
-  ice = false,
-  targetScene = scene,
-) {
-  const texture = new B.DynamicTexture(
-    `${name}-texture`,
-    { width: 96, height: 96 },
-    targetScene,
-    false,
-  );
-  const context = texture.getContext();
-  const gradient = context.createLinearGradient(0, 0, 96, 96);
-  if (ice) {
-    gradient.addColorStop(0, "rgba(190,235,255,0.92)");
-    gradient.addColorStop(0.46, "rgba(88,176,218,0.5)");
-    gradient.addColorStop(1, "rgba(225,250,255,0.78)");
-  } else if (copper) {
-    gradient.addColorStop(0, "#d48045");
-    gradient.addColorStop(0.45, "#7f351c");
-    gradient.addColorStop(1, "#f0a05a");
-  } else {
-    gradient.addColorStop(0, "#9ca5a8");
-    gradient.addColorStop(0.46, "#3d464b");
-    gradient.addColorStop(1, "#c0c7c7");
-  }
-  context.fillStyle = gradient;
-  context.fillRect(0, 0, 96, 96);
-  context.globalAlpha = ice ? 0.34 : 0.28;
-  for (let index = 0; index < 34; index += 1) {
-    const x = Math.random() * 96;
-    const y = Math.random() * 96;
-    const length = 8 + Math.random() * 36;
-    context.strokeStyle = ice
-      ? "rgba(235,255,255,0.65)"
-      : copper
-        ? "rgba(255,211,160,0.42)"
-        : "rgba(230,242,246,0.38)";
-    context.lineWidth = Math.random() < 0.22 ? 2 : 1;
-    context.beginPath();
-    context.moveTo(x, y);
-    context.lineTo(x + length, y + (Math.random() - 0.5) * 8);
-    context.stroke();
-  }
-  context.globalAlpha = 1;
-  texture.update(false);
-  return texture;
+function formatRewardItemName(item, count) {
+  const name = (item?.name ?? item?.id ?? "item").toLowerCase();
+  if (count === 1 || name.endsWith("s")) return name;
+  if (name.endsWith("y")) return `${name.slice(0, -1)}ies`;
+  return `${name}s`;
 }
 
 function createFabricatorDisassemblyEffects(
@@ -6031,9 +7028,12 @@ function closePlayerModals() {
   inventoryModal.hidden = true;
   notebookModal.hidden = true;
   if (fabricatorModal) fabricatorModal.hidden = true;
+  if (oxygenGeneratorModal) oxygenGeneratorModal.hidden = true;
   if (batteryModal) batteryModal.hidden = true;
   if (hatchWarningModal) hatchWarningModal.hidden = true;
   activeFabricatorRoot = null;
+  activeOxygenGeneratorRoot = null;
+  fabricatorAnalysisStaticKey = "";
   pendingHatchInteraction = null;
   document.body.classList.remove("ui-modal-open");
   keys.clear();
@@ -6044,6 +7044,7 @@ function isUiModalOpen() {
     !inventoryModal.hidden ||
     !notebookModal.hidden ||
     Boolean(fabricatorModal && !fabricatorModal.hidden) ||
+    Boolean(oxygenGeneratorModal && !oxygenGeneratorModal.hidden) ||
     Boolean(batteryModal && !batteryModal.hidden) ||
     Boolean(hatchWarningModal && !hatchWarningModal.hidden)
   );
@@ -6099,7 +7100,7 @@ async function startGame(saveFile) {
       adaptToDeviceRatio: false,
       powerPreference: "high-performance",
     });
-    engine.setHardwareScalingLevel(1 / Math.min(devicePixelRatio, 1.5));
+    engine.setHardwareScalingLevel(1 / Math.min(devicePixelRatio, 1.25));
     engine.metadata = { performance: {} };
     scene = new B.Scene(engine);
     scene.metadata = {
@@ -6170,10 +7171,11 @@ async function startGame(saveFile) {
     updateLoadingStatus("Restoring saved world");
     await restoreSavedWorldState(saveFile.world);
     await initializeMountedHooks();
+    mountedHooksInitialized = true;
     updateLoadingStatus("Finalizing scene");
     await waitForSceneReady(scene);
 
-    toolTipsVisible = true;
+    toolTipsVisible = false;
     updateToolTipsVisibility();
     refreshPlacementPreview();
     installPlayerLoop();
@@ -6204,6 +7206,9 @@ function installDebrisFieldPlayerCollision() {
 
     const bounds = getSolidLevelPlayerBounds(platform);
     const capsule = getPlayerCollisionCapsule(camera.position, bounds);
+    rocks.computeWorldMatrix?.(true);
+    const rocksWorldMatrix = rocks.getWorldMatrix();
+    const worldToRocksMatrix = rocksWorldMatrix.clone().invert();
     return {
       capsuleStart: platformLocalPointToWorld(capsule.start),
       capsuleEnd: platformLocalPointToWorld(capsule.end),
@@ -6211,17 +7216,10 @@ function installDebrisFieldPlayerCollision() {
       skin: ASTEROID_CONTACT_SKIN,
       minRockRadius: 0.22,
       playerPushFraction: 0.65,
-      worldToLocal: (point) => {
-        rocks.computeWorldMatrix?.(true);
-        return B.Vector3.TransformCoordinates(
-          point,
-          rocks.getWorldMatrix().clone().invert(),
-        );
-      },
-      localToWorldVector: (vector) => {
-        rocks.computeWorldMatrix?.(true);
-        return B.Vector3.TransformNormal(vector, rocks.getWorldMatrix());
-      },
+      worldToLocal: (point) =>
+        B.Vector3.TransformCoordinates(point, worldToRocksMatrix),
+      localToWorldVector: (vector) =>
+        B.Vector3.TransformNormal(vector, rocksWorldMatrix),
       applyCorrection: (worldCorrection, localNormal) => {
         applyDebrisAsteroidPlayerCorrection(
           worldCorrection,
@@ -7002,6 +8000,12 @@ function getPlacedItemsForSave() {
       itemForSave.energyStored = energy.stored;
       itemForSave.maxEnergy = energy.max;
     }
+    if (isOxygenGeneratorItem(itemForSave)) {
+      const state = initializeOxygenGeneratorState(root);
+      if (state) {
+        itemForSave.oxygenGenerator = createOxygenGeneratorSaveState(state);
+      }
+    }
     const placedItem = {
       item: sanitizeItemForSave(itemForSave),
       position: vectorToArray(root.position),
@@ -7508,10 +8512,27 @@ function installPlayerLoop() {
       const forward = camera.getDirection(B.Axis.Z);
       const right = camera.getDirection(B.Axis.X);
 
-      initializeMountedHooks();
-      activateNearbyDebrisAsteroidBodies();
-      updateActiveInteraction();
-      updatePlacementPreview();
+      if (!mountedHooksInitialized) {
+        mountedHooksInitialized = true;
+        initializeMountedHooks();
+      }
+      asteroidPhysicsActivationElapsed += seconds;
+      if (
+        asteroidPhysicsActivationElapsed >= ASTEROID_PHYSICS_ACTIVATION_SECONDS
+      ) {
+        asteroidPhysicsActivationElapsed = 0;
+        activateNearbyDebrisAsteroidBodies();
+      }
+      interactionUpdateElapsed += seconds;
+      if (interactionUpdateElapsed >= INTERACTION_UPDATE_SECONDS) {
+        interactionUpdateElapsed = 0;
+        updateActiveInteraction();
+      }
+      placementUpdateElapsed += seconds;
+      if (placementUpdateElapsed >= PLACEMENT_UPDATE_SECONDS) {
+        placementUpdateElapsed = 0;
+        updatePlacementPreview();
+      }
 
       if (camera.parent) {
         const inverseParent = camera.parent.getWorldMatrix().clone().invert();
@@ -7538,6 +8559,12 @@ function installPlayerLoop() {
         if (isShiftHeld()) move.y -= 1;
       }
       updateHatchDecompression(seconds);
+      updateOpenCabinPressureLeak();
+      oxygenGeneratorUpdateElapsed += seconds;
+      if (oxygenGeneratorUpdateElapsed >= OXYGEN_GENERATOR_UPDATE_SECONDS) {
+        updateOxygenGenerators(oxygenGeneratorUpdateElapsed);
+        oxygenGeneratorUpdateElapsed = 0;
+      }
       updateLifeSupport(seconds);
       updateFabricatorDisassembly(seconds);
 
@@ -7672,6 +8699,28 @@ function createGlbPickupPrompt(mesh) {
     };
   }
 
+  if (isOxygenGeneratorItem(item)) {
+    const root = mesh.metadata?.glbPickupRoot ?? mesh;
+    const state = initializeOxygenGeneratorState(root) ?? {};
+    const battery = getOxygenGeneratorBatteryRoot(root);
+    const energy = getBatteryEnergyState(battery);
+    const energyText = battery
+      ? ` · Energy ${energy.stored}/${energy.max}`
+      : " · No battery";
+    return {
+      type: "oxygen-generator",
+      range: mesh.metadata.glbPickupRange ?? GLB_PICKUP_PROMPT_RANGE,
+      root,
+      item: createOxygenGeneratorPickupItem(root, item),
+      prompt:
+        `Press E to pick up ${label} · F use · G load ice` +
+        ` · Water ${formatTankValue(state.waterLiters ?? 0)} L` +
+        ` · H2 ${formatTankValue(state.hydrogenLiters ?? 0)} L` +
+        energyText,
+      activate: () => deactivateGlbPickupMesh(root),
+    };
+  }
+
   if (isBatteryItem(item)) {
     const root = mesh.metadata?.glbPickupRoot ?? mesh;
     const energy = getBatteryEnergyState(root);
@@ -7735,6 +8784,26 @@ function collectFabricatorInteraction(interaction) {
     item: interaction.item,
     activate: interaction.activate,
   });
+}
+
+function collectOxygenGeneratorInteraction(interaction) {
+  const root = interaction?.root;
+  if (!root) return false;
+  return collectPickupInteraction({
+    type: "pickup",
+    item: createOxygenGeneratorPickupItem(root, interaction.item),
+    activate: interaction.activate,
+  });
+}
+
+function createOxygenGeneratorPickupItem(root, item = {}) {
+  const state = initializeOxygenGeneratorState(root);
+  return {
+    ...item,
+    placementSurface: "floor",
+    stackLimit: 1,
+    oxygenGenerator: state ? createOxygenGeneratorSaveState(state) : undefined,
+  };
 }
 
 function createHeldAsteroidFabricatorPrompt(root, label) {
@@ -7931,9 +9000,6 @@ function createAsteroidPickupInteraction() {
   );
   if (!candidate) return null;
 
-  const mesh = promoteFieldAsteroidCandidate(candidate);
-  if (mesh?.metadata?.interaction) return mesh.metadata.interaction;
-
   return {
     type: "asteroid",
     range: ASTEROID_PICKUP_RANGE,
@@ -7943,11 +9009,6 @@ function createAsteroidPickupInteraction() {
     ),
     activate: () => pickUpAsteroidFromField(candidate),
   };
-}
-
-function promoteFieldAsteroidCandidate(candidate) {
-  const asteroid = level?.debrisField?.rocks?.takeAsteroid?.(candidate);
-  return createFieldAsteroidBody(asteroid);
 }
 
 function activateNearbyDebrisAsteroidBodies() {
@@ -7994,9 +9055,13 @@ function createFieldAsteroidBody(asteroid) {
     asteroidColor: cloneSave(asteroid.color ?? null),
   };
   installDroppedAsteroidInteraction(mesh);
+  const velocity = worldVectorToPlatformLocal(
+    asteroid.velocity ?? B.Vector3.Zero(),
+  );
   registerAsteroidBody(mesh, {
     radius: asteroid.radius,
-    velocity: worldVectorToPlatformLocal(asteroid.velocity ?? B.Vector3.Zero()),
+    velocity,
+    ambientVelocity: velocity,
     angularVelocity:
       asteroid.angularVelocity?.clone?.() ?? createAsteroidAngularVelocity(),
   });
@@ -8157,6 +9222,7 @@ function registerAsteroidBody(mesh, options = {}) {
     mesh,
     radius,
     velocity: options.velocity?.clone?.() ?? B.Vector3.Zero(),
+    ambientVelocity: options.ambientVelocity?.clone?.() ?? null,
     angularVelocity:
       options.angularVelocity?.clone?.() ?? createAsteroidAngularVelocity(),
   };
@@ -8232,13 +9298,36 @@ function isAsteroidBodyActive(body) {
 
 function updateAsteroidBody(body, seconds, platform) {
   const mesh = body.mesh;
+  maintainFieldAsteroidStreamVelocity(body);
   clampVectorLengthInPlace(body.velocity, ASTEROID_MAX_SPEED);
   mesh.position.addInPlace(body.velocity.scale(seconds));
   updateAsteroidSpin(body, seconds);
 
-  resolveAsteroidAgainstCollisionObjects(body, platform);
-  resolveAsteroidAgainstPlayer(body, platform);
-  body.velocity.scaleInPlace(ASTEROID_COLLISION_DAMPING);
+  const collidedWithObject = resolveAsteroidAgainstCollisionObjects(body, platform);
+  const collidedWithPlayer = resolveAsteroidAgainstPlayer(body, platform);
+  if (collidedWithObject || collidedWithPlayer) {
+    body.velocity.scaleInPlace(ASTEROID_COLLISION_DAMPING);
+  }
+  maintainFieldAsteroidStreamVelocity(body);
+}
+
+function maintainFieldAsteroidStreamVelocity(body) {
+  const ambientVelocity = body?.ambientVelocity;
+  if (!ambientVelocity || ambientVelocity.lengthSquared() <= 0.000001) return;
+
+  const ambientSpeed = ambientVelocity.length();
+  const minSpeed = Math.min(
+    ambientSpeed,
+    Math.max(ASTEROID_FIELD_STREAM_MIN_SPEED, ambientSpeed * 0.55),
+  );
+  if (minSpeed <= 0) return;
+
+  const direction = ambientVelocity.scale(1 / ambientSpeed);
+  const currentSpeed = B.Vector3.Dot(body.velocity, direction);
+  if (currentSpeed >= minSpeed) return;
+
+  body.velocity.addInPlace(direction.scale(minSpeed - currentSpeed));
+  clampVectorLengthInPlace(body.velocity, ASTEROID_MAX_SPEED);
 }
 
 function updateAsteroidSpin(body, seconds) {
@@ -8259,8 +9348,9 @@ function updateAsteroidSpin(body, seconds) {
 }
 
 function resolveAsteroidAgainstCollisionObjects(body, platform) {
-  if (!platform) return;
+  if (!platform) return false;
 
+  let collided = false;
   body.mesh.computeWorldMatrix(true);
   for (const collider of getAuthoredCollisionMeshes(platform)) {
     const correction = getSphereObbCorrection(
@@ -8274,7 +9364,9 @@ function resolveAsteroidAgainstCollisionObjects(body, platform) {
     body.mesh.position.addInPlace(localCorrection);
     bounceAsteroidVelocity(body, localCorrection);
     body.mesh.computeWorldMatrix(true);
+    collided = true;
   }
+  return collided;
 }
 
 function bounceAsteroidVelocity(body, localCorrection) {
@@ -8289,7 +9381,7 @@ function bounceAsteroidVelocity(body, localCorrection) {
 }
 
 function resolveAsteroidAgainstPlayer(body, platform) {
-  if (!camera || !platform || body.mesh === heldAsteroid?.mesh) return;
+  if (!camera || !platform || body.mesh === heldAsteroid?.mesh) return false;
 
   const bounds = getSolidLevelPlayerBounds(platform);
   const asteroidCenter = body.mesh.position;
@@ -8312,7 +9404,7 @@ function resolveAsteroidAgainstPlayer(body, platform) {
     };
   }
 
-  if (!best) return;
+  if (!best) return false;
 
   const asteroidPush = best.normal.scale(
     best.penetration * (1 - ASTEROID_PLAYER_PUSH_FRACTION),
@@ -8341,6 +9433,7 @@ function resolveAsteroidAgainstPlayer(body, platform) {
     body.velocity.addInPlace(best.normal.scale(0.12));
   }
   clampVectorLengthInPlace(body.velocity, ASTEROID_MAX_SPEED);
+  return true;
 }
 
 function getCameraForwardLocalDirection() {
@@ -8494,22 +9587,43 @@ function getAsteroidYield(composition) {
 }
 
 function updateInteractionPrompt(interaction) {
+  const now = performance.now();
+  const plainPrompt =
+    interaction &&
+    typeof interaction.prompt === "string" &&
+    !interaction.type &&
+    !interaction.getPrompt;
+
+  if (!plainPrompt && transientPromptUntil > now) {
+    activeInteraction = interaction;
+    return;
+  }
+
+  if (plainPrompt) {
+    transientPromptUntil = now + (interaction.durationMs ?? 2400);
+  } else if (interaction || transientPromptUntil <= now) {
+    transientPromptUntil = 0;
+  }
+
   activeInteraction = interaction;
   if (!interactionPrompt) return;
 
   if (!interaction) {
-    interactionPrompt.hidden = true;
-    interactionPrompt.textContent = "";
+    if (transientPromptUntil > now) return;
+    setHiddenIfChanged(interactionPrompt, true);
+    setTextIfChanged(interactionPrompt, "");
     return;
   }
 
-  interactionPrompt.hidden = false;
+  setHiddenIfChanged(interactionPrompt, false);
   if (interaction.type === "helmet-hook") {
-    interactionPrompt.textContent = getHelmetHookPrompt(interaction);
+    setTextIfChanged(interactionPrompt, getHelmetHookPrompt(interaction));
     return;
   }
-  interactionPrompt.textContent =
-    interaction.getPrompt?.() ?? interaction.prompt ?? "Press E";
+  setTextIfChanged(
+    interactionPrompt,
+    interaction.getPrompt?.() ?? interaction.prompt ?? "Press E",
+  );
 }
 
 function getHelmetHookPrompt(interaction) {
@@ -9437,6 +10551,11 @@ function movePlayerFreely(displacement, platform) {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function normalizeRadians(radians) {
+  const turn = Math.PI * 2;
+  return ((radians % turn) + turn) % turn;
 }
 
 function smoothstep(edge0, edge1, value) {

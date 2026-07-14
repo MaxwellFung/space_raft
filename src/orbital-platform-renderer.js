@@ -895,21 +895,13 @@ function color3FromOption(value, fallback) {
 }
 
 function createShipDoorInteractionProxy(scene, interaction, passage, platform) {
-  const proxyScale = platform.doorInteractionProxyScale ?? 1;
-  const proxyWidthPadding = platform.doorInteractionProxyWidthPadding ?? 0;
-  const proxyHeightPadding = platform.doorInteractionProxyHeightPadding ?? 0;
-  const options = {
-    width: passage.halfWidth * 2 * proxyScale + proxyWidthPadding,
-    height: passage.halfHeight * 2 * proxyScale + proxyHeightPadding,
-    depth: platform.doorInteractionProxyDepth ?? 0.08,
-  };
   interaction.closedPromptProxy = createShipDoorPromptProxy(
     scene,
     interaction,
     passage,
     interaction.doorMesh?.parent?.parent,
     "closed",
-    options,
+    getShipDoorPromptProxyOptions(passage, platform, "closed"),
   );
   interaction.openPromptProxy = createShipDoorPromptProxy(
     scene,
@@ -917,9 +909,37 @@ function createShipDoorInteractionProxy(scene, interaction, passage, platform) {
     passage,
     interaction.doorMesh?.parent,
     "open",
-    options,
+    getShipDoorPromptProxyOptions(passage, platform, "open"),
   );
   updateShipDoorPromptProxies(interaction);
+}
+
+function getShipDoorPromptProxyOptions(passage, platform, state) {
+  const statePrefix =
+    state === "open"
+      ? "doorOpenInteractionProxy"
+      : "doorClosedInteractionProxy";
+  const sharedScale = platform.doorInteractionProxyScale ?? 1;
+  const stateScale = platform[`${statePrefix}Scale`] ?? sharedScale;
+  const widthScale = platform[`${statePrefix}WidthScale`] ?? stateScale;
+  const heightScale = platform[`${statePrefix}HeightScale`] ?? stateScale;
+
+  return {
+    width:
+      passage.halfWidth * 2 * widthScale +
+      (platform[`${statePrefix}WidthPadding`] ??
+        platform.doorInteractionProxyWidthPadding ??
+        0),
+    height:
+      passage.halfHeight * 2 * heightScale +
+      (platform[`${statePrefix}HeightPadding`] ??
+        platform.doorInteractionProxyHeightPadding ??
+        0),
+    depth:
+      platform[`${statePrefix}Depth`] ??
+      platform.doorInteractionProxyDepth ??
+      0.08,
+  };
 }
 
 function createShipDoorPromptProxy(

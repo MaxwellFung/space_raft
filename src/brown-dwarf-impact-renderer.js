@@ -1,4 +1,5 @@
 const B = window.BABYLON;
+const INSTANCE_MATRIX = B.Matrix.Identity();
 
 export function createBrownDwarfImpacts(scene, config, primary, primaryMesh, glow) {
   const root = new B.TransformNode(`${config.id ?? "brown-dwarf"}-impacts`, scene);
@@ -88,6 +89,28 @@ export function createBrownDwarfImpacts(scene, config, primary, primaryMesh, glo
   glow?.addIncludedOnlyMesh(plumeMesh);
 
   const impacts = [];
+  const trailMatrices = [];
+  const trailColors = [];
+  const flashMatrices = [];
+  const flashColors = [];
+  const plumeMatrices = [];
+  const plumeColors = [];
+  const scarMatrices = [];
+  const scarColors = [];
+  const cameraPosition = B.Vector3.Zero();
+  const cameraDirection = B.Vector3.Zero();
+  const scratchPosition = B.Vector3.Zero();
+  const scratchSurface = B.Vector3.Zero();
+  const scratchScale = B.Vector3.One();
+  const scratchNormal = B.Vector3.Zero();
+  const scratchAxis = B.Vector3.Zero();
+  const scratchToCamera = B.Vector3.Zero();
+  const scratchSide = B.Vector3.Zero();
+  const scratchUp = B.Vector3.Zero();
+  const scratchRotation = B.Quaternion.Identity();
+  const scratchBaseRotation = B.Quaternion.Identity();
+  const scratchTwistRotation = B.Quaternion.Identity();
+  const scratchMatrix = B.Matrix.Identity();
   const initialImpactCount = config.initialImpactCount ?? Math.ceil(spawnRate * 4);
   let spawnAccumulator = 0;
   let simulationTime = 0;
@@ -171,45 +194,57 @@ export function createBrownDwarfImpacts(scene, config, primary, primaryMesh, glo
   }
 
   function updateImpacts(seconds) {
-    const trailMatrices = [];
-    const trailColors = [];
-    const flashMatrices = [];
-    const flashColors = [];
-    const plumeMatrices = [];
-    const plumeColors = [];
-    const scarMatrices = [];
-    const scarColors = [];
+    trailMatrices.length = 0;
+    trailColors.length = 0;
+    flashMatrices.length = 0;
+    flashColors.length = 0;
+    plumeMatrices.length = 0;
+    plumeColors.length = 0;
+    scarMatrices.length = 0;
+    scarColors.length = 0;
+    updateCameraToPrimary(
+      cameraPosition,
+      cameraDirection,
+      scene,
+      center,
+      rotatingPrimary,
+    );
 
     for (let index = impacts.length - 1; index >= 0; index -= 1) {
       const impact = impacts[index];
       impact.age += seconds;
-      const surface = center.add(impact.direction.scale(radius + impact.surfaceJitter));
+      const surface = setOffsetFromPointToRef(
+        center,
+        impact.direction,
+        radius + impact.surfaceJitter,
+        scratchSurface,
+      );
       const entryAge = Math.min(impact.age, impact.entrySeconds);
       const afterImpact = impact.age - impact.entrySeconds;
-      const facing = cameraFacing(
-        impact.direction,
-        scene,
-        center,
-        rotatingPrimary,
-      );
+      const facing = cameraFacing(impact.direction, cameraDirection);
 
       if (showEntryTrails && facing > 0.02 && impact.age < impact.entrySeconds) {
         const entryT = clamp01(entryAge / impact.entrySeconds);
         const remainingHeight = impact.entryHeight * (1 - entryT);
         const length = impact.trailLength * (0.45 + entryT * 0.55);
         const altitude = remainingHeight + length * 0.55;
-        const position = center.add(impact.direction.scale(radius + altitude));
+        const position = setOffsetFromPointToRef(
+          center,
+          impact.direction,
+          radius + altitude,
+          scratchPosition,
+        );
         const alpha = smoothstep(0, 0.18, entryT) * (1 - smoothstep(0.76, 1, entryT)) * facing;
+        scratchScale.set(impact.size * 0.32, length, 1);
         pushBillboard(
           trailMatrices,
           trailColors,
           position,
           impact.direction,
-          new B.Vector3(impact.size * 0.32, length, 1),
+          scratchScale,
           impact.twist,
           [1, 0.58, 0.14, alpha],
-          scene,
-          rotatingPrimary,
+          cameraPosition,
         );
       }
 
@@ -222,9 +257,14 @@ export function createBrownDwarfImpacts(scene, config, primary, primaryMesh, glo
           pushSurfaceDisc(
             flashMatrices,
             flashColors,
-            surface.add(impact.direction.scale(surfaceLift)),
+            setOffsetFromPointToRef(
+              surface,
+              impact.direction,
+              surfaceLift,
+              scratchPosition,
+            ),
             impact.direction,
-            new B.Vector3(
+            scratchScale.set(
               impact.size * lerp(0.24, 0.5, Math.sqrt(plumeT)),
               impact.size * lerp(0.22, 0.46, Math.sqrt(plumeT)),
               1,
@@ -244,9 +284,14 @@ export function createBrownDwarfImpacts(scene, config, primary, primaryMesh, glo
           pushSurfaceDisc(
             plumeMatrices,
             plumeColors,
-            surface.add(impact.direction.scale(surfaceLift * 1.08)),
+            setOffsetFromPointToRef(
+              surface,
+              impact.direction,
+              surfaceLift * 1.08,
+              scratchPosition,
+            ),
             impact.direction,
-            new B.Vector3(
+            scratchScale.set(
               impact.size * impact.stretch * lerp(0.7, 1.72, Math.sqrt(plumeT)),
               impact.size * lerp(0.62, 1.55, Math.sqrt(plumeT)),
               1,
@@ -273,9 +318,14 @@ export function createBrownDwarfImpacts(scene, config, primary, primaryMesh, glo
           pushSurfaceDisc(
             scarMatrices,
             scarColors,
-            surface.add(impact.direction.scale(surfaceLift * 0.82)),
+            setOffsetFromPointToRef(
+              surface,
+              impact.direction,
+              surfaceLift * 0.82,
+              scratchPosition,
+            ),
             impact.direction,
-            new B.Vector3(
+            scratchScale.set(
               impact.size * impact.stretch * lerp(0.74, 1.4, scarT),
               impact.size * lerp(0.68, 1.22, scarT),
               1,
@@ -308,8 +358,8 @@ export function createBrownDwarfImpacts(scene, config, primary, primaryMesh, glo
   }
 
   function pushSurfaceDisc(matrices, colors, position, normal, size, twist, color) {
-    const scale = typeof size === "number" ? new B.Vector3(size, size, 1) : size;
-    const rotation = rotationFromNormal(normal, twist);
+    const scale = typeof size === "number" ? scratchScale.set(size, size, 1) : size;
+    const rotation = rotationFromNormalToRef(normal, twist, scratchRotation);
     pushInstance(matrices, colors, position, scale, rotation, color);
   }
 
@@ -321,27 +371,57 @@ export function createBrownDwarfImpacts(scene, config, primary, primaryMesh, glo
     scale,
     twist,
     color,
-    scene,
-    rotatingPrimary,
+    cameraPosition,
   ) {
-    const cameraPosition = worldToLocal(
-      scene.activeCamera.globalPosition,
-      rotatingPrimary,
-    );
-    const toCamera = cameraPosition.subtract(position).normalize();
-    const radial = normal.normalize();
-    const side = B.Vector3.Cross(radial, toCamera);
+    const toCamera = scratchToCamera.copyFrom(cameraPosition).subtractInPlace(position);
+    if (toCamera.lengthSquared() <= 0.000001) return;
+    toCamera.normalize();
+    const radial = scratchNormal.copyFrom(normal);
+    if (radial.lengthSquared() <= 0.000001) return;
+    radial.normalize();
+    B.Vector3.CrossToRef(radial, toCamera, scratchSide);
+    const side = scratchSide;
     if (side.lengthSquared() < 0.0001) {
       pushSurfaceDisc(matrices, colors, position, normal, scale.y, twist, color);
       return;
     }
     side.normalize();
-    const up = B.Vector3.Cross(toCamera, side).normalize();
-    const base = matrixFromAxes(side, up, toCamera);
-    const rotation = B.Quaternion.FromRotationMatrix(base).multiply(
-      B.Quaternion.RotationAxis(toCamera, twist),
-    );
-    pushInstance(matrices, colors, position, scale, rotation, color);
+    B.Vector3.CrossToRef(toCamera, side, scratchUp);
+    scratchUp.normalize();
+    matrixFromAxesToRef(side, scratchUp, toCamera, scratchMatrix);
+    if (typeof B.Quaternion.FromRotationMatrixToRef === "function") {
+      B.Quaternion.FromRotationMatrixToRef(scratchMatrix, scratchBaseRotation);
+    } else {
+      scratchBaseRotation.copyFrom(B.Quaternion.FromRotationMatrix(scratchMatrix));
+    }
+    B.Quaternion.RotationAxisToRef(toCamera, twist, scratchTwistRotation);
+    scratchBaseRotation.multiplyToRef(scratchTwistRotation, scratchRotation);
+    pushInstance(matrices, colors, position, scale, scratchRotation, color);
+  }
+
+  function rotationFromNormalToRef(normal, twist, target) {
+    const to = scratchNormal.copyFrom(normal);
+    if (to.lengthSquared() <= 0.000001) {
+      to.copyFrom(B.Axis.Z);
+    } else {
+      to.normalize();
+    }
+    const dot = clamp(B.Vector3.Dot(B.Axis.Z, to), -1, 1);
+    if (dot > 0.9999) {
+      scratchBaseRotation.copyFrom(B.Quaternion.Identity());
+    } else if (dot < -0.9999) {
+      B.Quaternion.RotationAxisToRef(B.Axis.X, Math.PI, scratchBaseRotation);
+    } else {
+      B.Vector3.CrossToRef(B.Axis.Z, to, scratchAxis);
+      scratchAxis.normalize();
+      B.Quaternion.RotationAxisToRef(
+        scratchAxis,
+        Math.acos(dot),
+        scratchBaseRotation,
+      );
+    }
+    B.Quaternion.RotationAxisToRef(to, twist, scratchTwistRotation);
+    return scratchTwistRotation.multiplyToRef(scratchBaseRotation, target);
   }
 }
 
@@ -503,8 +583,15 @@ function createStreakTexture(scene, name) {
 }
 
 function pushInstance(matrices, colors, position, scale, rotation, color) {
-  const matrix = B.Matrix.Compose(scale, rotation, position);
-  matrix.copyToArray(matrices, matrices.length);
+  if (typeof B.Matrix.ComposeToRef === "function") {
+    B.Matrix.ComposeToRef(scale, rotation, position, INSTANCE_MATRIX);
+    INSTANCE_MATRIX.copyToArray(matrices, matrices.length);
+  } else {
+    B.Matrix.Compose(scale, rotation, position).copyToArray(
+      matrices,
+      matrices.length,
+    );
+  }
   colors.push(color[0], color[1], color[2], clamp01(color[3]));
 }
 
@@ -527,13 +614,26 @@ function randomSurfaceDirection(random, scene, center, rotatingPrimary) {
   return direction;
 }
 
-function cameraFacing(normal, scene, center, rotatingPrimary) {
-  const cameraPosition = worldToLocal(
+function updateCameraToPrimary(positionTarget, directionTarget, scene, center, rotatingPrimary) {
+  positionTarget.copyFrom(worldToLocal(
     scene.activeCamera.globalPosition,
     rotatingPrimary,
-  );
-  const toCamera = cameraPosition.subtract(center).normalize();
+  ));
+  directionTarget.copyFrom(positionTarget).subtractInPlace(center);
+  if (directionTarget.lengthSquared() <= 0.000001) {
+    directionTarget.copyFrom(B.Axis.Z);
+  } else {
+    directionTarget.normalize();
+  }
+  return directionTarget;
+}
+
+function cameraFacing(normal, toCamera) {
   return clamp01((B.Vector3.Dot(normal, toCamera) + 0.14) / 1.14);
+}
+
+function setOffsetFromPointToRef(point, direction, distance, target) {
+  return target.copyFrom(direction).scaleInPlace(distance).addInPlace(point);
 }
 
 function worldToLocal(position, rotatingPrimary) {
@@ -560,6 +660,10 @@ function rotationFromNormal(normal, twist) {
 
 function matrixFromAxes(xAxis, yAxis, zAxis) {
   const matrix = B.Matrix.Identity();
+  return matrixFromAxesToRef(xAxis, yAxis, zAxis, matrix);
+}
+
+function matrixFromAxesToRef(xAxis, yAxis, zAxis, matrix) {
   const values = matrix.m;
   values[0] = xAxis.x;
   values[1] = xAxis.y;

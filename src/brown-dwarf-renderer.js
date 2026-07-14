@@ -6,7 +6,7 @@ export function createBrownDwarf(scene, object, glow) {
   const diameter = object.radius * object.scale * 2;
   const body = B.MeshBuilder.CreateSphere(
     object.id,
-    { diameter, segments: 160 },
+    { diameter, segments: object.segments ?? 96 },
     scene,
   );
   body.position = B.Vector3.FromArray(object.position);
