@@ -142,6 +142,7 @@ const FABRICATOR_LASER_NUB_Y_OFFSET = 0.012;
 const FABRICATOR_PRINT_LAYER_COUNT = 48;
 const FABRICATOR_PRINT_LINES_PER_LAYER = 18;
 const FABRICATOR_TRACE_RING_POINTS = 80;
+const FABRICATOR_CRAFT_CONTOUR_UPDATE_SECONDS = 1 / 12;
 const FABRICATOR_DISASSEMBLY_ENERGY_COST = 12;
 const FABRICATOR_RESOURCE_STACK_LIMIT = 16;
 const BATTERY_DEFAULT_ENERGY = 240;
@@ -5786,6 +5787,14 @@ async function startFabricatorCraftJob(root, recipe) {
   const primaryEntry = getPrimaryFabricatorCraftMeshEntry(meshEntries);
   const clipMaterials = installFabricatorCraftClipMaterials(previewRoot);
   const clipBounds = getRootBoundsInPlatform(previewRoot);
+  const effects = createFabricatorDisassemblyEffects(
+    root,
+    primaryEntry.mesh,
+    primaryEntry.meshData,
+    { cutCap: false },
+  );
+  effects?.traceRing?.setEnabled?.(false);
+  effects?.traceGlow?.setEnabled?.(false);
   const job = {
     root,
     recipe,
@@ -5794,14 +5803,10 @@ async function startFabricatorCraftJob(root, recipe) {
     mesh: primaryEntry.mesh,
     meshData: primaryEntry.meshData,
     disableMeshClipping: true,
+    disableTraceRing: true,
     clipMaterials,
     clipBounds,
-    effects: createFabricatorDisassemblyEffects(
-      root,
-      primaryEntry.mesh,
-      primaryEntry.meshData,
-      { cutCap: false },
-    ),
+    effects,
     elapsed: 0,
     remaining: FABRICATOR_CRAFT_SECONDS,
     duration: FABRICATOR_CRAFT_SECONDS,
@@ -5971,6 +5976,7 @@ function updateFabricatorCraft(seconds) {
 function updateFabricatorCraftJobEffects(job, progress) {
   const disassemblyProgress = clamp(1 - progress, 0, 0.999999);
   updateFabricatorCraftPreviewCrop(job, progress);
+  updateFabricatorCraftExactContour(job);
   updateFabricatorDisassemblyEffects(job, disassemblyProgress);
 }
 
@@ -5979,9 +5985,10 @@ function updateFabricatorCraftPreviewCrop(job, progress) {
   const bounds = job.clipBounds ?? getRootBoundsInPlatform(job.previewRoot);
   if (!bounds) return;
 
-  const reveal = smoothstep(0, 0.94, clamp(progress, 0, 1));
+  const reveal = smoothstep(0, 1, clamp(progress, 0, 1));
   const height = bounds.max.y - bounds.min.y;
-  const cropY = bounds.min.y + height * reveal;
+  const cropY = bounds.min.y + height * (reveal * 1.04);
+  job.cropY = cropY;
   setFabricatorCraftClipPlane(job, cropY);
 }
 
@@ -6011,6 +6018,118 @@ function setFabricatorCraftClipPlane(job, platformY) {
   for (const material of job.clipMaterials ?? []) {
     material.clipPlane = plane;
   }
+}
+
+function updateFabricatorCraftExactContour(job) {
+  if (!job.effects || !Number.isFinite(job.cropY)) return;
+  const elapsed = Number.isFinite(job.elapsed) ? job.elapsed : 0;
+  const lastUpdate = job.lastCraftContourUpdateSeconds ?? -Infinity;
+  if (
+    job.craftContourPaths &&
+    elapsed - lastUpdate < FABRICATOR_CRAFT_CONTOUR_UPDATE_SECONDS
+  ) {
+    return;
+  }
+
+  const contourData = createFabricatorCraftContourData(
+    job.meshEntries ?? [],
+    job.cropY,
+  );
+  job.craftContourPaths = contourData.paths;
+  job.craftContourPathLengths = contourData.pathLengths;
+  job.craftContourTotalLength = contourData.totalLength;
+  job.lastCraftContourUpdateSeconds = elapsed;
+  job.effects.craftContourTubes = disposeFabricatorContourTubeSet(
+    job.effects.craftContourTubes,
+  );
+  job.effects.craftContourGlowTubes = disposeFabricatorContourTubeSet(
+    job.effects.craftContourGlowTubes,
+  );
+}
+
+function createFabricatorCraftContourPaths(meshEntries, y) {
+  return createFabricatorCraftContourData(meshEntries, y).paths;
+}
+
+function createFabricatorCraftContourData(meshEntries, y) {
+  const paths = [];
+  for (const entry of meshEntries) {
+    paths.push(...createFabricatorSliceContourLoopPaths(entry.meshData, y));
+  }
+  const entries = paths
+    .filter((path) => path.length >= 2)
+    .map((path) => ({ path, length: getFabricatorPathLength(path) }))
+    .filter((entry) => entry.length > 0.001)
+    .sort((a, b) => b.length - a.length);
+
+  return {
+    paths: entries.map((entry) => entry.path),
+    pathLengths: entries.map((entry) => entry.length),
+    totalLength: entries.reduce((sum, entry) => sum + entry.length, 0),
+  };
+}
+
+function updateFabricatorContourTubeSet(meshes, paths, options) {
+  const platformRoot = level?.platform?.root;
+  const nextMeshes = [];
+  const maxPathCount = 24;
+
+  for (let index = 0; index < Math.min(paths.length, maxPathCount); index += 1) {
+    const path = paths[index];
+    const existing = meshes[index];
+    const canUpdate =
+      existing &&
+      !existing.isDisposed?.() &&
+      existing.metadata?.pathPointCount === path.length;
+    if (existing && !canUpdate) {
+      existing.dispose(false, true);
+    }
+    const mesh = B.MeshBuilder.CreateTube(
+      `${options.name}-${index}`,
+      {
+        path,
+        radius: options.radius,
+        tessellation: 8,
+        cap: B.Mesh.CAP_ALL,
+        updatable: true,
+        instance: canUpdate ? existing : undefined,
+      },
+      scene,
+    );
+    if (!canUpdate) {
+      mesh.parent = platformRoot ?? null;
+      mesh.material = options.material;
+      mesh.isPickable = false;
+      mesh.checkCollisions = false;
+      mesh.receiveShadows = false;
+      mesh.metadata = {
+        ...(mesh.metadata ?? {}),
+        excludeFromBounds: true,
+        excludeFromCollision: true,
+        fabricatorDisassemblyEffect: true,
+      };
+    }
+    mesh.metadata = {
+      ...(mesh.metadata ?? {}),
+      pathPointCount: path.length,
+    };
+    nextMeshes.push(mesh);
+  }
+
+  for (let index = maxPathCount; index < meshes.length; index += 1) {
+    meshes[index]?.dispose(false, true);
+  }
+  for (let index = paths.length; index < Math.min(meshes.length, maxPathCount); index += 1) {
+    meshes[index]?.dispose(false, true);
+  }
+  return nextMeshes;
+}
+
+function disposeFabricatorContourTubeSet(meshes = []) {
+  for (const mesh of meshes) {
+    mesh?.dispose(false, true);
+  }
+  return [];
 }
 
 function completeFabricatorCraft(job) {
@@ -6549,6 +6668,128 @@ function appendFabricatorSliceIntersections(points, triangle, y) {
   points.push(intersections[0], intersections[1]);
 }
 
+function createFabricatorSliceContourLoopPaths(data, y) {
+  const positions = data?.platformPositions;
+  const indices = data?.sourceIndices;
+  if (!positions?.length || !indices?.length) return [];
+
+  const segments = [];
+  for (let index = 0; index < indices.length; index += 3) {
+    const triangle = [
+      getPlatformVertex(positions, indices[index]),
+      getPlatformVertex(positions, indices[index + 1]),
+      getPlatformVertex(positions, indices[index + 2]),
+    ];
+    const segment = getFabricatorSliceIntersectionSegment(triangle, y);
+    if (segment) segments.push(segment);
+  }
+  return createFabricatorContourPathsFromSegments(segments);
+}
+
+function getFabricatorSliceIntersectionSegment(triangle, y) {
+  const intersections = [];
+  for (let index = 0; index < 3; index += 1) {
+    const a = triangle[index];
+    const b = triangle[(index + 1) % 3];
+    const da = a.y - y;
+    const db = b.y - y;
+    if (Math.abs(da) < 0.000001) intersections.push(a);
+    if (da * db < 0) {
+      const amount = da / (da - db);
+      intersections.push(
+        new B.Vector3(
+          a.x + (b.x - a.x) * amount,
+          y,
+          a.z + (b.z - a.z) * amount,
+        ),
+      );
+    }
+  }
+
+  const unique = [];
+  for (const point of intersections) {
+    if (!unique.some((candidate) => candidate.subtract(point).lengthSquared() < 1e-10)) {
+      unique.push(point);
+    }
+  }
+  if (unique.length < 2) return null;
+  if (unique[0].subtract(unique[1]).lengthSquared() < 1e-10) return null;
+  return [unique[0], unique[1]];
+}
+
+function createFabricatorContourPathsFromSegments(segments) {
+  const endpointMap = new Map();
+  const unused = new Set();
+  segments.forEach((segment, index) => {
+    unused.add(index);
+    for (const point of segment) {
+      const key = getFabricatorContourPointKey(point);
+      if (!endpointMap.has(key)) endpointMap.set(key, []);
+      endpointMap.get(key).push(index);
+    }
+  });
+
+  const paths = [];
+  while (unused.size) {
+    const firstIndex = unused.values().next().value;
+    unused.delete(firstIndex);
+    const firstSegment = segments[firstIndex];
+    const path = [firstSegment[0], firstSegment[1]];
+
+    extendFabricatorContourPath(path, segments, endpointMap, unused, false);
+    extendFabricatorContourPath(path, segments, endpointMap, unused, true);
+
+    if (path.length >= 2) {
+      const first = path[0];
+      const last = path[path.length - 1];
+      if (first.subtract(last).lengthSquared() < 0.000001) {
+        path[path.length - 1] = first.clone();
+      }
+      paths.push(path);
+    }
+  }
+  return paths.filter((path) => getFabricatorPathLength(path) > 0.001);
+}
+
+function extendFabricatorContourPath(path, segments, endpointMap, unused, prepend) {
+  for (let guard = 0; guard < segments.length; guard += 1) {
+    const endpoint = prepend ? path[0] : path[path.length - 1];
+    const key = getFabricatorContourPointKey(endpoint);
+    const nextIndex = (endpointMap.get(key) ?? []).find((index) =>
+      unused.has(index),
+    );
+    if (nextIndex === undefined) return;
+    unused.delete(nextIndex);
+    const [a, b] = segments[nextIndex];
+    const nextPoint =
+      a.subtract(endpoint).lengthSquared() < b.subtract(endpoint).lengthSquared()
+        ? b
+        : a;
+    if (prepend) {
+      path.unshift(nextPoint);
+    } else {
+      path.push(nextPoint);
+    }
+  }
+}
+
+function getFabricatorContourPointKey(point) {
+  const precision = 10000;
+  return [
+    Math.round(point.x * precision),
+    Math.round(point.y * precision),
+    Math.round(point.z * precision),
+  ].join("|");
+}
+
+function getFabricatorPathLength(path) {
+  let length = 0;
+  for (let index = 1; index < path.length; index += 1) {
+    length += B.Vector3.Distance(path[index - 1], path[index]);
+  }
+  return length;
+}
+
 function createFabricatorLaserMaterial(
   name = "fabricator-red-fabrication-laser-material",
 ) {
@@ -6705,13 +6946,14 @@ function updateFabricatorDisassemblyEffects(job, progress) {
     const laneCount = Math.max(job.effects.beams.length, 1);
     job.effects.beams.forEach((beam, index) => {
       const start = starts[index] ?? starts[0];
-      const raster = getFabricatorDisassemblyRasterState(
-        job,
-        progress,
-        index,
-        laneCount,
-      );
-      const target = raster?.target;
+      const target =
+        getFabricatorCraftContourTraceTarget(job, index, laneCount) ??
+        getFabricatorDisassemblyRasterState(
+          job,
+          progress,
+          index,
+          laneCount,
+        )?.target;
       if (!beam?.core || !start || !target) return;
       const path = createFabricatorLaserPath(start, target, progress);
       B.MeshBuilder.CreateTube(
@@ -6743,13 +6985,14 @@ function updateFabricatorDisassemblyEffects(job, progress) {
   if (job.effects?.scanLines?.length) {
     const laneCount = Math.max(job.effects.scanLines.length, 1);
     job.effects.scanLines.forEach((scanLine, index) => {
-      const raster = getFabricatorDisassemblyRasterState(
-        job,
-        progress,
-        index,
-        laneCount,
-      );
-      const target = raster?.target;
+      const target =
+        getFabricatorCraftContourTraceTarget(job, index, laneCount) ??
+        getFabricatorDisassemblyRasterState(
+          job,
+          progress,
+          index,
+          laneCount,
+        )?.target;
       if (!scanLine || !target) return;
       const path = [
         target,
@@ -6768,7 +7011,7 @@ function updateFabricatorDisassemblyEffects(job, progress) {
       );
     });
   }
-  if (job.effects?.traceRing && job.meshData) {
+  if (job.effects?.traceRing && job.meshData && !job.disableTraceRing) {
     const sliceProgress = getFabricatorLayerSliceProgress(
       job.meshData,
       progress,
@@ -6860,6 +7103,55 @@ function updateFabricatorDisassemblyEffects(job, progress) {
   if (job.mesh && !job.disableMeshClipping && !job.mesh.isDisposed?.()) {
     updateFabricatorAsteroidReversePrintMesh(job, progress);
   }
+}
+
+function getFabricatorCraftContourTraceTarget(job, laneIndex = 0, laneCount = 1) {
+  const paths = job.craftContourPaths ?? [];
+  if (!paths.length) return null;
+
+  const pathLengths =
+    job.craftContourPathLengths ?? paths.map((path) => getFabricatorPathLength(path));
+  const totalLength =
+    job.craftContourTotalLength ??
+    pathLengths.reduce((sum, length) => sum + length, 0);
+  if (totalLength <= 0.0001) return null;
+
+  const safeLaneCount = Math.max(Math.floor(laneCount), 1);
+  const safeLaneIndex =
+    ((Math.floor(laneIndex) % safeLaneCount) + safeLaneCount) % safeLaneCount;
+  const traceSpeed = 0.2;
+  let distance =
+    (job.elapsed * traceSpeed +
+      (safeLaneIndex / safeLaneCount) * Math.max(totalLength, 0.0001)) %
+    totalLength;
+
+  for (let index = 0; index < paths.length; index += 1) {
+    const length = pathLengths[index];
+    if (distance > length) {
+      distance -= length;
+      continue;
+    }
+    return getPointAlongFabricatorPath(paths[index], distance);
+  }
+  return getPointAlongFabricatorPath(paths[0], 0);
+}
+
+function getPointAlongFabricatorPath(path, distance) {
+  if (!Array.isArray(path) || !path.length) return null;
+  if (path.length === 1) return path[0].clone();
+
+  let remaining = Math.max(0, Number(distance) || 0);
+  for (let index = 1; index < path.length; index += 1) {
+    const from = path[index - 1];
+    const to = path[index];
+    const length = B.Vector3.Distance(from, to);
+    if (length <= 0.000001) continue;
+    if (remaining <= length) {
+      return B.Vector3.Lerp(from, to, remaining / length);
+    }
+    remaining -= length;
+  }
+  return path[path.length - 1].clone();
 }
 
 function getFabricatorDisassemblyRasterState(
@@ -7590,6 +7882,12 @@ function cleanupFabricatorDisassemblyEffects(effects) {
   effects?.scanLine?.dispose(false, true);
   effects?.traceRing?.dispose(false, true);
   effects?.traceGlow?.dispose(false, true);
+  for (const contour of effects?.craftContourTubes ?? []) {
+    contour?.dispose(false, true);
+  }
+  for (const contour of effects?.craftContourGlowTubes ?? []) {
+    contour?.dispose(false, true);
+  }
   effects?.cutCap?.dispose(false, true);
   effects?.cutCapLight?.dispose?.();
   effects?.beamMaterial?.dispose?.();
@@ -9674,8 +9972,10 @@ function installPlayerLoop() {
         oxygenGeneratorUpdateElapsed = 0;
       }
       updateLifeSupport(seconds);
-      updateFabricatorDisassembly(seconds);
-      updateFabricatorCraft(seconds);
+      scene.metadata.profiler.measure("Fabricator", () => {
+        updateFabricatorDisassembly(seconds);
+        updateFabricatorCraft(seconds);
+      });
 
       if (zeroGravityMovement) {
         updateZeroGravityThrusters(move, platformPhysics, seconds);
