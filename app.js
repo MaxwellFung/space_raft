@@ -119,7 +119,7 @@ const backgroundMusic = createBackgroundMusic("./background.mp3");
 const BASE_MOUSE_SENSIBILITY = 2600;
 const GLB_PICKUP_PROMPT_RANGE = 1.8;
 const INTERACTION_UPDATE_SECONDS = 0.08;
-const PLACEMENT_UPDATE_SECONDS = 0.05;
+const PLACEMENT_UPDATE_SECONDS = 0;
 const MENU_STAR_DOME_RADIUS = 900;
 const PLACEMENT_RANGE = 3.2;
 const PLACEMENT_PADDING = 0.035;
@@ -132,6 +132,9 @@ const FABRICATOR_ASTEROID_BOTTOM_CLEARANCE = 0.1;
 const FABRICATOR_ASTEROID_FORWARD_OFFSET = 0.06;
 const FABRICATOR_ASTEROID_RIGHT_OFFSET = -0.0;
 const FABRICATOR_DISASSEMBLE_SECONDS = 10;
+const FABRICATOR_CRAFT_SECONDS = FABRICATOR_DISASSEMBLE_SECONDS;
+const FABRICATOR_CRAFT_PREVIEW_MAX_SIZE = 0.14;
+const FABRICATOR_CRAFT_PREVIEW_MIN_SIZE = 0.055;
 const FABRICATOR_LASER_RADIUS = 0.0012;
 const FABRICATOR_LASER_CORE_RADIUS = 0.0011;
 const FABRICATOR_LASER_GLOW_RADIUS = 0.0048;
@@ -143,6 +146,8 @@ const FABRICATOR_DISASSEMBLY_ENERGY_COST = 12;
 const FABRICATOR_RESOURCE_STACK_LIMIT = 16;
 const BATTERY_DEFAULT_ENERGY = 240;
 const BATTERY_MAX_ENERGY = 240;
+const WIRE_SPOOL_METERS = 10;
+const WIRE_METERS_PER_WORLD_UNIT = 1;
 const OXYGEN_GENERATOR_WATER_CAPACITY_LITERS = 100;
 const OXYGEN_GENERATOR_HYDROGEN_CAPACITY_LITERS = 100;
 const OXYGEN_GENERATOR_OXYGEN_CAPACITY_LITERS = 100;
@@ -161,7 +166,7 @@ const ASTEROID_MAX_SPEED = 5.6;
 const ASTEROID_CONTACT_SKIN = 0.004;
 const ASTEROID_PLAYER_PUSH_FRACTION = 0.42;
 const FABRICATOR_BATTERY_WIRE_RADIUS = 0.0048;
-const FABRICATOR_BATTERY_WIRE_SEGMENTS = 14;
+const POWER_WIRE_PREVIEW_RADIUS = 0.0062;
 const HELD_ASTEROID_DISTANCE = 1.35;
 const HELD_ASTEROID_OFFSET = new B.Vector3(0, -0.18, HELD_ASTEROID_DISTANCE);
 const TETHER_ATTACH_OFFSET = new B.Vector3(0, -0.36, 0);
@@ -347,6 +352,12 @@ addEventListener("keydown", (event) => {
     if (movementKeys.has(event.code)) event.preventDefault();
     return;
   }
+  if (event.code === "KeyY") {
+    event.preventDefault();
+    handlePowerWireKey(activeInteraction);
+    keys.delete("KeyY");
+    return;
+  }
   if (event.code === "KeyR" && getSelectedPlaceableItem()) {
     event.preventDefault();
     rotateSelectedFloorPlacement();
@@ -498,6 +509,7 @@ let helmetEquipInProgress = false;
 let playerTether = null;
 let playerPlaceholderRig = null;
 let heldAsteroid = null;
+let pendingPowerWire = null;
 let activeFabricatorRoot = null;
 let activeOxygenGeneratorRoot = null;
 let fabricatorAnalysisStaticKey = "";
@@ -508,8 +520,9 @@ let helmetOxygenMeter = null;
 let helmetOxygenFill = null;
 let helmetOxygenText = null;
 const asteroidBodies = new Set();
-const fabricatorBatteryWires = new Set();
+const powerConnectionWires = new Set();
 const fabricatorDisassemblyJobs = new Set();
+const fabricatorCraftJobs = new Set();
 
 const fabricatorResourceItems = {
   iron: {
@@ -535,6 +548,14 @@ const fabricatorResourceItems = {
     swatch: "#58b9e8",
     portraitModelUrl: "./assets/raw_materials/ice.glb",
     portraitRotation: [0.12, -0.62, 0],
+  },
+  silicon: {
+    id: "silicon",
+    name: "Silicon",
+    icon: "Si",
+    swatch: "#b8c7c4",
+    portraitModelUrl: "./assets/raw_materials/silicon.glb",
+    portraitRotation: [0.18, 0.74, -0.08],
   },
 };
 
@@ -572,8 +593,9 @@ const fabricatorRecipes = [
     category: "vitals",
     craftIcon: "airlock",
     description: "Seals a doorway so pressure can be managed safely.",
+    silicon: 3,
   }),
-  createFabricatorRecipe("oxygen-generator", "Oxygen Generator", 3, 4, 36, {
+  createFabricatorRecipe("oxygen-generator", "Oxygen Generator", 3, 2, 36, {
     category: "vitals",
     craftIcon: "oxygen-generator",
     description: "Splits stored water into breathable oxygen reserves.",
@@ -583,7 +605,7 @@ const fabricatorRecipes = [
     placementSurface: "floor",
     stackLimit: 1,
   }),
-  createFabricatorRecipe("battery", "Battery", 3, 4, 30, {
+  createFabricatorRecipe("battery", "Battery", 3, 3, 30, {
     category: "electricity",
     craftIcon: "battery",
     description: "Stores energy for fabricators and powered systems.",
@@ -592,10 +614,22 @@ const fabricatorRecipes = [
     energyStored: BATTERY_DEFAULT_ENERGY,
     maxEnergy: BATTERY_MAX_ENERGY,
   }),
-  createFabricatorRecipe("solar-panel", "Solar Panel", 3, 6, 48, {
+  createFabricatorRecipe("wire-spool", "Wire Spool", 0, 2, 12, {
+    category: "electricity",
+    craftIcon: "wire",
+    description: "Carries ten meters of insulated wire for power links.",
+    silicon: 1,
+    icon: "W",
+    swatch: "#b85042",
+    wireMeters: WIRE_SPOOL_METERS,
+    maxWireMeters: WIRE_SPOOL_METERS,
+    stackLimit: 1,
+  }),
+  createFabricatorRecipe("solar-panel", "Solar Panel", 0, 3, 48, {
     category: "electricity",
     craftIcon: "solar-panel",
     description: "Generates charge when it can see stellar light.",
+    silicon: 3,
   }),
   createFabricatorRecipe("drill", "Drill", 2, 1, 18, {
     category: "mining",
@@ -798,7 +832,9 @@ function createClothingSlot({
     placeholder: label.slice(0, 1),
   });
   slot.classList.add("clothing-item-slot");
-  slot.title = entry?.name ?? `${label} clothing slot`;
+  slot.title = entry
+    ? createInventoryItemTooltip(entry)
+    : `${label} clothing slot`;
 
   if (accepts && onDrop) {
     installClothingSlotDropHandlers(slot, accepts, onDrop);
@@ -870,7 +906,7 @@ function createItemSlot(entry, index, options = {}) {
 
   if (entry) {
     const { count = 1, icon = "", name = "", portrait = "" } = entry;
-    slot.title = name;
+    slot.title = createInventoryItemTooltip(entry);
     if (portrait) {
       const image = document.createElement("img");
       image.className = "slot-portrait";
@@ -906,6 +942,108 @@ function createItemSlot(entry, index, options = {}) {
   }
   slot.append(key);
   return slot;
+}
+
+function createInventoryItemTooltip(item) {
+  if (!item) return "";
+
+  const lines = [item.name ?? item.label ?? item.id ?? "Item"];
+  const count = item.count ?? 1;
+  if (item.id) lines.push(`ID: ${item.id}`);
+  if (count > 1) lines.push(`Count: ${count}`);
+
+  const stackLimit = getItemStackLimit(item);
+  if (Number.isFinite(stackLimit)) {
+    lines.push(`Stack: ${count}/${stackLimit}`);
+  }
+  if (isWireItem(item)) {
+    lines.push(
+      `Wire: ${formatWireMeters(getWireMetersOnSpool(item))}/${formatWireMeters(
+        getWireSpoolMaxMeters(item),
+      )}`,
+    );
+  }
+  if (isBatteryItem(item)) {
+    const stored = Number(item.energyStored ?? item.energy);
+    const max = Number(item.maxEnergy ?? BATTERY_MAX_ENERGY);
+    if (Number.isFinite(stored) || Number.isFinite(max)) {
+      lines.push(
+        `Energy: ${Math.round(Number.isFinite(stored) ? stored : 0)}/${Math.round(
+          Number.isFinite(max) ? max : BATTERY_MAX_ENERGY,
+        )} E`,
+      );
+    }
+  }
+  if (item.placementSurface) {
+    lines.push(`Placement: ${formatMetadataValue(item.placementSurface)}`);
+  }
+  if (item.modelUrl) {
+    lines.push(`Model: ${getMetadataFileName(item.modelUrl)}`);
+  }
+
+  const excluded = new Set([
+    "id",
+    "name",
+    "label",
+    "count",
+    "icon",
+    "swatch",
+    "portrait",
+    "modelUrl",
+    "portraitModelUrl",
+    "modelPortraitLoaded",
+    "modelPortraitLoading",
+    "modelPortraitFailed",
+    "placementSurface",
+    "wireMeters",
+    "maxWireMeters",
+    "energy",
+    "energyStored",
+    "maxEnergy",
+    "stackLimit",
+    "visor",
+    "animationGroups",
+    "importedAnimationGroups",
+  ]);
+  for (const [key, value] of Object.entries(item)) {
+    if (excluded.has(key) || value === undefined || value === null) continue;
+    if (!isTooltipMetadataValue(value)) continue;
+    lines.push(`${formatMetadataKey(key)}: ${formatMetadataValue(value)}`);
+  }
+
+  return lines.join("\n");
+}
+
+function isTooltipMetadataValue(value) {
+  if (["string", "number", "boolean"].includes(typeof value)) return true;
+  if (Array.isArray(value)) {
+    return value.every((entry) =>
+      ["string", "number", "boolean"].includes(typeof entry),
+    );
+  }
+  return false;
+}
+
+function formatMetadataKey(key) {
+  return String(key)
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatMetadataValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => formatMetadataValue(entry)).join(", ");
+  }
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  }
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+function getMetadataFileName(path) {
+  return String(path).split(/[\\/]/).filter(Boolean).pop() ?? String(path);
 }
 
 function installClothingSlotDropHandlers(slot, accepts, onDrop) {
@@ -1090,7 +1228,7 @@ function collectPickupInteraction(interaction) {
   renderInventoryGrid();
   refreshPlacementPreview();
   if (isBatteryItem(item) || isFabricatorItem(item)) {
-    queueFabricatorBatteryWireRefresh();
+    queuePowerConnectionWireRefresh();
   }
   return true;
 }
@@ -1289,7 +1427,7 @@ async function placeSelectedItem() {
     applyPlacementStateToRoot(root, item, state);
     refreshFabricatorReflectionProbe(root, item);
     installPlacedItemMetadata(root, item);
-    refreshFabricatorBatteryWires();
+    refreshPowerConnectionWires();
 
     consumeSelectedHotbarItem();
     renderHotbars();
@@ -2996,6 +3134,127 @@ function canAddInventoryItemCounts(items) {
   return emptySlots >= 0;
 }
 
+function getAvailableWireMeters() {
+  return [...hotbarItems, ...inventoryItems].reduce(
+    (total, entry) => total + getWireMetersOnSpool(entry),
+    0,
+  );
+}
+
+function consumeWireMeters(meters) {
+  let remaining = Math.max(0, Number(meters) || 0);
+  if (remaining <= 0) return true;
+  if (getAvailableWireMeters() + 0.0001 < remaining) return false;
+
+  for (const items of [hotbarItems, inventoryItems]) {
+    for (let index = 0; index < items.length && remaining > 0; index += 1) {
+      const entry = items[index];
+      if (!isWireItem(entry)) continue;
+
+      const available = getWireMetersOnSpool(entry);
+      const used = Math.min(available, remaining);
+      const nextMeters = Math.max(0, available - used);
+      remaining -= used;
+      if (nextMeters <= 0.001) {
+        items[index] = null;
+      } else {
+        entry.maxWireMeters = getWireSpoolMaxMeters(entry);
+        entry.wireMeters = Number(nextMeters.toFixed(2));
+      }
+    }
+  }
+
+  renderHotbars();
+  renderInventoryGrid();
+  return remaining <= 0.001;
+}
+
+function addWireMeters(meters) {
+  let remaining = Math.max(0, Number(meters) || 0);
+  if (remaining <= 0) return 0;
+
+  for (const entry of [...hotbarItems, ...inventoryItems]) {
+    if (remaining <= 0) break;
+    if (!isWireItem(entry)) continue;
+    const maxMeters = getWireSpoolMaxMeters(entry);
+    const current = getWireMetersOnSpool(entry);
+    const room = Math.max(0, maxMeters - current);
+    if (room <= 0.001) continue;
+    const added = Math.min(room, remaining);
+    entry.maxWireMeters = maxMeters;
+    entry.wireMeters = Number((current + added).toFixed(2));
+    remaining -= added;
+  }
+
+  while (remaining > 0.001) {
+    const slot = findEmptyInventorySlot();
+    if (!slot) break;
+    const metersForSpool = Math.min(WIRE_SPOOL_METERS, remaining);
+    slot.items[slot.index] = createWireSpoolInventoryItem(metersForSpool);
+    remaining -= metersForSpool;
+  }
+
+  renderHotbars();
+  renderInventoryGrid();
+  return Math.max(0, Number(remaining.toFixed(4)));
+}
+
+function getWireMeterStorageRoom() {
+  const spoolRoom = [...hotbarItems, ...inventoryItems].reduce(
+    (total, entry) =>
+      isWireItem(entry)
+        ? total +
+          Math.max(0, getWireSpoolMaxMeters(entry) - getWireMetersOnSpool(entry))
+        : total,
+    0,
+  );
+  const emptySlotRoom = [...hotbarItems, ...inventoryItems].filter(
+    (entry) => !entry,
+  ).length * WIRE_SPOOL_METERS;
+  return spoolRoom + emptySlotRoom;
+}
+
+function canAddWireMeters(meters) {
+  return getWireMeterStorageRoom() + 0.0001 >= Math.max(0, Number(meters) || 0);
+}
+
+function createWireSpoolInventoryItem(meters = WIRE_SPOOL_METERS) {
+  return {
+    id: "wire-spool",
+    name: "Wire Spool",
+    count: 1,
+    icon: "W",
+    swatch: "#b85042",
+    wireMeters: Number(
+      clamp(Number(meters) || 0, 0, WIRE_SPOOL_METERS).toFixed(2),
+    ),
+    maxWireMeters: WIRE_SPOOL_METERS,
+    stackLimit: 1,
+  };
+}
+
+function getWireMetersOnSpool(item) {
+  if (!isWireItem(item)) return 0;
+  const meters = Number(item.wireMeters ?? item.maxWireMeters);
+  return clamp(
+    Number.isFinite(meters) ? meters : WIRE_SPOOL_METERS,
+    0,
+    getWireSpoolMaxMeters(item),
+  );
+}
+
+function getWireSpoolMaxMeters(item) {
+  const maxMeters = Number(item?.maxWireMeters);
+  return Number.isFinite(maxMeters) && maxMeters > 0
+    ? maxMeters
+    : WIRE_SPOOL_METERS;
+}
+
+function formatWireMeters(meters) {
+  const value = Math.max(0, Number(meters) || 0);
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} m`;
+}
+
 function findHelmetInventorySlot() {
   const hotbarSlot = findHelmetSlot(hotbarItems);
   if (hotbarSlot !== -1) return { items: hotbarItems, index: hotbarSlot };
@@ -3055,6 +3314,17 @@ function isBatteryItem(entry) {
     id.includes("battery") ||
     name.includes("battery") ||
     modelUrl.includes("battery")
+  );
+}
+
+function isWireItem(entry) {
+  const id = entry?.id?.toLowerCase?.() ?? "";
+  const name = entry?.name?.toLowerCase?.() ?? "";
+  return (
+    id.includes("wire") ||
+    name.includes("wire") ||
+    Number.isFinite(Number(entry?.wireMeters)) ||
+    Number.isFinite(Number(entry?.maxWireMeters))
   );
 }
 
@@ -4207,7 +4477,8 @@ function renderFabricatorAnalysis() {
   const yieldValues = getAsteroidYield(mounted?.composition);
   const hasYield = Boolean(yieldValues);
   const disassembly = activeFabricatorRoot?.metadata?.fabricatorDisassembly;
-  const processing = Boolean(disassembly);
+  const crafting = activeFabricatorRoot?.metadata?.fabricatorCrafting;
+  const processing = Boolean(disassembly || crafting);
   const battery = getFabricatorBatteryRoot(activeFabricatorRoot);
   const energy = getBatteryEnergyState(battery);
   const selectedEntry = getSelectedFabricatorEntry(activeFabricatorRoot);
@@ -4227,7 +4498,11 @@ function renderFabricatorAnalysis() {
     if (!battery) {
       statusText = "No battery connected";
     } else if (processing) {
-      statusText = `Disassembling ${Math.ceil(disassembly.remaining)}s`;
+      statusText = disassembly
+        ? `Disassembling ${Math.ceil(disassembly.remaining)}s`
+        : `Fabricating ${crafting.recipe?.name ?? "item"} ${Math.ceil(
+            crafting.remaining ?? 0,
+          )}s`;
     } else if (selectedEntry?.type === "disassembly" && !hasYield) {
       statusText = "Load an asteroid to preview yield";
     } else if (!canUseEnergy) {
@@ -4297,9 +4572,11 @@ function createFabricatorAnalysisStaticKey({
     energy.max,
     getInventoryItemCount("iron"),
     getInventoryItemCount("copper"),
+    getInventoryItemCount("silicon"),
     hasYield ? yieldValues.iron : "-",
     hasYield ? yieldValues.copper : "-",
     hasYield ? yieldValues.water : "-",
+    hasYield ? yieldValues.silicon : "-",
     canAct ? "can-act" : "blocked",
   ].join("|");
 }
@@ -4563,13 +4840,7 @@ function getFabricatorEntryRequirements(entry, context = {}) {
   const requirements = [];
   if (entry.type === "recipe") {
     const { recipe } = entry;
-    requirements.push(
-      createItemRequirement(fabricatorResourceItems.iron, recipe.ingredients.iron),
-      createItemRequirement(
-        fabricatorResourceItems.copper,
-        recipe.ingredients.copper,
-      ),
-    );
+    requirements.push(...createRecipeIngredientRequirements(recipe));
   } else {
     requirements.push({
       id: "asteroid",
@@ -4613,6 +4884,12 @@ function createItemRequirement(item, needed) {
     needed,
     met: owned >= needed,
   };
+}
+
+function createRecipeIngredientRequirements(recipe) {
+  return getRecipeIngredientEntries(recipe)
+    .map(([id, needed]) => createItemRequirement(fabricatorResourceItems[id], needed))
+    .filter((requirement) => Boolean(requirement.item));
 }
 
 function canActivateFabricatorEntry(entry, context = {}) {
@@ -4751,6 +5028,10 @@ function createFabricatorIcon(type) {
     addPath("M11 20h37v27H11Z");
     addPath("M48 28h5v11h-5");
     addPath("M29 25 22 36h7l-2 8 10-14h-7l-1-5Z", "currentColor");
+  } else if (type === "wire") {
+    addPath("M23 17a13 13 0 0 0-8 12c0 8 6 13 14 13h6");
+    addPath("M41 47a13 13 0 0 0 8-12c0-8-6-13-14-13h-6");
+    addPath("M24 32h16c8 0 14 4 14 10s-6 10-14 10H29");
   } else if (type === "solar-panel") {
     addPath("M12 17h40v25H12Z");
     addPath("M22 17v25M32 17v25M42 17v25M12 29h40");
@@ -4784,13 +5065,18 @@ function createFabricatorRecipe(
   energyCost,
   itemOverrides = {},
 ) {
+  const { silicon = 0, ...itemMetadata } = itemOverrides;
   return {
     id,
     name,
-    description: itemOverrides.description ?? "Fabricated utility component.",
-    category: itemOverrides.category ?? "mining",
-    craftIcon: itemOverrides.craftIcon ?? id,
-    ingredients: { iron, copper },
+    description: itemMetadata.description ?? "Fabricated utility component.",
+    category: itemMetadata.category ?? "mining",
+    craftIcon: itemMetadata.craftIcon ?? id,
+    ingredients: {
+      iron,
+      copper,
+      silicon,
+    },
     energyCost,
     item: {
       id,
@@ -4802,26 +5088,46 @@ function createFabricatorRecipe(
         .join("")
         .slice(0, 3),
       swatch: "#7ea0a8",
-      ...itemOverrides,
+      ...itemMetadata,
     },
   };
 }
 
 function formatRecipeCost(recipe) {
   if (!recipe) return "-";
-  return `${recipe.ingredients.iron} Fe · ${recipe.ingredients.copper} Cu · ${recipe.energyCost} E`;
+  const ingredientText = getRecipeIngredientEntries(recipe)
+    .map(([id, count]) => `${count} ${fabricatorResourceItems[id]?.icon ?? id}`)
+    .join(" · ");
+  return `${ingredientText} · ${recipe.energyCost} E`;
 }
 
 function canFabricateRecipe(recipe) {
   if (!recipe) return false;
-  return (
-    getInventoryItemCount("iron") >= recipe.ingredients.iron &&
-    getInventoryItemCount("copper") >= recipe.ingredients.copper
+  return getRecipeIngredientEntries(recipe).every(
+    ([id, count]) => getInventoryItemCount(id) >= count,
   );
 }
 
+function getRecipeIngredientEntries(recipe) {
+  return Object.entries(recipe?.ingredients ?? {}).filter(([, count]) => count > 0);
+}
+
+function consumeRecipeIngredients(recipe) {
+  if (!canFabricateRecipe(recipe)) return false;
+  for (const [id, count] of getRecipeIngredientEntries(recipe)) {
+    if (!consumeInventoryItemCount(id, count)) return false;
+  }
+  return true;
+}
+
 function startFabricatorDisassembly(root) {
-  if (!root || root.metadata?.fabricatorDisassembly) return false;
+  if (
+    !root ||
+    root.metadata?.fabricatorDisassembly ||
+    root.metadata?.fabricatorCrafting
+  ) {
+    return false;
+  }
 
   const mounted = root.metadata?.fabricatorMountedAsteroid;
   const yieldValues = getAsteroidYield(mounted?.composition);
@@ -4873,8 +5179,14 @@ function startFabricatorDisassembly(root) {
   return true;
 }
 
-function fabricateSelectedRecipe(root) {
-  if (!root || root.metadata?.fabricatorDisassembly) return false;
+async function fabricateSelectedRecipe(root) {
+  if (
+    !root ||
+    root.metadata?.fabricatorDisassembly ||
+    root.metadata?.fabricatorCrafting
+  ) {
+    return false;
+  }
 
   const recipe = getSelectedFabricatorRecipe(root);
   if (!recipe) {
@@ -4882,7 +5194,7 @@ function fabricateSelectedRecipe(root) {
     return false;
   }
   if (!canFabricateRecipe(recipe)) {
-    updateInteractionPrompt({ prompt: "Missing iron or copper" });
+    updateInteractionPrompt({ prompt: "Missing materials" });
     renderFabricatorAnalysis();
     return false;
   }
@@ -4896,20 +5208,46 @@ function fabricateSelectedRecipe(root) {
     return false;
   }
 
-  if (
-    !consumeInventoryItemCount("iron", recipe.ingredients.iron) ||
-    !consumeInventoryItemCount("copper", recipe.ingredients.copper)
-  ) {
+  if (!consumeRecipeIngredients(recipe)) {
     refundFabricatorEnergy(root, recipe.energyCost);
-    updateInteractionPrompt({ prompt: "Missing iron or copper" });
+    updateInteractionPrompt({ prompt: "Missing materials" });
     renderFabricatorAnalysis();
     return false;
   }
 
-  addInventoryItemCount(recipe.item, 1);
-  renderFabricatorAnalysis();
-  updateInteractionPrompt({ prompt: `Fabricated ${recipe.name}` });
-  return true;
+  closePlayerModals();
+  if (!recipe.item?.modelUrl) {
+    addInventoryItemCount(recipe.item, 1);
+    renderHotbars();
+    renderInventoryGrid();
+    showInventoryRewardToast(recipe.item, 1);
+    updateInteractionPrompt({ prompt: `Fabricated ${recipe.name}` });
+    return true;
+  }
+
+  try {
+    await startFabricatorCraftJob(root, recipe);
+    updateInteractionPrompt({ prompt: `Fabricating ${recipe.name}` });
+    return true;
+  } catch (error) {
+    console.error("Failed to start fabricator craft job.", error);
+    refundFabricatorEnergy(root, recipe.energyCost);
+    refundRecipeIngredients(recipe);
+    if (root.metadata?.fabricatorCrafting?.recipe === recipe) {
+      delete root.metadata.fabricatorCrafting;
+    }
+    updateInteractionPrompt({ prompt: `Could not fabricate ${recipe.name}` });
+    return false;
+  }
+}
+
+function refundRecipeIngredients(recipe) {
+  for (const [id, count] of getRecipeIngredientEntries(recipe)) {
+    const item = fabricatorResourceItems[id];
+    if (item && count > 0) addInventoryItemCount(item, count);
+  }
+  renderHotbars();
+  renderInventoryGrid();
 }
 
 function createFabricatorRewards(yieldValues) {
@@ -4917,6 +5255,7 @@ function createFabricatorRewards(yieldValues) {
     { item: fabricatorResourceItems.iron, count: yieldValues.iron },
     { item: fabricatorResourceItems.water, count: yieldValues.water },
     { item: fabricatorResourceItems.copper, count: yieldValues.copper },
+    { item: fabricatorResourceItems.silicon, count: yieldValues.silicon },
   ].filter(({ count }) => count > 0);
 }
 
@@ -5121,18 +5460,7 @@ function consumeBatteryEnergy(battery, amount) {
 }
 
 function getOxygenGeneratorBatteryRoot(root) {
-  const linked = root?.metadata?.connectedBattery;
-  if (
-    isActivePlacedRoot(linked) &&
-    isBatteryItem(linked.metadata?.placedItem)
-  ) {
-    return linked;
-  }
-
-  return findClosestPlacedRoot(
-    root,
-    getPlacedItemRoots((item) => isBatteryItem(item)),
-  );
+  return getConnectedBatteryRoot(root);
 }
 
 function renderOxygenGeneratorPanel() {
@@ -5287,16 +5615,7 @@ function formatResourceBurnRate(value, unit) {
 }
 
 function getFabricatorBatteryRoot(root) {
-  const linked = root?.metadata?.connectedBattery;
-  if (
-    isActivePlacedRoot(linked) &&
-    isBatteryItem(linked.metadata?.placedItem)
-  ) {
-    return linked;
-  }
-
-  const batteries = getPlacedItemRoots((item) => isBatteryItem(item));
-  return findClosestPlacedRoot(root, batteries) ?? null;
+  return getConnectedBatteryRoot(root);
 }
 
 function getBatteryEnergyState(root) {
@@ -5432,6 +5751,301 @@ function grantFabricatorRewards(rewards) {
   return addedRewards;
 }
 
+async function startFabricatorCraftJob(root, recipe) {
+  const loadingJob = {
+    root,
+    recipe,
+    elapsed: 0,
+    remaining: FABRICATOR_CRAFT_SECONDS,
+    duration: FABRICATOR_CRAFT_SECONDS,
+    loading: true,
+  };
+  root.metadata = {
+    ...(root.metadata ?? {}),
+    fabricatorCrafting: loadingJob,
+  };
+
+  const previewItem = createFabricatorCraftPreviewItem(recipe.item, root);
+  const previewRoot = await loadItemModelRoot(previewItem, {
+    name: `${recipe.id}-fabricating-preview`,
+    pickable: false,
+    hologram: true,
+  });
+  if (!isActivePlacedRoot(root)) {
+    previewRoot.dispose(false, true);
+    throw new Error("Fabricator unavailable");
+  }
+
+  positionFabricatorCraftPreviewRoot(previewRoot, root, previewItem);
+  const meshEntries = createFabricatorCraftMeshEntries(previewRoot);
+  if (!meshEntries.length) {
+    previewRoot.dispose(false, true);
+    throw new Error("Crafted model has no printable meshes");
+  }
+
+  const primaryEntry = getPrimaryFabricatorCraftMeshEntry(meshEntries);
+  const clipMaterials = installFabricatorCraftClipMaterials(previewRoot);
+  const clipBounds = getRootBoundsInPlatform(previewRoot);
+  const job = {
+    root,
+    recipe,
+    previewRoot,
+    meshEntries,
+    mesh: primaryEntry.mesh,
+    meshData: primaryEntry.meshData,
+    disableMeshClipping: true,
+    clipMaterials,
+    clipBounds,
+    effects: createFabricatorDisassemblyEffects(
+      root,
+      primaryEntry.mesh,
+      primaryEntry.meshData,
+      { cutCap: false },
+    ),
+    elapsed: 0,
+    remaining: FABRICATOR_CRAFT_SECONDS,
+    duration: FABRICATOR_CRAFT_SECONDS,
+  };
+  root.metadata.fabricatorCrafting = job;
+  fabricatorCraftJobs.add(job);
+  updateFabricatorCraftJobEffects(job, 0);
+  return job;
+}
+
+function createFabricatorCraftPreviewItem(item, fabricatorRoot) {
+  return {
+    ...item,
+    maxSize: getFabricatorCraftPreviewMaxSize(item, fabricatorRoot),
+  };
+}
+
+function getFabricatorCraftPreviewMaxSize(item, fabricatorRoot) {
+  const configuredSize = Number(item?.maxSize);
+  const itemSize =
+    Number.isFinite(configuredSize) && configuredSize > 0
+      ? configuredSize
+      : FABRICATOR_CRAFT_PREVIEW_MAX_SIZE;
+  const bounds = fabricatorRoot ? getRootBoundsInPlatform(fabricatorRoot) : null;
+  if (!bounds) {
+    return clamp(
+      itemSize,
+      FABRICATOR_CRAFT_PREVIEW_MIN_SIZE,
+      FABRICATOR_CRAFT_PREVIEW_MAX_SIZE,
+    );
+  }
+
+  const size = bounds.max.subtract(bounds.min);
+  const fitSize = Math.min(
+    FABRICATOR_CRAFT_PREVIEW_MAX_SIZE,
+    Math.max(size.x, 0.001) * 0.48,
+    Math.max(size.y, 0.001) * 0.7,
+  );
+  return clamp(
+    Math.min(itemSize, fitSize),
+    FABRICATOR_CRAFT_PREVIEW_MIN_SIZE,
+    FABRICATOR_CRAFT_PREVIEW_MAX_SIZE,
+  );
+}
+
+function positionFabricatorCraftPreviewRoot(previewRoot, fabricatorRoot, item) {
+  const platformRoot = level?.platform?.root;
+  const bounds = fabricatorRoot ? getRootBoundsInPlatform(fabricatorRoot) : null;
+  if (!previewRoot || !platformRoot || !bounds) return;
+
+  previewRoot.parent = platformRoot;
+  previewRoot.rotation = B.Vector3.FromArray(resolveItemRotation(item));
+  previewRoot.computeWorldMatrix(true);
+  const center = bounds.min.add(bounds.max).scale(0.5);
+  const forward = getFabricatorAsteroidForwardDirection(bounds);
+  const right = getFabricatorAsteroidRightDirection(forward);
+  const current = getNodePositionInPlatform(previewRoot);
+  const target = new B.Vector3(center.x, current.y, center.z)
+    .addInPlace(forward.scale(FABRICATOR_ASTEROID_FORWARD_OFFSET))
+    .addInPlace(right.scale(FABRICATOR_ASTEROID_RIGHT_OFFSET));
+  setNodePositionInPlatform(previewRoot, target);
+  settleFabricatorCraftPreviewOnSurface(
+    previewRoot,
+    bounds.min.y + FABRICATOR_ASTEROID_BOTTOM_CLEARANCE,
+  );
+}
+
+function settleFabricatorCraftPreviewOnSurface(previewRoot, surfaceY) {
+  const bounds = getRootBoundsInPlatform(previewRoot);
+  if (!bounds) return;
+  previewRoot.position.y += surfaceY - bounds.min.y;
+  previewRoot.computeWorldMatrix(true);
+}
+
+function createFabricatorCraftMeshEntries(previewRoot) {
+  return getRootRenderableMeshes(previewRoot)
+    .filter(
+      (mesh) =>
+        mesh.isVisible !== false &&
+        mesh.visibility !== 0 &&
+        !mesh.metadata?.itemCollisionMesh,
+    )
+    .map((mesh) => ({
+      mesh,
+      meshData: createFabricatorDisassemblyMeshData(mesh),
+    }))
+    .filter((entry) => Boolean(entry.meshData));
+}
+
+function installFabricatorCraftClipMaterials(previewRoot) {
+  const cache = new Map();
+  for (const mesh of getRootRenderableMeshes(previewRoot)) {
+    if (!mesh.material) continue;
+    mesh.material = cloneFabricatorCraftClipMaterial(mesh.material, cache);
+  }
+  return [...cache.values()].filter(
+    (material) => !material.subMaterials?.length,
+  );
+}
+
+function cloneFabricatorCraftClipMaterial(material, cache) {
+  if (!material) return material;
+  if (cache.has(material)) return cache.get(material);
+
+  const clone =
+    material.clone?.(`${material.name ?? "material"}-fabricator-crop`) ??
+    material;
+  cache.set(material, clone);
+
+  if (clone.subMaterials?.length) {
+    clone.subMaterials = clone.subMaterials.map((subMaterial) =>
+      cloneFabricatorCraftClipMaterial(subMaterial, cache),
+    );
+  } else {
+    clone.backFaceCulling = false;
+    clone.twoSidedLighting = true;
+    clone.clipPlane = null;
+  }
+  return clone;
+}
+
+function getPrimaryFabricatorCraftMeshEntry(entries) {
+  return entries.reduce((best, entry) => {
+    const bestVolume = getFabricatorMeshDataVolume(best.meshData);
+    const entryVolume = getFabricatorMeshDataVolume(entry.meshData);
+    return entryVolume > bestVolume ? entry : best;
+  }, entries[0]);
+}
+
+function getFabricatorMeshDataVolume(data) {
+  const min = data?.platformMin ?? data?.min;
+  const max = data?.platformMax ?? data?.max;
+  if (!min || !max) return 0;
+  return Math.max(max.x - min.x, 0.0001) *
+    Math.max(max.y - min.y, 0.0001) *
+    Math.max(max.z - min.z, 0.0001);
+}
+
+function updateFabricatorCraft(seconds) {
+  if (!fabricatorCraftJobs.size) return;
+
+  for (const job of [...fabricatorCraftJobs]) {
+    if (
+      !job.root ||
+      job.root.isDisposed?.() ||
+      !job.previewRoot ||
+      job.previewRoot.isDisposed?.()
+    ) {
+      cancelFabricatorCraft(job);
+      continue;
+    }
+
+    job.elapsed = Math.min(job.elapsed + seconds, job.duration);
+    job.remaining = Math.max(0, job.duration - job.elapsed);
+    const progress = job.duration > 0 ? job.elapsed / job.duration : 1;
+    updateFabricatorCraftJobEffects(job, progress);
+
+    if (activeFabricatorRoot === job.root) {
+      renderFabricatorAnalysis();
+    }
+    if (progress >= 1) {
+      completeFabricatorCraft(job);
+    }
+  }
+}
+
+function updateFabricatorCraftJobEffects(job, progress) {
+  const disassemblyProgress = clamp(1 - progress, 0, 0.999999);
+  updateFabricatorCraftPreviewCrop(job, progress);
+  updateFabricatorDisassemblyEffects(job, disassemblyProgress);
+}
+
+function updateFabricatorCraftPreviewCrop(job, progress) {
+  if (!job.previewRoot || job.previewRoot.isDisposed?.()) return;
+  const bounds = job.clipBounds ?? getRootBoundsInPlatform(job.previewRoot);
+  if (!bounds) return;
+
+  const reveal = smoothstep(0, 0.94, clamp(progress, 0, 1));
+  const height = bounds.max.y - bounds.min.y;
+  const cropY = bounds.min.y + height * reveal;
+  setFabricatorCraftClipPlane(job, cropY);
+}
+
+function setFabricatorCraftClipPlane(job, platformY) {
+  const platformRoot = level?.platform?.root;
+  if (!platformRoot) return;
+
+  platformRoot.computeWorldMatrix?.(true);
+  const platformMatrix = platformRoot.getWorldMatrix();
+  const worldPoint = B.Vector3.TransformCoordinates(
+    new B.Vector3(0, platformY, 0),
+    platformMatrix,
+  );
+  const worldNormal = B.Vector3.TransformNormal(
+    new B.Vector3(0, 1, 0),
+    platformMatrix,
+  );
+  if (worldNormal.lengthSquared() <= 0.000001) return;
+  worldNormal.normalize();
+
+  const plane = new B.Plane(
+    worldNormal.x,
+    worldNormal.y,
+    worldNormal.z,
+    -B.Vector3.Dot(worldNormal, worldPoint),
+  );
+  for (const material of job.clipMaterials ?? []) {
+    material.clipPlane = plane;
+  }
+}
+
+function completeFabricatorCraft(job) {
+  fabricatorCraftJobs.delete(job);
+  cleanupFabricatorDisassemblyEffects(job.effects);
+  if (job.root?.metadata?.fabricatorCrafting === job) {
+    delete job.root.metadata.fabricatorCrafting;
+  }
+  job.previewRoot?.dispose(false, true);
+
+  const added = addInventoryItemCount(job.recipe.item, 1);
+  renderHotbars();
+  renderInventoryGrid();
+  refreshPlacementPreview();
+  if (activeFabricatorRoot === job.root) {
+    renderFabricatorAnalysis();
+  }
+  if (added) showInventoryRewardToast(job.recipe.item, 1);
+  updateInteractionPrompt({
+    prompt: added
+      ? `Fabricated ${job.recipe.name}`
+      : `Fabricated ${job.recipe.name} - inventory full`,
+  });
+}
+
+function cancelFabricatorCraft(job) {
+  fabricatorCraftJobs.delete(job);
+  cleanupFabricatorDisassemblyEffects(job.effects);
+  job.previewRoot?.dispose(false, true);
+  if (job.root?.metadata?.fabricatorCrafting === job) {
+    delete job.root.metadata.fabricatorCrafting;
+  }
+  if (activeFabricatorRoot === job.root) renderFabricatorAnalysis();
+}
+
 function showInventoryRewardToasts(rewards) {
   for (const reward of rewards) {
     showInventoryRewardToast(reward.item, reward.count);
@@ -5477,6 +6091,7 @@ function createFabricatorDisassemblyEffects(
   root,
   asteroidMesh,
   meshData = null,
+  options = {},
 ) {
   const platformRoot = level?.platform?.root;
   if (!platformRoot || !asteroidMesh) return null;
@@ -5556,7 +6171,10 @@ function createFabricatorDisassemblyEffects(
   });
   const traceMaterial = createFabricatorTraceMaterial();
   const traceGlowMaterial = createFabricatorTraceGlowMaterial();
-  const cutCapMaterial = createFabricatorCutCapMaterial(asteroidMesh);
+  const showCutCap = options.cutCap !== false;
+  const cutCapMaterial = showCutCap
+    ? createFabricatorCutCapMaterial(asteroidMesh)
+    : null;
   const initialSliceProgress = meshData
     ? getFabricatorLayerSliceProgress(meshData, 0)
     : 0;
@@ -5602,14 +6220,20 @@ function createFabricatorDisassemblyEffects(
   };
   traceRing.metadata = { ...(traceRing.metadata ?? {}), ...traceMetadata };
   traceGlow.metadata = { ...(traceGlow.metadata ?? {}), ...traceMetadata };
-  const cutCap = createFabricatorCutCapMesh(
-    "fabricator-rock-cut-cap",
-    initialTracePath,
-    cutCapMaterial,
-  );
-  cutCap.parent = platformRoot;
-  cutCap.metadata = { ...(cutCap.metadata ?? {}), ...traceMetadata };
-  const cutCapLight = createFabricatorCutCapLight(cutCap, initialTracePath);
+  const cutCap = showCutCap
+    ? createFabricatorCutCapMesh(
+        "fabricator-rock-cut-cap",
+        initialTracePath,
+        cutCapMaterial,
+      )
+    : null;
+  if (cutCap) {
+    cutCap.parent = platformRoot;
+    cutCap.metadata = { ...(cutCap.metadata ?? {}), ...traceMetadata };
+  }
+  const cutCapLight = showCutCap
+    ? createFabricatorCutCapLight(cutCap, initialTracePath)
+    : null;
 
   return {
     beams,
@@ -6233,7 +6857,7 @@ function updateFabricatorDisassemblyEffects(job, progress) {
       0.018,
     );
   }
-  if (job.mesh && !job.mesh.isDisposed?.()) {
+  if (job.mesh && !job.disableMeshClipping && !job.mesh.isDisposed?.()) {
     updateFabricatorAsteroidReversePrintMesh(job, progress);
   }
 }
@@ -7985,13 +8609,8 @@ function getCollectedPickupIds() {
 
 function getPlacedItemsForSave() {
   const placed = [];
-  const roots = new Set();
-  for (const mesh of scene?.meshes ?? []) {
-    const root = mesh.metadata?.glbPickupRoot;
-    if (root?.metadata?.placedItem && root.isEnabled?.() !== false) {
-      roots.add(root);
-    }
-  }
+  const roots = getPlacedItemRoots(() => true);
+  const rootIndex = new Map(roots.map((root, index) => [root, index]));
 
   for (const root of roots) {
     const itemForSave = { ...root.metadata.placedItem };
@@ -8011,6 +8630,14 @@ function getPlacedItemsForSave() {
       position: vectorToArray(root.position),
       rotationDegrees: vectorRadiansToDegrees(root.rotation),
     };
+    const connectedBatteryIndex = rootIndex.get(getConnectedBatteryRoot(root));
+    if (Number.isInteger(connectedBatteryIndex)) {
+      placedItem.connectedBatteryIndex = connectedBatteryIndex;
+      const wireMeters = getPowerWireConnectionStoredMeters(root);
+      if (wireMeters > 0) {
+        placedItem.connectedWireMeters = Number(wireMeters.toFixed(2));
+      }
+    }
     placed.push(placedItem);
   }
   return placed;
@@ -8239,7 +8866,11 @@ async function restoreHelmetState(helmet, lifeSupport) {
 
 async function restorePlacedItems(placedItems) {
   if (!Array.isArray(placedItems)) return;
-  await Promise.all(placedItems.map((placed) => restorePlacedItem(placed)));
+  const roots = await Promise.all(
+    placedItems.map((placed) => restorePlacedItem(placed)),
+  );
+  restorePlacedPowerConnections(placedItems, roots);
+  refreshPowerConnectionWires();
 }
 
 async function restorePlacedItem(placed) {
@@ -8257,40 +8888,54 @@ async function restorePlacedItem(placed) {
     }
     installPlacedItemMetadata(root, placed.item);
     refreshFabricatorReflectionProbe(root, placed.item);
-    queueFabricatorBatteryWireRefresh();
+    return root;
   } catch (error) {
     console.error("Failed to restore placed item.", error);
+    return null;
   }
 }
 
-function queueFabricatorBatteryWireRefresh() {
-  requestAnimationFrame(() => refreshFabricatorBatteryWires());
+function restorePlacedPowerConnections(placedItems, roots) {
+  for (let index = 0; index < placedItems.length; index += 1) {
+    const machine = roots[index];
+    const batteryIndex = Number(placedItems[index]?.connectedBatteryIndex);
+    const battery = Number.isInteger(batteryIndex) ? roots[batteryIndex] : null;
+    if (!machine || !battery) continue;
+    const savedMeters = Number(placedItems[index]?.connectedWireMeters);
+    connectPowerWire(
+      battery,
+      machine,
+      Number.isFinite(savedMeters) && savedMeters > 0
+        ? savedMeters
+        : getPowerWireConnectionLengthMeters(battery, machine),
+    );
+  }
 }
 
-function refreshFabricatorBatteryWires() {
-  for (const wire of fabricatorBatteryWires) {
+function queuePowerConnectionWireRefresh() {
+  requestAnimationFrame(() => refreshPowerConnectionWires());
+}
+
+function refreshPowerConnectionWires() {
+  for (const wire of powerConnectionWires) {
     wire.dispose(false, true);
   }
-  fabricatorBatteryWires.clear();
+  powerConnectionWires.clear();
 
-  const fabricators = getPlacedItemRoots((item) => isFabricatorItem(item));
   const batteries = getPlacedItemRoots((item) => isBatteryItem(item));
-  for (const fabricator of fabricators) {
-    delete fabricator.metadata.connectedBattery;
-  }
   for (const battery of batteries) {
     initializeBatteryEnergy(battery);
   }
-  if (!fabricators.length || !batteries.length) return;
 
-  const usedBatteries = new Set();
-  for (const fabricator of fabricators) {
-    const battery = findClosestPlacedRoot(fabricator, batteries, usedBatteries);
-    if (!battery) continue;
-    usedBatteries.add(battery);
-    fabricator.metadata.connectedBattery = battery;
-    const wire = createFabricatorBatteryWire(fabricator, battery);
-    if (wire) fabricatorBatteryWires.add(wire);
+  for (const machine of getPoweredMachineRoots()) {
+    const battery = getConnectedBatteryRoot(machine);
+    if (!battery) {
+      clearPowerWireConnection(machine);
+      continue;
+    }
+
+    const wire = createPowerConnectionWire(machine, battery);
+    if (wire) powerConnectionWires.add(wire);
   }
 }
 
@@ -8315,43 +8960,83 @@ function isActivePlacedRoot(root) {
   );
 }
 
-function findClosestPlacedRoot(source, candidates, excluded = new Set()) {
-  let closest = null;
-  let closestDistance = Infinity;
-  for (const candidate of candidates) {
-    if (excluded.has(candidate)) continue;
-    const distance = source.position
-      .subtract(candidate.position)
-      .lengthSquared();
-    if (distance < closestDistance) {
-      closest = candidate;
-      closestDistance = distance;
-    }
-  }
-  return closest;
+function getPoweredMachineRoots() {
+  return getPlacedItemRoots((item) => isPoweredMachineItem(item));
 }
 
-function createFabricatorBatteryWire(fabricator, battery) {
+function isPoweredMachineItem(item) {
+  return isFabricatorItem(item) || isOxygenGeneratorItem(item);
+}
+
+function getConnectedBatteryRoot(machine) {
+  const linked = machine?.metadata?.connectedBattery;
+  if (
+    isActivePlacedRoot(linked) &&
+    isBatteryItem(linked.metadata?.placedItem)
+  ) {
+    return linked;
+  }
+  return null;
+}
+
+function connectPowerWire(battery, machine, wireMeters = null) {
+  if (!isActivePlacedRoot(battery) || !isActivePlacedRoot(machine)) return false;
+  if (!isBatteryItem(battery.metadata?.placedItem)) return false;
+  if (!isPoweredMachineItem(machine.metadata?.placedItem)) return false;
+  if (battery === machine) return false;
+
+  initializeBatteryEnergy(battery);
+  const connectionMeters = Number(wireMeters);
+  const measuredMeters = getPowerWireConnectionLengthMeters(battery, machine);
+  machine.metadata = {
+    ...(machine.metadata ?? {}),
+    connectedBattery: battery,
+    powerWireMeters:
+      Number.isFinite(connectionMeters) && connectionMeters > 0
+        ? connectionMeters
+        : measuredMeters,
+  };
+  refreshPowerConnectionWires();
+  if (activeFabricatorRoot === machine) renderFabricatorAnalysis();
+  if (activeOxygenGeneratorRoot === machine) renderOxygenGeneratorPanel();
+  return true;
+}
+
+function removePowerConnectionsForRoot(root, options = {}) {
+  if (!root) return;
+  if (pendingPowerWire?.source === root) {
+    cancelPowerWireExtension();
+  }
+  removePowerConnectionsForNode(root, {
+    refund: options.refund !== false,
+  });
+  refreshPowerConnectionWires();
+}
+
+function createPowerConnectionWire(machine, battery) {
   const platformRoot = level?.platform?.root;
   if (!platformRoot) return null;
 
-  const fabricatorPoint = getWireAnchorPoint(fabricator, "fabricator");
+  const machinePoint = getWireAnchorPoint(
+    machine,
+    getPowerWireAnchorType(machine),
+  );
   const batteryPoint = getWireAnchorPoint(battery, "battery");
-  if (!fabricatorPoint || !batteryPoint) return null;
+  if (!machinePoint || !batteryPoint) return null;
 
-  const path = createFabricatorBatteryWirePath(fabricatorPoint, batteryPoint);
+  const path = createPowerWirePath(machinePoint, batteryPoint);
   const wire = B.MeshBuilder.CreateTube(
-    "fabricator-battery-red-wire",
+    "power-connection-red-wire",
     {
       path,
       radius: FABRICATOR_BATTERY_WIRE_RADIUS,
-      tessellation: 24,
+      tessellation: 8,
       cap: B.Mesh.CAP_ALL,
     },
     scene,
   );
   wire.parent = platformRoot;
-  wire.material = getFabricatorBatteryWireMaterial();
+  wire.material = getPowerWireMaterial();
   wire.isPickable = false;
   wire.checkCollisions = false;
   wire.receiveShadows = true;
@@ -8359,30 +9044,50 @@ function createFabricatorBatteryWire(fabricator, battery) {
     ...(wire.metadata ?? {}),
     excludeFromBounds: true,
     excludeFromCollision: true,
-    fabricatorBatteryWire: true,
+    powerConnectionWire: true,
   };
   return wire;
 }
 
-function createFabricatorBatteryWirePath(start, end) {
-  const delta = end.subtract(start);
-  const horizontalDistance = Math.hypot(delta.x, delta.z);
-  const sag = clamp(horizontalDistance * 0.1, 0.018, 0.075);
-  const side = new B.Vector3(-delta.z, 0, delta.x);
-  if (side.lengthSquared() > 0.000001) {
-    side.normalize().scaleInPlace(Math.min(horizontalDistance * 0.035, 0.035));
-  }
+function createPowerWirePath(start, end) {
+  return [start, end];
+}
 
-  const path = [];
-  for (let index = 0; index <= FABRICATOR_BATTERY_WIRE_SEGMENTS; index += 1) {
-    const t = index / FABRICATOR_BATTERY_WIRE_SEGMENTS;
-    const point = B.Vector3.Lerp(start, end, t);
-    const slack = Math.sin(Math.PI * t);
-    point.y -= sag * slack;
-    point.addInPlace(side.scale(Math.sin(Math.PI * t) * 0.42));
-    path.push(point);
+function getPowerWireConnectionLengthMeters(battery, machine) {
+  const batteryPoint = getWireAnchorPoint(battery, "battery");
+  const machinePoint = getWireAnchorPoint(
+    machine,
+    getPowerWireAnchorType(machine),
+  );
+  if (!batteryPoint || !machinePoint) return 0;
+  const path = createPowerWirePath(machinePoint, batteryPoint);
+  let length = 0;
+  for (let index = 1; index < path.length; index += 1) {
+    length += B.Vector3.Distance(path[index - 1], path[index]);
   }
-  return path;
+  return length * WIRE_METERS_PER_WORLD_UNIT;
+}
+
+function getPowerWireConnectionStoredMeters(machine) {
+  const stored = Number(machine?.metadata?.powerWireMeters);
+  if (Number.isFinite(stored) && stored > 0) return stored;
+  const battery = getConnectedBatteryRoot(machine);
+  return battery ? getPowerWireConnectionLengthMeters(battery, machine) : 0;
+}
+
+function clearPowerWireConnection(machine) {
+  if (!machine?.metadata) return 0;
+  const meters = getPowerWireConnectionStoredMeters(machine);
+  delete machine.metadata.connectedBattery;
+  delete machine.metadata.powerWireMeters;
+  return meters;
+}
+
+function getPowerWireAnchorType(root) {
+  const item = root?.metadata?.placedItem;
+  if (isFabricatorItem(item)) return "fabricator";
+  if (isBatteryItem(item)) return "battery";
+  return "machine";
 }
 
 function getWireAnchorPoint(root, type) {
@@ -8393,10 +9098,13 @@ function getWireAnchorPoint(root, type) {
   if (type === "fabricator") {
     return new B.Vector3(center.x, bounds.min.y + 0.06, center.z);
   }
+  if (type === "machine") {
+    return new B.Vector3(center.x, bounds.min.y + 0.08, center.z);
+  }
   return new B.Vector3(center.x, center.y, center.z);
 }
 
-function getFabricatorBatteryWireMaterial() {
+function getPowerWireMaterial() {
   const materialName = "fabricator-battery-red-wire-material";
   const existing = scene.getMaterialByName?.(materialName);
   if (existing) return existing;
@@ -8410,6 +9118,412 @@ function getFabricatorBatteryWireMaterial() {
   material.emissiveColor = new B.Color3(0.012, 0, 0);
   material.backFaceCulling = false;
   return material;
+}
+
+function getPowerWirePreviewMaterial() {
+  const materialName = "power-wire-preview-hologram-material";
+  const existing = scene.getMaterialByName?.(materialName);
+  if (existing) return existing;
+
+  const material = new B.PBRMaterial(materialName, scene);
+  material.albedoColor = new B.Color3(0.95, 0.04, 0.02);
+  material.emissiveColor = new B.Color3(0.45, 0.02, 0.01);
+  material.reflectivityColor = new B.Color3(1, 0.18, 0.08);
+  material.metallic = 0;
+  material.roughness = 0.24;
+  material.alpha = 0.42;
+  material.backFaceCulling = false;
+  if ("transparencyMode" in material) {
+    material.transparencyMode = B.Material.MATERIAL_ALPHABLEND;
+  }
+  if ("alphaMode" in material) {
+    material.alphaMode = B.Engine.ALPHA_COMBINE;
+  }
+  if ("disableDepthWrite" in material) {
+    material.disableDepthWrite = true;
+  }
+  return material;
+}
+
+function handlePowerWireKey(interaction) {
+  const root = interaction?.root;
+  const item = root?.metadata?.placedItem ?? interaction?.item;
+  if (pendingPowerWire) {
+    if (canCompletePowerWireAtRoot(root)) {
+      return completePowerWireExtension(root);
+    }
+    if (root === pendingPowerWire.source) {
+      return cancelPowerWireExtension("Wire canceled");
+    }
+    updateInteractionPrompt({
+      prompt: `Aim at ${getPowerWireTargetLabel()} and press Y`,
+      durationMs: 900,
+    });
+    return false;
+  }
+
+  if (root && (isBatteryItem(item) || isPoweredMachineItem(item))) {
+    if (hasPowerWireConnection(root)) {
+      return detachPowerWireFromNode(root);
+    }
+    return startPowerWireExtension(root);
+  }
+  return false;
+}
+
+function startPowerWireExtension(source) {
+  if (
+    !isActivePlacedRoot(source) ||
+    !isPowerWireEndpointItem(source.metadata?.placedItem)
+  ) {
+    return false;
+  }
+  if (getAvailableWireMeters() <= 0) {
+    updateInteractionPrompt({
+      prompt: "No wire in inventory",
+      durationMs: 900,
+    });
+    return false;
+  }
+  cancelPowerWireExtension();
+  const sourcePoint = getPowerWireEndpointPoint(source);
+  const playerPoint = getPlayerPowerWirePoint();
+  if (!sourcePoint || !playerPoint) return false;
+  const activeLength = getPowerWirePreviewLength(sourcePoint, playerPoint);
+  pendingPowerWire = {
+    source,
+    sourceType: isBatteryItem(source.metadata?.placedItem)
+      ? "battery"
+      : "machine",
+    previewMesh: null,
+    particles: createTetherParticles(sourcePoint, playerPoint, activeLength),
+    maxLength: activeLength,
+    activeLength,
+    segmentLength: activeLength / TETHER_SEGMENT_COUNT,
+  };
+  updatePowerWirePreview(0);
+  updateInteractionPrompt({
+    prompt: `Wire started - aim at ${getPowerWireTargetLabel()} and press Y`,
+    durationMs: 900,
+  });
+  return true;
+}
+
+function completePowerWireExtension(target) {
+  const source = pendingPowerWire?.source;
+  if (!source) return false;
+  if (
+    !isActivePlacedRoot(source) ||
+    !isPowerWireEndpointItem(source.metadata?.placedItem)
+  ) {
+    cancelPowerWireExtension("Wire source unavailable");
+    return false;
+  }
+  if (!canCompletePowerWireAtRoot(target)) {
+    updateInteractionPrompt({
+      prompt: `Target needs ${getPowerWireTargetLabel()}`,
+      durationMs: 900,
+    });
+    return false;
+  }
+  const battery = pendingPowerWire.sourceType === "battery" ? source : target;
+  const machine = pendingPowerWire.sourceType === "battery" ? target : source;
+  const wireLength = getPowerWireConnectionLengthMeters(battery, machine);
+  if (getAvailableWireMeters() + 0.0001 < wireLength) {
+    updateInteractionPrompt({
+      prompt: `Need ${formatWireMeters(wireLength)} wire`,
+      durationMs: 1100,
+    });
+    return false;
+  }
+  if (connectPowerWire(battery, machine, wireLength)) {
+    consumeWireMeters(wireLength);
+    const machineName = machine.metadata?.placedItem?.name ?? "machine";
+    cancelPowerWireExtension();
+    updateInteractionPrompt({
+      prompt: `Wire connected to ${machineName} - ${formatWireMeters(
+        wireLength,
+      )}`,
+      durationMs: 1200,
+    });
+    return true;
+  }
+  updateInteractionPrompt({
+    prompt: "Could not connect wire",
+    durationMs: 900,
+  });
+  return false;
+}
+
+function cancelPowerWireExtension(prompt) {
+  pendingPowerWire?.previewMesh?.dispose(false, true);
+  pendingPowerWire = null;
+  if (prompt) {
+    updateInteractionPrompt({
+      prompt,
+      durationMs: 900,
+    });
+  }
+  return true;
+}
+
+function detachPowerWireFromNode(root) {
+  if (!root) return false;
+  const result = removePowerConnectionsForNode(root, {
+    refund: true,
+    requireRefundSpace: true,
+  });
+  if (result.count <= 0) {
+    updateInteractionPrompt({
+      prompt: result.inventoryFull
+        ? `Need room for ${formatWireMeters(result.meters)} wire`
+        : "No wire connected",
+      durationMs: 900,
+    });
+    return false;
+  }
+
+  refreshPowerConnectionWires();
+  if (activeFabricatorRoot) renderFabricatorAnalysis();
+  if (activeOxygenGeneratorRoot) renderOxygenGeneratorPanel();
+  const refundText =
+    result.refundedMeters > 0
+      ? ` · +${formatWireMeters(result.refundedMeters)} wire`
+      : "";
+  updateInteractionPrompt({
+    prompt:
+      (result.count === 1
+        ? "Wire disconnected"
+        : `${result.count} wires disconnected`) + refundText,
+    durationMs: 1200,
+  });
+  return true;
+}
+
+function removePowerConnectionsForNode(root, options = {}) {
+  const refund = options.refund !== false;
+  const machines = new Set();
+  if (
+    isPoweredMachineItem(root?.metadata?.placedItem) &&
+    getConnectedBatteryRoot(root)
+  ) {
+    machines.add(root);
+  }
+  if (isBatteryItem(root?.metadata?.placedItem)) {
+    for (const machine of getPoweredMachineRoots()) {
+      if (machine.metadata?.connectedBattery === root) {
+        machines.add(machine);
+      }
+    }
+  }
+  const meters = [...machines].reduce(
+    (total, machine) => total + getPowerWireConnectionStoredMeters(machine),
+    0,
+  );
+  if (refund && options.requireRefundSpace && !canAddWireMeters(meters)) {
+    return {
+      count: 0,
+      meters,
+      refundedMeters: 0,
+      leftoverMeters: meters,
+      inventoryFull: true,
+    };
+  }
+  for (const machine of machines) {
+    clearPowerWireConnection(machine);
+  }
+  const leftoverMeters = refund ? addWireMeters(meters) : meters;
+  return {
+    count: machines.size,
+    meters,
+    refundedMeters: Math.max(0, meters - leftoverMeters),
+    leftoverMeters,
+  };
+}
+
+function hasPowerWireConnection(root) {
+  return getPowerWireConnectionCount(root) > 0;
+}
+
+function getPowerWireConnectionCount(root) {
+  if (!root) return 0;
+  let count = 0;
+  if (
+    isPoweredMachineItem(root.metadata?.placedItem) &&
+    getConnectedBatteryRoot(root)
+  ) {
+    count += 1;
+  }
+  if (isBatteryItem(root.metadata?.placedItem)) {
+    for (const machine of getPoweredMachineRoots()) {
+      if (machine.metadata?.connectedBattery === root) count += 1;
+    }
+  }
+  return count;
+}
+
+function updatePowerWirePreview(seconds = 0) {
+  if (!pendingPowerWire) return;
+  const source = pendingPowerWire.source;
+  if (
+    !isActivePlacedRoot(source) ||
+    !isPowerWireEndpointItem(source.metadata?.placedItem)
+  ) {
+    cancelPowerWireExtension();
+    return;
+  }
+
+  simulatePowerWirePreview(getTetherStepSeconds(seconds));
+  const path = getPowerWirePreviewPath();
+  if (path.length < 2) return;
+
+  if (pendingPowerWire.previewMesh) {
+    B.MeshBuilder.CreateTube(
+      "power-wire-preview",
+      {
+        path,
+        radius: POWER_WIRE_PREVIEW_RADIUS,
+        tessellation: 6,
+        cap: B.Mesh.CAP_ALL,
+        instance: pendingPowerWire.previewMesh,
+      },
+      scene,
+    );
+    return;
+  }
+
+  const preview = B.MeshBuilder.CreateTube(
+    "power-wire-preview",
+    {
+      path,
+      radius: POWER_WIRE_PREVIEW_RADIUS,
+      tessellation: 6,
+      cap: B.Mesh.CAP_ALL,
+      updatable: true,
+    },
+    scene,
+  );
+  preview.parent = level?.platform?.root ?? null;
+  preview.material = getPowerWirePreviewMaterial();
+  preview.isPickable = false;
+  preview.checkCollisions = false;
+  preview.receiveShadows = false;
+  preview.alwaysSelectAsActiveMesh = true;
+  preview.renderingGroupId = 1;
+  preview.metadata = {
+    ...(preview.metadata ?? {}),
+    excludeFromBounds: true,
+    excludeFromCollision: true,
+    powerWirePreview: true,
+  };
+  pendingPowerWire.previewMesh = preview;
+}
+
+function simulatePowerWirePreview(seconds = 0) {
+  const wire = pendingPowerWire;
+  if (!wire?.particles?.length) return;
+
+  const sourcePoint = getPowerWireEndpointPoint(wire.source);
+  const playerPoint = getPlayerPowerWirePoint();
+  if (!sourcePoint || !playerPoint) return;
+
+  const particles = wire.particles;
+  const lastIndex = particles.length - 1;
+  wire.maxLength = Math.max(
+    wire.maxLength ?? 0,
+    B.Vector3.Distance(sourcePoint, playerPoint) + TETHER_SLACK_RESERVE,
+  );
+  wire.activeLength = getPowerWirePreviewLength(sourcePoint, playerPoint);
+  wire.segmentLength = wire.activeLength / TETHER_SEGMENT_COUNT;
+
+  particles[0].position.copyFrom(sourcePoint);
+  particles[0].previous.copyFrom(sourcePoint);
+  particles[lastIndex].position.copyFrom(playerPoint);
+
+  const platform = level.platform?.physics;
+  const playerPosition = getPlayerPlatformPosition();
+  const constrainParticlesToPlatform = isPositionInsidePlatformPhysicsVolume(
+    playerPosition,
+    platform,
+  );
+  const acceleration = TETHER_GRAVITY.scale(seconds * seconds);
+  for (let index = 1; index < lastIndex; index += 1) {
+    const particle = particles[index];
+    const velocity = particle.position
+      .subtract(particle.previous)
+      .scale(TETHER_DAMPING);
+    particle.previous.copyFrom(particle.position);
+    particle.position.addInPlace(velocity).addInPlace(acceleration);
+    if (constrainParticlesToPlatform) {
+      constrainTetherParticleToPlatform(particle.position, platform);
+    }
+  }
+
+  for (
+    let iteration = 0;
+    iteration < TETHER_SOLVER_ITERATIONS;
+    iteration += 1
+  ) {
+    particles[0].position.copyFrom(sourcePoint);
+    particles[lastIndex].position.copyFrom(playerPoint);
+    for (let index = 0; index < lastIndex; index += 1) {
+      solveTetherSegment(
+        particles[index],
+        particles[index + 1],
+        getTetherParticleInvMass(index, lastIndex),
+        getTetherParticleInvMass(index + 1, lastIndex),
+        wire.segmentLength,
+      );
+    }
+    for (let index = 1; index < lastIndex; index += 1) {
+      if (constrainParticlesToPlatform) {
+        constrainTetherParticleToPlatform(particles[index].position, platform);
+      }
+    }
+  }
+
+  particles[0].position.copyFrom(sourcePoint);
+  particles[0].previous.copyFrom(sourcePoint);
+  particles[lastIndex].position.copyFrom(playerPoint);
+  particles[lastIndex].previous.copyFrom(playerPoint);
+}
+
+function getPowerWirePreviewPath() {
+  return (
+    pendingPowerWire?.particles?.map((particle) => particle.position.clone()) ?? []
+  );
+}
+
+function getPowerWirePreviewLength(start, end) {
+  return B.Vector3.Distance(start, end) + TETHER_SLACK_RESERVE;
+}
+
+function canCompletePowerWireAtRoot(root) {
+  if (!pendingPowerWire || !root || root === pendingPowerWire.source) return false;
+  const item = root.metadata?.placedItem;
+  if (pendingPowerWire.sourceType === "battery" && getConnectedBatteryRoot(root)) {
+    return false;
+  }
+  return pendingPowerWire.sourceType === "battery"
+    ? isPoweredMachineItem(item)
+    : isBatteryItem(item);
+}
+
+function getPowerWireTargetLabel() {
+  return pendingPowerWire?.sourceType === "machine" ? "a battery" : "a machine";
+}
+
+function isPowerWireEndpointItem(item) {
+  return isBatteryItem(item) || isPoweredMachineItem(item);
+}
+
+function getPowerWireEndpointPoint(root) {
+  return getWireAnchorPoint(root, getPowerWireAnchorType(root));
+}
+
+function getPlayerPowerWirePoint() {
+  const playerPosition = getPlayerPlatformPosition();
+  return playerPosition ? playerPosition.add(TETHER_ATTACH_OFFSET) : null;
 }
 
 function getHelmetHookInteraction() {
@@ -8528,12 +9642,6 @@ function installPlayerLoop() {
         interactionUpdateElapsed = 0;
         updateActiveInteraction();
       }
-      placementUpdateElapsed += seconds;
-      if (placementUpdateElapsed >= PLACEMENT_UPDATE_SECONDS) {
-        placementUpdateElapsed = 0;
-        updatePlacementPreview();
-      }
-
       if (camera.parent) {
         const inverseParent = camera.parent.getWorldMatrix().clone().invert();
         B.Vector3.TransformNormalToRef(forward, inverseParent, forward);
@@ -8567,6 +9675,7 @@ function installPlayerLoop() {
       }
       updateLifeSupport(seconds);
       updateFabricatorDisassembly(seconds);
+      updateFabricatorCraft(seconds);
 
       if (zeroGravityMovement) {
         updateZeroGravityThrusters(move, platformPhysics, seconds);
@@ -8596,8 +9705,14 @@ function installPlayerLoop() {
       resolveDebrisFieldPlayerCollisions(seconds);
       updateAsteroidPhysics(seconds, platformPhysics);
       updatePlayerTether(seconds);
+      updatePowerWirePreview(seconds);
       if (thirdPersonMode) {
         updateThirdPersonCamera();
+      }
+      placementUpdateElapsed += seconds;
+      if (placementUpdateElapsed >= PLACEMENT_UPDATE_SECONDS) {
+        placementUpdateElapsed = 0;
+        updatePlacementPreview();
       }
 
       level.starfield.position.copyFrom(camera.globalPosition);
@@ -8654,9 +9769,11 @@ function updateActiveInteraction() {
 function createFabricatorInteractionFromLook() {
   const ray = createCameraLookRay(GLB_PICKUP_PROMPT_RANGE);
   const hit = scene.pickWithRay(ray, (mesh) =>
-    Boolean(mesh.metadata?.glbPickupLabel),
+    Boolean(mesh.metadata?.interaction ?? mesh.metadata?.glbPickupLabel),
   );
-  const interaction = createGlbPickupPrompt(hit?.pickedMesh);
+  const interaction =
+    hit?.pickedMesh?.metadata?.interaction ??
+    createGlbPickupPrompt(hit?.pickedMesh);
   if (
     !hit?.hit ||
     interaction?.type !== "fabricator" ||
@@ -8677,13 +9794,23 @@ function createGlbPickupPrompt(mesh) {
   if (isFabricatorItem(item)) {
     const root = mesh.metadata?.glbPickupRoot ?? mesh;
     const mounted = root?.metadata?.fabricatorMountedAsteroid;
+    const disassembly = root?.metadata?.fabricatorDisassembly;
+    const crafting = root?.metadata?.fabricatorCrafting;
+    const busyText = disassembly
+      ? `Disassembling ${Math.ceil(disassembly.remaining ?? 0)}s`
+      : crafting
+        ? `Fabricating ${crafting.recipe?.name ?? "item"} ${Math.ceil(
+            crafting.remaining ?? 0,
+          )}s`
+        : "";
     const yieldText = formatAsteroidComposition(mounted?.composition);
     const occupiedText = mounted && yieldText ? ` · Yield ${yieldText}` : "";
     const battery = getFabricatorBatteryRoot(root);
     const energy = getBatteryEnergyState(battery);
     const energyText = battery
       ? ` · Energy ${energy.stored}/${energy.max}`
-      : "";
+      : " · No battery";
+    const wireText = getPowerWirePromptText(root, "Fabricator");
     const heldPrompt = createHeldAsteroidFabricatorPrompt(root, label);
     return {
       type: "fabricator",
@@ -8692,10 +9819,14 @@ function createGlbPickupPrompt(mesh) {
       item,
       activate: () => deactivateGlbPickupMesh(root),
       acceptsHeldAsteroid:
-        Boolean(heldAsteroid) && canPlaceHeldAsteroidOnFabricator(root).ok,
-      prompt: heldAsteroid
+        !busyText &&
+        Boolean(heldAsteroid) &&
+        canPlaceHeldAsteroidOnFabricator(root).ok,
+      prompt: busyText
+        ? `${label} busy · ${busyText}`
+        : heldAsteroid
         ? heldPrompt
-        : `Press E to pick up ${label} · F use${occupiedText}${energyText}`,
+        : `Press E to pick up ${label} · F use · ${wireText}${occupiedText}${energyText}`,
     };
   }
 
@@ -8707,13 +9838,14 @@ function createGlbPickupPrompt(mesh) {
     const energyText = battery
       ? ` · Energy ${energy.stored}/${energy.max}`
       : " · No battery";
+    const wireText = getPowerWirePromptText(root, "oxygen generator");
     return {
       type: "oxygen-generator",
       range: mesh.metadata.glbPickupRange ?? GLB_PICKUP_PROMPT_RANGE,
       root,
       item: createOxygenGeneratorPickupItem(root, item),
       prompt:
-        `Press E to pick up ${label} · F use · G load ice` +
+        `Press E to pick up ${label} · F use · G load ice · ${wireText}` +
         ` · Water ${formatTankValue(state.waterLiters ?? 0)} L` +
         ` · H2 ${formatTankValue(state.hydrogenLiters ?? 0)} L` +
         energyText,
@@ -8734,7 +9866,7 @@ function createGlbPickupPrompt(mesh) {
       range: mesh.metadata.glbPickupRange ?? GLB_PICKUP_PROMPT_RANGE,
       root,
       item: batteryItem,
-      prompt: `Press E to pick up ${label} · F inspect energy ${energy.stored}/${energy.max}`,
+      prompt: `Press E to pick up ${label} · F inspect energy ${energy.stored}/${energy.max} · ${getPowerWirePromptText(root, label)}`,
       activate: () => deactivateGlbPickupMesh(root),
     };
   }
@@ -8748,6 +9880,22 @@ function createGlbPickupPrompt(mesh) {
       : `Press E to pick up ${label}`,
     activate: () => deactivateGlbPickupMesh(mesh),
   };
+}
+
+function getPowerWirePromptText(root, label = "machine") {
+  const item = root?.metadata?.placedItem;
+  if (pendingPowerWire) {
+    if (root === pendingPowerWire.source) return "Y cancel wire";
+    if (canCompletePowerWireAtRoot(root)) return `Y connect wire to ${label}`;
+    return "Y wire active";
+  }
+  const connectionCount = getPowerWireConnectionCount(root);
+  if (connectionCount > 0) {
+    return connectionCount === 1 ? "Y remove wire" : `Y remove ${connectionCount} wires`;
+  }
+  if (isBatteryItem(item)) return "Y start wire";
+  if (isPoweredMachineItem(item)) return "Y start wire";
+  return "Y wire";
 }
 
 function showBatteryEnergy(interaction) {
@@ -8775,7 +9923,7 @@ function collectFabricatorInteraction(interaction) {
     updateInteractionPrompt({ prompt: "Unload asteroid before pickup" });
     return false;
   }
-  if (root.metadata?.fabricatorDisassembly) {
+  if (root.metadata?.fabricatorDisassembly || root.metadata?.fabricatorCrafting) {
     updateInteractionPrompt({ prompt: "Fabricator is busy" });
     return false;
   }
@@ -8959,6 +10107,7 @@ function getFabricatorAsteroidRightDirection(forward) {
 
 function deactivateGlbPickupMesh(mesh) {
   const root = mesh?.metadata?.glbPickupRoot ?? mesh;
+  removePowerConnectionsForRoot(root);
   unregisterPlacedItemCollisionMeshes(root);
   const meshes = root?.getChildMeshes?.() ?? [mesh].filter(Boolean);
   for (const child of meshes) {
@@ -8975,7 +10124,7 @@ function deactivateGlbPickupMesh(mesh) {
   }
   root?.setEnabled?.(false);
   root?.dispose?.(false, false);
-  refreshFabricatorBatteryWires();
+  refreshPowerConnectionWires();
 }
 
 function createCameraLookRay(distance) {
@@ -9563,6 +10712,7 @@ function formatAsteroidComposition(composition) {
     ["Iron", yieldValues.iron],
     ["Copper", yieldValues.copper],
     ["Water", yieldValues.water],
+    ["Silicon", yieldValues.silicon],
   ]
     .map(([label, value]) => `${label} ${value}`)
     .join(" · ");
@@ -9571,19 +10721,19 @@ function formatAsteroidComposition(composition) {
 function getAsteroidYield(composition) {
   if (!composition) return null;
 
-  const iron = Math.max(0, Math.min(10, Math.round(Number(composition.iron))));
-  const copper = Math.max(
-    0,
-    Math.min(10, Math.round(Number(composition.copper))),
-  );
-  const water = Math.max(
-    0,
-    Math.min(10, Math.round(Number(composition.water))),
-  );
-  const total = iron + copper + water;
+  const iron = clampAsteroidResourceYield(composition.iron);
+  const copper = clampAsteroidResourceYield(composition.copper);
+  const water = clampAsteroidResourceYield(composition.water);
+  const silicon = clampAsteroidResourceYield(composition.silicon);
+  const total = iron + copper + water + silicon;
   if (!Number.isFinite(total) || total <= 0) return null;
 
-  return { iron, copper, water };
+  return { iron, copper, water, silicon };
+}
+
+function clampAsteroidResourceYield(value) {
+  const amount = Math.round(Number(value) || 0);
+  return Math.max(0, Math.min(10, amount));
 }
 
 function updateInteractionPrompt(interaction) {
@@ -10492,7 +11642,7 @@ function transformPlayerLocalDirectionToWorld(direction) {
 }
 
 function isPositionInsidePlatformPhysicsVolume(position, platform) {
-  if (!platform) return false;
+  if (!position || !platform) return false;
   const radius = platform.radius ?? 0;
   const margin = Math.max(radius * 1.5, 0.04);
   const minX = (platform.minX ?? -platform.width * 0.5) - margin;

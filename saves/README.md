@@ -36,7 +36,8 @@ Useful spatial controls:
   movement toggles saved by the in-game `Save world` button.
 - `world.inventory` / `world.hotbar`: current item stacks.
 - `world.pickups.collectedIds`: original scene pickups that should stay gone.
-- `world.placedItems`: objects placed by the player.
+- `world.placedItems`: objects placed by the player. A powered machine can include
+  `connectedBatteryIndex`, pointing at the placed battery that supplies it.
 - `world.helmet` / `world.tether`: helmet hook/equipment and tether state.
 - `platform.physicsBounds`: optional explicit local interior bounds, with
   `{ "min": [x, y, z], "max": [x, y, z] }`.

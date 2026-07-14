@@ -1332,12 +1332,9 @@ function createAsteroidComposition(random, sizeMeters, fragmentSizes) {
   const sizeRange = Math.max(maxSize - minSize, 0.0001);
   const sizeT = clamp01((sizeMeters - minSize) / sizeRange);
   const targetTotal = Math.max(1, Math.min(30, Math.round(lerp(2, 30, sizeT))));
-  const weights = [
-    random() ** 1.08 + 0.04,
-    random() ** 1.18 + 0.04,
-    random() ** 1.12 + 0.04,
-  ];
-  const values = [0, 0, 0];
+  const abundance = [1, 0.5, 1, 0.5];
+  const weights = abundance.map((ratio) => (random() ** 1.12 + 0.04) * ratio);
+  const values = [0, 0, 0, 0];
 
   for (let unit = 0; unit < targetTotal; unit += 1) {
     const availableWeight = weights.reduce(
@@ -1361,6 +1358,7 @@ function createAsteroidComposition(random, sizeMeters, fragmentSizes) {
     iron: values[0],
     copper: values[1],
     water: values[2],
+    silicon: values[3],
   };
 }
 
@@ -1369,18 +1367,28 @@ function createAsteroidCompositionColor(composition, random) {
   const darkBasalt = [0.58, 0.56, 0.51];
   const warmChippedStone = [0.78, 0.75, 0.67];
   const paleRegolith = [0.9, 0.88, 0.82];
+  const glassySilicate = [0.72, 0.78, 0.76];
   const shade = lerp(0.88, 1.08, random());
   const soot = random() ** 3 * 0.12;
   return [
     (darkBasalt[0] * normalized.iron +
       warmChippedStone[0] * normalized.copper +
-      paleRegolith[0] * normalized.water) * shade - soot,
+      paleRegolith[0] * normalized.water +
+      glassySilicate[0] * normalized.silicon) *
+      shade -
+      soot,
     (darkBasalt[1] * normalized.iron +
       warmChippedStone[1] * normalized.copper +
-      paleRegolith[1] * normalized.water) * shade - soot,
+      paleRegolith[1] * normalized.water +
+      glassySilicate[1] * normalized.silicon) *
+      shade -
+      soot,
     (darkBasalt[2] * normalized.iron +
       warmChippedStone[2] * normalized.copper +
-      paleRegolith[2] * normalized.water) * shade - soot,
+      paleRegolith[2] * normalized.water +
+      glassySilicate[2] * normalized.silicon) *
+      shade -
+      soot,
   ];
 }
 
@@ -1388,14 +1396,16 @@ function normalizeAsteroidComposition(composition) {
   const iron = Math.max(0, Number(composition?.iron) || 0);
   const copper = Math.max(0, Number(composition?.copper) || 0);
   const water = Math.max(0, Number(composition?.water) || 0);
-  const total = iron + copper + water;
+  const silicon = Math.max(0, Number(composition?.silicon) || 0);
+  const total = iron + copper + water + silicon;
   if (total <= 0) {
-    return { iron: 1 / 3, copper: 1 / 3, water: 1 / 3 };
+    return { iron: 1 / 3, copper: 1 / 6, water: 1 / 3, silicon: 1 / 6 };
   }
   return {
     iron: iron / total,
     copper: copper / total,
     water: water / total,
+    silicon: silicon / total,
   };
 }
 

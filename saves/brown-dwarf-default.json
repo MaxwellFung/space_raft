@@ -78,7 +78,7 @@
     "nearRockDensityBypassRadius": 32
   },
   "platform": {
-    "modelUrl": "./assets/ship_col.glb",
+    "modelUrl": "./assets/ship_long.glb",
     "modelMaxSize": 2.68125,
     "physicsBoundsMode": "model",
     "playerSpawnMode": "inside",
@@ -150,24 +150,24 @@
     },
     "player": {
       "position": [
-        0.1663,
-        0.0288,
-        0.8387
+        -0.2699,
+        0.4255,
+        -0.1097
       ],
       "rotationDegrees": [
-        39.069,
-        -237.616,
+        46.499,
+        -289.238,
         0
       ],
       "flyMode": false,
       "zeroGravityMode": true,
       "zeroGravityVelocity": [
-        0.0923,
-        -0.0451,
-        -0.0454
+        0,
+        0,
+        -0.1377
       ],
       "thirdPersonMode": false,
-      "selectedHotbarIndex": 1
+      "selectedHotbarIndex": 3
     },
     "lifeSupport": {
       "cabinPressureKpa": 100,
@@ -197,16 +197,17 @@
     ],
     "hotbar": [
       {
-        "id": "oxygen-generator",
-        "name": "Oxygen Generator",
-        "count": 1,
-        "icon": "O",
-        "swatch": "#9fd8e8",
-        "modelUrl": "./assets/oxygen_generator.glb",
-        "portraitModelUrl": "./assets/oxygen_generator.glb",
-        "maxSize": 0.32,
-        "placementSurface": "floor",
-        "stackLimit": 1
+        "id": "iron",
+        "name": "Iron Ingot",
+        "count": 3,
+        "icon": "Fe",
+        "swatch": "#a7adb1",
+        "portraitModelUrl": "./assets/raw_materials/iron_ingot.glb",
+        "portraitRotation": [
+          0.34,
+          1.56,
+          -0.32
+        ]
       },
       {
         "id": "water",
@@ -221,7 +222,19 @@
           0
         ]
       },
-      null,
+      {
+        "id": "copper",
+        "name": "Copper Ingot",
+        "count": 2,
+        "icon": "Cu",
+        "swatch": "#c8753e",
+        "portraitModelUrl": "./assets/raw_materials/copper_ingot.glb",
+        "portraitRotation": [
+          0.34,
+          1.56,
+          -0.32
+        ]
+      },
       null,
       null,
       null,
@@ -252,15 +265,16 @@
           ]
         },
         "position": [
-          0.4715,
-          -0.2338,
-          0.3536
+          0.3089,
+          -0.1165,
+          0.6082
         ],
         "rotationDegrees": [
           0,
           180,
           0
-        ]
+        ],
+        "connectedBatteryIndex": 1
       },
       {
         "item": {
@@ -275,9 +289,9 @@
           "maxEnergy": 240
         },
         "position": [
-          0.3163,
-          -0.5832,
-          0.6077
+          0.2523,
+          -0.423,
+          0.843
         ],
         "rotationDegrees": [
           0,
